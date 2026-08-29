@@ -120,7 +120,8 @@ const MESH = {
   drone:      mesh(MODELS.drone),
   cruiser:    mesh(MODELS.cruiser),
   mothership: mesh(MODELS.mothership),
-  crate:      mesh(MODELS.crate)
+  crate:      mesh(MODELS.crate),
+  shard:      mesh(MODELS.shard)
 };
 const ATT = MODELS.attach;
 
@@ -241,13 +242,20 @@ function shock(x,y,z,r0,r1,life,w,c,a){
   if(rings.length>26) rings.shift();
   rings.push({x,y,z,r:r0,r0,r1,w,c,a,life,max:life});
 }
-/* flat plates, not cubes: sy is squashed so a shard reads as torn hull */
+/* Torn fragments, deliberately kept sub-legible: small, fast-tumbling and gone
+   in well under a second, so they read as grit thrown off the blast rather than
+   as countable objects. MODELS.shard is already an irregular torn plate (half
+   extents ~0.44 x 0.19 x 0.50), so the per-axis factors only jitter its
+   proportions — the old heavy squash would flatten it back into a slab.
+   SHARD_U converts that unit mesh to world units. */
+const SHARD_U = 26;
 function shard(x,y,z,vx,vy,vz,s,c,life){
-  if(debris.length>72) debris.shift();
+  if(debris.length>44) debris.shift();
+  const b = s*SHARD_U;
   debris.push({x,y,z,vx,vy,vz,c,life,max:life,s,
     rx:rnd(0,6.28),ry:rnd(0,6.28),rz:rnd(0,6.28),
-    ax:rnd(-13,13),ay:rnd(-13,13),az:rnd(-13,13),
-    sx:s*rnd(.4,1.25),sy:s*rnd(.10,.30),sz:s*rnd(.6,1.9),tr:0});
+    ax:rnd(-22,22),ay:rnd(-22,22),az:rnd(-22,22),
+    sx:b*rnd(.7,1.25),sy:b*rnd(.6,1.5),sz:b*rnd(.75,1.5),tr:0});
 }
 /* staged explosions: the payload fires later but keeps drifting with the world */
 function later(t,x,y,z,f){ evq.push({t,x,y,z,f}); }
@@ -448,7 +456,7 @@ function update(dt){
         parts.push(mk(hx,hy,hz, rnd(-70,70),rnd(30,150),-rnd(260,620),
           rage>.66?COL.red:COL.amber, rnd(.7,1.5), rnd(56,100), 0, .35, 1.6));
         sparks(hx,hy,hz, 4, 900, 1.1, COL.amber, 0,0,0, 0);
-        if(rage>.6 && Math.random()<.22) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.8,1.4), COL.purple, rnd(.9,1.6));
+        if(rage>.6 && Math.random()<.11) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.4,.7), COL.purple, rnd(.4,.75));
       }
       if((b.cd-=dt*(b.phase===3?1.8:b.phase===2?1.35:1))<=0){
         b.cd = b.phase===1?1.15 : b.phase===2?.85 : .62;
@@ -592,10 +600,10 @@ function impact(e,dmg,x,y,z,big,s){
   parts.push(mk(x,y,z, dx*120,dy*120,dz*120, COL.white, big?.14:.10,
     (big?42:26)*(.8+pw*.4), 0, .2, big?1.9:1.8));
   parts.push(mk(x,y,z, 0,0,0, e.c, big?.20:.15, (big?30:18)*(.8+pw*.4), 0, 0, 2.4));
-  if(heavy) for(let i=0;i<(big?3:1);i++)
-    if(big||Math.random()<.5)
+  if(heavy) for(let i=0;i<(big?2:1);i++)
+    if(Math.random()<(big?.7:.35))
       shard(x,y,z, rnd(-300,300)+dx*320, rnd(20,320), rnd(-300,300)+dz*320,
-        e===boss?rnd(.8,1.5):rnd(.45,.8), e.c, rnd(.5,1.1));
+        e===boss?rnd(.45,.8):rnd(.26,.46), e.c, rnd(.24,.44));
   e.hit = Math.min(1, (e.hit||0) + (big?1:.62));
   shake = Math.min(30, shake + (big?9:2.6)*(.6+pw));
   /* deliberately no fullscreen flash on ordinary hits — it washes the frame out */
@@ -610,9 +618,9 @@ function explode(e,x,y,z){
     shock(x,y,z, 20, 820, .55, 34, COL.purple, 1);
     parts.push(mk(x,y,z, 0,0,0, COL.white, .26, 190, 0, 0, 1.5));
     sparks(x,y,z, 70, 2600, 1.9, COL.purple, 0,0,0, 0);
-    for(let i=0;i<34;i++)
+    for(let i=0;i<15;i++)
       shard(x+rnd(-R,R), y+rnd(-70,70), z+rnd(-140,140),
-        rnd(-1100,1100), rnd(-300,820), rnd(-1100,1100), rnd(1,2.2), i&1?c:COL.mag, rnd(1,1.9));
+        rnd(-1100,1100), rnd(-300,820), rnd(-1100,1100), rnd(.55,1.1), i&1?c:COL.mag, rnd(.45,.85));
     shake=38; flash=Math.min(.38,flash+.34); flashC=COL.white;
     AUDIO.boom(2);
     /* four staggered secondaries walking across the hull */
@@ -624,7 +632,7 @@ function explode(e,x,y,z){
           parts.push(mk(fx,fy,fz, rnd(-190,190),rnd(-120,190),rnd(-190,190),
             j&1?COL.amber:COL.red, rnd(.4,.75), rnd(66,112), 0, .3, 1.9));
         sparks(fx,fy,fz, 26, 1700, 1.4, COL.amber, 0,0,0, 0);
-        for(let j=0;j<4;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.9,1.8), COL.purple, rnd(.9,1.7));
+        for(let j=0;j<2;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.4,.8), COL.purple, rnd(.4,.75));
         shake=Math.min(38,shake+15); flash=Math.min(.22,flash+.08); flashC=i&1?COL.amber:COL.purple;
         AUDIO.boom(1.5);
       });
@@ -640,9 +648,9 @@ function explode(e,x,y,z){
       rnd(-130,130),rnd(-70,150),rnd(-130,130),
       i&1?COL.amber:c, rnd(.3,.6)*(big?1.4:1), big?rnd(52,80):rnd(26,40), 0, .3, 1.8));
   sparks(x,y,z, big?46:28, big?2100:1500, big?1.35:1, c, 0,0,0, 0);
-  for(let i=0;i<(big?16:8);i++)
+  for(let i=0;i<(big?7:3);i++)
     shard(x,y,z, rnd(-760,760),rnd(-200,600),rnd(-760,760),
-      big?rnd(.7,1.5):rnd(.35,.7), i%3?c:COL.white, rnd(.8,1.6));
+      big?rnd(.42,.82):rnd(.22,.42), i%3?c:COL.white, rnd(.36,.66));
   shake=Math.min(34, shake+(big?22:11));
   flash=Math.min(.30, flash+(big?.19:.11)); flashC=c;
   AUDIO.boom(big?1.1:.6);
@@ -795,11 +803,15 @@ function render(){
   }
   for(const d of debris){
     const a=clamp(d.life/d.max,0,1);
+    /* the lit pass has blending off, so alpha cannot fade these — shrink them
+       away over the last third of life instead of letting them pop out */
+    const k = a<.34 ? a/.34 : 1;
     compose(model, d.x,d.y,d.z, d.rx,d.ry,d.rz, 1);
-    for(let i=0;i<3;i++){ model[i]*=d.sx; model[4+i]*=d.sy; model[8+i]*=d.sz; }
-    /* fresh shards read as hot metal, cooling to dead grey as they fade */
+    for(let i=0;i<3;i++){ model[i]*=d.sx*k; model[4+i]*=d.sy*k; model[8+i]*=d.sz*k; }
+    /* fresh shards read as hot metal, cooling to dead grey as they fade;
+       kept dim on purpose so they stay grit inside the fireball */
     const g=a*a;
-    litDraw(MESH.crate, model, [.10+g*.85, g*.20-.26, -.42], 1);
+    litDraw(MESH.shard, model, [.05+g*.40, g*.10-.22, -.30], 1);
   }
   for(const k of crates){
     compose(model, k.x,k.y,k.z, k.spin*.7, k.spin, 0, 1);
@@ -1069,8 +1081,8 @@ function gameOver(){
   burst(P.x,P.y,0,COL.red,90,2.2); AUDIO.boom(1.8); AUDIO.setIntensity(.15);
   shock(P.x,P.y,0, 20,520,.6, 16, COL.white, 1);
   sparks(P.x,P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);
-  for(let i=0;i<12;i++)
-    shard(P.x,P.y,0, rnd(-620,620),rnd(-160,520),rnd(-620,620), rnd(.35,.7), COL.cyan, rnd(.9,1.7));
+  for(let i=0;i<6;i++)
+    shard(P.x,P.y,0, rnd(-620,620),rnd(-160,520),rnd(-620,620), rnd(.18,.34), COL.cyan, rnd(.45,.8));
   document.getElementById('fScore').textContent=score;
   document.getElementById('fDist').textContent=(dist/1000).toFixed(1);
   document.getElementById('fKills').textContent=kills;

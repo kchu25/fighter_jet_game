@@ -143,6 +143,26 @@ const MODELS = (function () {
   function mir(p) { return [-p[0], p[1], p[2]]; }
   function shade(c, k) { return [c[0] * k, c[1] * k, c[2] * k]; }
 
+  /* recentre a mesh on its bounding box and rescale so the largest extent is
+     `size`. Positions only: a uniform scale + translate leaves normals valid. */
+  function fitUnit(M, size) {
+    var d = M.data, i, k;
+    var lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (i = 0; i < d.length; i += 9) {
+      for (k = 0; k < 3; k++) {
+        if (d[i + k] < lo[k]) lo[k] = d[i + k];
+        if (d[i + k] > hi[k]) hi[k] = d[i + k];
+      }
+    }
+    var ext = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    var s = ext > 1e-6 ? size / ext : 1;
+    var c = [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5, (lo[2] + hi[2]) * 0.5];
+    for (i = 0; i < d.length; i += 9) {
+      for (k = 0; k < 3; k++) d[i + k] = (d[i + k] - c[k]) * s;
+    }
+    return M;
+  }
+
   /* ===================================================================== JET
      "Wraith"-class strike craft: skinny forward-thrusting spine, small low
      canopy, sharply swept ANHEDRAL wings, underslung gun pods, and two fat
@@ -583,9 +603,96 @@ const MODELS = (function () {
     return M;
   }
 
+  /* =================================================================== SHARD
+     A torn fragment of hull plate, for the debris that sprays off a hit.
+     Deliberately NOT a primitive:
+       - the outline is a ragged star-shaped polygon, radii from 0.27 to 0.72,
+         so three deep notches alternate with long torn points;
+       - the plate is BENT along an off-centre crease LINE (not a point, which
+         would read as a low pyramid), and the two wings it folds into are
+         deliberately unequal: one narrow and steeply dropped, one wide and
+         shallow, so no view of it is symmetric;
+       - thickness runs from a chunky sheared edge down to zero at the tears,
+         so the rim is a band in places and a knife edge in others;
+       - one tongue of skin is peeled up off the wide wing.
+     Every face is flat-shaded, so the value steps between neighbouring facets
+     hard-flicker as it tumbles. All hand-tabulated: identical every load. */
+  function buildShard() {
+    var M = Mesh();
+    var SKIN = [0.215, 0.235, 0.285];   // painted outer hull
+    var SKIN2 = [0.330, 0.355, 0.415];  // lighter panel facet
+    var SKIN3 = [0.130, 0.145, 0.180];  // scorched facet
+    var BACK = [0.095, 0.105, 0.130];   // shadowed inner face
+    var BACK2 = [0.165, 0.180, 0.220];
+    var TORN = [0.600, 0.630, 0.690];   // bright raw metal at the tear
+    var TORN2 = [0.395, 0.420, 0.475];
+    var RIB = [0.250, 0.265, 0.310];    // sheared structure inside the edge
+
+    /* rim: angle, radius, top height, thickness. th 0 -> a knife-edge tear.
+       Verts 0 and 4 are the two ends of the crease; 1-3 are the narrow steep
+       wing, 5-7 the wide shallow one. */
+    var R = [
+      [0.00, 0.72, 0.075, 0.000],   // crease end, long torn point
+      [0.55, 0.28, -0.115, 0.150],  // deep notch, steep wing
+      [1.15, 0.46, -0.090, 0.200],  // thickest sheared edge
+      [1.80, 0.27, -0.140, 0.130],  // deep notch
+      [2.55, 0.58, 0.055, 0.000],   // crease end, torn point
+      [3.35, 0.30, -0.010, 0.075],  // deep notch
+      [4.15, 0.66, -0.030, 0.185],  // wide shallow wing
+      [5.30, 0.56, -0.060, 0.000]   // torn point, forked either side of vert 0
+    ];
+    var N = R.length;
+    var C = [[0.24, 0.150, 0.02], [-0.22, 0.120, 0.135]];  // the crease line
+    var BOT = [0.02, 0.000, 0.06];                          // inner-face apex
+    /* which crease point each rim edge's two ends fan to; a mismatched pair
+       spans the crease and gets the extra bridging triangle */
+    var E = [[0, 0], [0, 0], [0, 1], [1, 1], [1, 1], [1, 1], [1, 0], [0, 0]];
+    /* facet palettes: irregular on purpose, so no two neighbours match */
+    var TC = [SKIN2, SKIN, SKIN3, SKIN, SKIN2, SKIN, SKIN2, SKIN3];
+    var BC = [BACK, BACK2, BACK, BACK, BACK2, BACK, BACK2, BACK];
+    var EC = [TORN, RIB, TORN2, RIB, TORN, TORN2, RIB, TORN2];
+
+    var RT = [], RB = [], i, j;
+    for (i = 0; i < N; i++) {
+      var a = R[i][0], r = R[i][1], x = r * cos(a), z = r * sin(a);
+      RT.push([x, R[i][2], z]);
+      RB.push([x, R[i][2] - R[i][3], z]);
+    }
+
+    /* outer skin, fanned to the crease. The rim runs +X toward +Z, so the
+       winding is reversed relative to capFan to keep the normals facing out. */
+    for (i = 0; i < N; i++) {
+      j = (i + 1) % N;
+      if (E[i][0] === E[i][1]) M.tri(RT[j], RT[i], C[E[i][0]], TC[i]);
+      else M.quad(RT[j], RT[i], C[E[i][0]], C[E[i][1]], TC[i]);
+    }
+    /* inner face: a plain fan, it is the side you rarely catch */
+    for (i = 0; i < N; i++) { j = (i + 1) % N; M.tri(RB[i], RB[j], BOT, BC[i]); }
+    /* torn edge band. Zero-thickness spans collapse and Mesh.tri drops them;
+       edge 5 is skipped because the peeled tongue below caps it instead. */
+    for (i = 0; i < N; i++) {
+      if (i === 5) continue;
+      j = (i + 1) % N;
+      M.quad(RT[i], RT[j], RB[j], RB[i], EC[i]);
+    }
+
+    /* Lip of skin peeled back off the wide wing's edge. A solid wedge standing
+       on rim quad 5, tapering to a knife EDGE rather than to a point: a
+       point-tipped spike collapses to a hairline whenever it is seen end-on,
+       which reads as a rendering artefact rather than as metal. Kept short --
+       any longer and it stops being buckled plate and starts being a fin. */
+    var t0 = [-0.424, 0.090, -0.080], t1 = [-0.454, 0.085, -0.543];
+    M.quad(RT[5], RT[6], t1, t0, TORN);        // outer face of the tongue
+    M.quad(RB[6], RB[5], t0, t1, TORN2);       // inner face
+    M.tri(RT[5], t0, RB[5], RIB);              // torn ends
+    M.tri(RB[6], t1, RT[6], RIB);
+
+    return fitUnit(M, 1.0);
+  }
+
   /* ==================================================================== emit */
   var jet = buildJet(), drone = buildDrone(), cruiser = buildCruiser(),
-    boss = buildBoss(), crate = buildCrate();
+    boss = buildBoss(), crate = buildCrate(), shard = buildShard();
 
   return {
     jet: jet.build(),
@@ -593,6 +700,7 @@ const MODELS = (function () {
     cruiser: cruiser.build(),
     mothership: boss.build(),
     crate: crate.build(),
+    shard: shard.build(),
     attach: {
       jetNozzles: [[7.8, 5.6, -30.5], [-7.8, 5.6, -30.5]],
       jetMuzzles: [[9.4, -4.2, 27.2], [-9.4, -4.2, 27.2]],
