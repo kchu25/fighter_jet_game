@@ -215,6 +215,13 @@ addEventListener('focus', ()=>AUDIO.resume());
 let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss, debris, rings, evq;
 let dist, ddist, score, kills, combo, comboT, shake, flash, flashC, speed, flow;
 let gameOn=false, T=0, spawnT, waveN, nextBoss, alarmT, tipT, hitT, bossWarn, bossFx, hintT=0;
+/* bossN: how many bosses THIS run has actually defeated. Boss HP is keyed off
+   this instead of waveN — waveN only counts trash-mob waves and never resets,
+   so it had climbed to a large, run-length-dependent number by the time a
+   player even saw their first boss, making that boss (and every boss after
+   it) an unbeatable sponge. bossN starts every run at 0, so the first fight
+   is always the same fair fight regardless of how long the ramp to it was. */
+let bossN;
 
 const TIP_DEFAULT='WASD FLY  ·  CLICK GUNS  ·  SPACE MISSILE  ·  SHIFT BOOST  ·  AA/DD ROLL';
 let tipMsg=TIP_DEFAULT;
@@ -234,14 +241,14 @@ const EASE_CALM=.27;    // first 27% of the ramp is empty sky
 let easeT=0, easeStage=0, runNo=0, everDied=false;
 
 function reset(){
-  P={x:0,y:0,vx:0,vy:0,roll:0,pitch:0,yaw:0,hp:100,shield:60,boost:100,
+  P={x:0,y:0,vx:0,vy:0,roll:0,pitch:0,yaw:0,hp:100,shield:70,boost:100,
      fireCd:0,misCd:0,weapon:'std',wepT:0,rollT:0,rollDir:1,inv:0,thr:.4,
      burn:0,burnX:0,burnY:0};
   stars=[]; for(let i=0;i<300;i++) stars.push({x:rnd(-3000,3000),y:rnd(-900,1500),z:rnd(200,SPAWN_Z+900)});
   enemies=[]; shots=[]; foes=[]; rockets=[]; parts=[]; crates=[]; pops=[]; boss=null;
   debris=[]; rings=[]; evq=[];
   dist=0; ddist=0; score=0; kills=0; combo=1; comboT=0; shake=0; flash=0; flashC=COL.white;
-  speed=1; flow=FLOW; spawnT=.25; waveN=0; nextBoss=2800; alarmT=0; tipT=4.5; hitT=0;
+  speed=1; flow=FLOW; spawnT=.25; waveN=0; bossN=0; nextBoss=2800; alarmT=0; tipT=4.5; hitT=0;
   bossWarn=0; bossFx=0; easeStage=0; tipMsg=TIP_DEFAULT;
   /* easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
@@ -353,7 +360,7 @@ function spawnDrone(){
     spd:(rnd(1180,1480)+waveN*12)*(.78+.22*ev)*lerp(.66,1,soft),c:COL.mag,roll:0,yaw:0});
 }
 function spawnCruiser(){
-  const hp = 10+waveN*.8;
+  const hp = 9+waveN*.65;
   enemies.push({k:'cruiser',x:rnd(-240,240),y:rnd(-120,130),z:SPAWN_Z,hp,max:hp,r:64,rz:64,
     ph:rnd(0,6.28),amp:rnd(40,110),spd:rnd(640,780),c:COL.amber,roll:0,yaw:0,
     cd:rnd(.4,1.1)+(easeT>0?1.5:0)});
@@ -363,7 +370,11 @@ function spawnCrate(){
     kind:['shield','rapid','spread'][(Math.random()*3)|0],spin:0});
 }
 function spawnBoss(){
-  const hp = 300+waveN*70;
+  /* keyed off bossN (bosses defeated this run), not waveN (trash-mob waves,
+     never resets) — see the bossN declaration above for why. 440 base is
+     ~20-30s of sustained accurate fire for a first-time boss encounter;
+     +150/boss keeps later encounters escalating without runaway growth. */
+  const hp = 440+bossN*150;
   boss={k:'boss',x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r:210,rz:150,c:COL.purple,
         phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0};
   bossWarn=2.4; AUDIO.siren();
@@ -450,13 +461,16 @@ function update(dt){
     else if(!calm && (spawnT-=dt)<=0){
       waveN++;
       const d=Math.min(1,ddist/46000);
-      let n=1+((Math.random()*(1.4+d*2.6))|0);
+      /* wave size and pace both trimmed ~20% at the top of the ramp (2.6->2.0,
+         floor .34->.4) — noticeably less screen-filling at full difficulty
+         without touching the early, already-gentle end of the curve */
+      let n=1+((Math.random()*(1.4+d*2.0))|0);
       if(easeT>0) n=Math.min(n, easeP<.55?1:2);
       /* cruisers shoot back, so they are the last thing to phase in */
       const cru = waveN>3 && (easeT<=0 || easeP>.6);
       for(let i=0;i<n;i++) (cru && Math.random()<.32+d*.24) ? spawnCruiser() : spawnDrone();
       if(Math.random()<(easeT>0?.30:.15)) spawnCrate();
-      spawnT = Math.max(.34, 1.25-d*.85)*rnd(.75,1.25) * (easeT>0 ? 1+2.1*(1-easeP) : 1);
+      spawnT = Math.max(.4, 1.25-d*.85)*rnd(.75,1.25) * (easeT>0 ? 1+2.1*(1-easeP) : 1);
     }
     AUDIO.setIntensity((.32+Math.min(.42, ddist/50000)) * (easeT>0 ? .55+.45*easeP : 1));
   } else AUDIO.setIntensity(1);
@@ -494,11 +508,11 @@ function update(dt){
       const g=ATT.cruiserGuns, V=2000, t=(e.z)/V;
       for(const gp of g){
         const gx=e.x+gp[0], gy=e.y+gp[1];
-        foes.push({x:gx,y:gy,z:e.z,vx:(P.x-gx)/t*.8,vy:(P.y-gy)/t*.8,vz:-V,dmg:9,c:COL.amber,r:26});
+        foes.push({x:gx,y:gy,z:e.z,vx:(P.x-gx)/t*.8,vy:(P.y-gy)/t*.8,vz:-V,dmg:8,c:COL.amber,r:26});
       }
     }
     if(e.z<70){
-      if(e.z>-70 && Math.hypot(e.x-P.x,e.y-P.y)<e.r+24){ hurt(e.k==='drone'?14:26,e); continue; }
+      if(e.z>-70 && Math.hypot(e.x-P.x,e.y-P.y)<e.r+24){ hurt(e.k==='drone'?12:22,e); continue; }
       if(e.z<DESPAWN_Z){ enemies.splice(i,1); combo=1; }
     }
   }
@@ -633,7 +647,7 @@ function volley(b){
     if(b.phase===3){ vx=a*980; vy=Math.sin(b.t*2.2+i)*230+(P.y-gy)/t*.35; }
     else if(b.phase===2){ vx=(P.x-gx)/t*.8+a*320; vy=(P.y-gy)/t*.8+a*110; }
     else { vx=a*760; vy=(P.y-gy)/t*.45; }
-    foes.push({x:gx,y:gy,z:b.z,vx,vy,vz:-V,dmg:13,c:COL.purple,r:30});
+    foes.push({x:gx,y:gy,z:b.z,vx,vy,vz:-V,dmg:11,c:COL.purple,r:30});
   }
   AUDIO.thud();
 }
@@ -738,7 +752,7 @@ function damage(e,dmg,x,y,z,big,s){
   explode(e,e.x,e.y,e.z);
   if(e===boss){
     const pts=5000*combo; score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
-    boss=null; combo=Math.min(9,combo+2); comboT=4;
+    boss=null; bossN++; combo=Math.min(9,combo+2); comboT=4;
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=enemies.indexOf(e); if(i>=0) enemies.splice(i,1);
@@ -753,7 +767,7 @@ function hurt(dmg,src,s){
   if(src){ explode(src,src.x,src.y,src.z); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
   const shielded = P.shield>0;
   if(P.shield>0){ const a=Math.min(P.shield,dmg); P.shield-=a; dmg-=a; }
-  P.hp-=dmg; combo=1; P.inv=.55; hitT=.42;
+  P.hp-=dmg; combo=1; P.inv=.65; hitT=.42;
   shake=Math.min(34,shake+16); flash=Math.min(.55,flash+.28); flashC=COL.red;
   AUDIO.thud();
   /* strike the hull where the round came in, so the hit reads on the aircraft

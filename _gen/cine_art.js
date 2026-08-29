@@ -1221,14 +1221,16 @@ const CINE_ART = (function () {
     const rim = o.rim == null ? 1 : sat(o.rim);
     const breath = sat(o.breath || 0);
     const tt = o.tt || 0;
+    const sweep = o.sweep || 0;                            // passing-light streak rate on the visor
 
     const brt = Math.sin(tt * 1.25);                       // slow breathing
     const buzz = (noise(tt * 13.0) - 0.5) * 2;             // airframe buzz
+    const idleTilt = 0.028 * Math.sin(tt * 0.53 + 1.7);    // small, slow, human head sway
 
     /* head frame */
     const hcx = mixv(-16, 6, turn) - pitch * 8;
     const hcy = -112 + brt * 1.4 + buzz * 0.8 + pitch * 12;
-    const hrot = pitch * 0.30 + mixv(-0.05, 0.03, turn);
+    const hrot = pitch * 0.30 + mixv(-0.05, 0.03, turn) + idleTilt;
     const hcs = Math.cos(hrot), hsn = Math.sin(hrot);
     function h2b(px, py) {           // head local -> body local
       return [hcx + px * hcs - py * hsn, hcy + px * hsn + py * hcs];
@@ -1984,7 +1986,41 @@ const CINE_ART = (function () {
     sp.addColorStop(0.63, 'rgba(226,244,255,' + (0.26 * vfx).toFixed(3) + ')');
     sp.addColorStop(1.00, 'rgba(255,255,255,0)');
     c.fillStyle = sp; c.fillRect(-72, -18, 144, 82);
+    /* a second, ANIMATED glint riding across the glass — the reflection
+       of whatever is streaking past outside (rail lights, cloud edges,
+       the other jet), independent of the static canopy-bow streak above */
+    if (sweep > 0.008) {
+      const sph = (tt * sweep) % 1;
+      const af = sat(Math.min(sph, 1 - sph) / 0.16);
+      if (af > 0.01) {
+        c.save();
+        c.translate(mixv(-64, 92, sph), mixv(50, -30, sph));
+        c.rotate(0.5); c.scale(1, 0.085);
+        const swG = rg(c, 'pl.vsweep', 0, 0, 1, 0, 0, 46, [
+          [0.00, 'rgba(214,238,255,0)'], [0.50, 'rgba(228,244,255,0.9)'], [1.00, 'rgba(214,238,255,0)']
+        ]);
+        c.globalAlpha = alpha * vfx * af * (0.45 + 0.55 * rim);
+        c.fillStyle = swG; c.fillRect(-50, -50, 100, 100);
+        c.restore();
+      }
+    }
     c.restore();
+    /* imperfection: fine grime and hairline scratches on the glass —
+       deterministic so it doesn't crawl frame to frame */
+    c.globalAlpha = alpha * (0.30 + 0.30 * vis);
+    for (let i = 0; i < 9; i++) {
+      const gx = -60 + (i * 41.3 % 128);
+      const gy = -6 + (i * 27.7 % 62);
+      const gr = 1.1 + (i % 4) * 0.6;
+      c.beginPath(); c.arc(gx, gy, gr, 0, TAU);
+      c.fillStyle = 'rgba(8,10,14,' + (0.10 + 0.05 * (i % 3)).toFixed(3) + ')';
+      c.fill();
+    }
+    c.strokeStyle = 'rgba(230,240,250,0.10)'; c.lineWidth = 0.9;
+    seg(c, -50, 30, 8, 6, 'rgba(230,240,250,0.09)', 0.8);
+    seg(c, -20, -8, 30, 40, 'rgba(230,240,250,0.07)', 0.7);
+    seg(c, 4, 44, 34, 20, 'rgba(10,10,12,0.10)', 0.8);
+    c.globalAlpha = alpha;
     if (breath > 0.02) {
       const fg = c.createLinearGradient(0, 48, 0, 12);
       fg.addColorStop(0, 'rgba(210,232,255,' + (0.18 * breath).toFixed(3) + ')');
@@ -2784,9 +2820,57 @@ const CINE_ART = (function () {
     c.restore();
   }
 
+  /* ==================================================================
+     CROWD — a distant skyline of heads-and-shoulders, for the "audience"
+     angle on the launch: cheap flat dark silhouettes, never more than a
+     fill + a couple of curves each.  Layout is precomputed once (like
+     the cloud bank above) so a frame is just N path fills.
+     ================================================================== */
+  const CR_N = 26;
+  const CROWD = (function () {
+    const a = [];
+    for (let i = 0; i < CR_N; i++) {
+      a.push({
+        x: hash(i * 3.1 + 1) - 0.5,               // normalised -0.5..0.5
+        hgt: 0.62 + hash(i * 5.3 + 2) * 0.55,      // vs row scale
+        hw: 0.42 + hash(i * 7.7 + 3) * 0.30,
+        row: i % 3,                                // 0 back .. 2 front (bigger, lower)
+        ph: hash(i * 2.3 + 4) * TAU                // a little head-bob variance
+      });
+    }
+    return a;
+  })();
+  function crowd(c, cx, y, w, scale, tt, alpha) {
+    alpha = alpha == null ? 1 : sat(alpha);
+    if (alpha <= 0.004) return;
+    c.save();
+    for (let i = 0; i < CR_N; i++) {
+      const p = CROWD[i];
+      const rowY = y + p.row * scale * 0.34;
+      const rowS = scale * (0.78 + p.row * 0.20);
+      const bob = tt ? Math.sin(tt * 0.6 + p.ph) * scale * 0.02 : 0;
+      const x = cx + p.x * w;
+      const hw = p.hw * rowS, hgt = p.hgt * rowS;
+      c.globalAlpha = alpha * (0.72 + p.row * 0.14);
+      c.fillStyle = '#04050a';
+      c.beginPath();
+      c.moveTo(x - hw, rowY + bob);
+      c.quadraticCurveTo(x - hw * 1.1, rowY - hgt * 0.58 + bob, x - hw * 0.46, rowY - hgt * 0.66 + bob);
+      c.lineTo(x + hw * 0.46, rowY - hgt * 0.66 + bob);
+      c.quadraticCurveTo(x + hw * 1.1, rowY - hgt * 0.58 + bob, x + hw, rowY + bob);
+      c.closePath();
+      c.fill();
+      c.beginPath();
+      c.arc(x, rowY - hgt * 0.66 - hw * 0.58 + bob, hw * 0.58, 0, TAU);
+      c.fill();
+    }
+    c.globalAlpha = 1;
+    c.restore();
+  }
+
   return {
     rocket: rocket, warship: warship, jet: jet, pilot: pilot,
-    cockpit: cockpit, silo: silo, cloudBank: cloudBank
+    cockpit: cockpit, silo: silo, cloudBank: cloudBank, crowd: crowd
   };
 })();
 try { if (typeof globalThis !== 'undefined' && !globalThis.CINE_ART) globalThis.CINE_ART = CINE_ART; } catch (e) { }

@@ -17,8 +17,11 @@ const AUDIO = (function () {
 
   // busses
   var preComp, comp, master, musicGain, sfxGain, sfxShaper;
-  var musicFilter, drumBus, bassBus, arpBus, padBus;
+  var musicFilter, drumBus, bassBus, arpBus, padBus, duckBus;
   var fxDelay, fxFeedback, fxTone;
+
+  // cached bitcrusher curve (lo-fi digital grit on boss-only layers)
+  var crushCurveCache = null;
 
   // engine (persistent voice)
   var eng = null;
@@ -56,16 +59,17 @@ const AUDIO = (function () {
   var intensTarget = 0;
   var intens = 0;
 
-  // 8 bar progression in A minor.  root = bass midi, ch = triad voicing
+  // 8 bar progression in A minor.  root = bass midi, ch = add9 voicing
+  // (wider synth-stack chords than a plain triad - reads more "widescreen/sci-fi")
   var PROG = [
-    { root: 45, ch: [57, 60, 64] },  // Am
-    { root: 45, ch: [57, 60, 64] },  // Am
-    { root: 41, ch: [53, 57, 60] },  // F
-    { root: 43, ch: [55, 59, 62] },  // G
-    { root: 48, ch: [60, 64, 67] },  // C
-    { root: 48, ch: [60, 64, 67] },  // C
-    { root: 41, ch: [53, 57, 60] },  // F
-    { root: 40, ch: [56, 59, 64] }   // E (major -> harmonic tension back to Am)
+    { root: 45, ch: [57, 60, 64, 71] },  // Am9   (A C E B)
+    { root: 45, ch: [57, 60, 64, 71] },  // Am9
+    { root: 41, ch: [53, 57, 60, 67] },  // Fadd9 (F A C G)
+    { root: 43, ch: [55, 59, 62, 69] },  // Gadd9 (G B D A)
+    { root: 48, ch: [60, 64, 67, 74] },  // Cadd9 (C E G D)
+    { root: 48, ch: [60, 64, 67, 74] },  // Cadd9
+    { root: 41, ch: [53, 57, 60, 67] },  // Fadd9
+    { root: 40, ch: [56, 59, 64, 66] }   // E(add9) major -> tension back to Am, F# colour tone
   ];
 
   // 16th gate for the bassline + octave jumps
@@ -161,6 +165,55 @@ const AUDIO = (function () {
     return c;
   }
 
+  /* stair-step quantizer curve - cheap bitcrush grit for boss-only layers */
+  function makeCrushCurve(steps) {
+    var n = 1024, c = new Float32Array(n), s = steps || 9;
+    for (var i = 0; i < n; i++) {
+      var x = (i / (n - 1)) * 2 - 1;
+      c[i] = Math.round(x * s) / s;
+    }
+    return c;
+  }
+  function getCrushCurve() {
+    if (!crushCurveCache) crushCurveCache = makeCrushCurve(9);
+    return crushCurveCache;
+  }
+
+  /* PWM pulse wave: two phase-offset sawtooths, one inverted, summed.
+     Starting the second oscillator `duty*period` seconds after the first
+     produces a genuine variable-width pulse (no custom PeriodicWave/Fourier
+     math needed) - duty in (0,1) sets the width, so it can be animated per
+     note for that "breathing" digital-synth movement. Returns the two
+     oscillators as srcs so callers can fold them into their own voice(). */
+  function pulseOsc(freq, t, dur, duty) {
+    var period = 1 / Math.max(20, freq);
+    var offset = clamp(duty == null ? 0.5 : duty, 0.05, 0.95) * period;
+    var a = osc('sawtooth', freq, t);
+    var b = osc('sawtooth', freq, t);
+    var inv = gainNode(-1);
+    var sum = gainNode(0.5);
+    b.connect(inv); inv.connect(sum);
+    a.connect(sum);
+    a.start(t); b.start(t + offset);
+    a.stop(t + dur + offset + 0.02);
+    b.stop(t + dur + offset + 0.02);
+    return { out: sum, srcs: [a, b] };
+  }
+
+  /* sidechain-style duck: pin the current duckBus value, dip fast, release
+     slower - the classic pump that makes a synth mix feel programmed/digital
+     rather than "live band". Only the kick drives it. */
+  function duckPump(t, amt, rel) {
+    if (!duckBus) return;
+    var v = Math.max(0.05, 1 - amt);
+    try {
+      duckBus.gain.cancelScheduledValues(t);
+      duckBus.gain.setValueAtTime(Math.max(0.0001, duckBus.gain.value), t);
+      duckBus.gain.linearRampToValueAtTime(v, t + 0.014);
+      duckBus.gain.exponentialRampToValueAtTime(1, t + rel);
+    } catch (e) { }
+  }
+
   /* ---------------------------------------------------------------
      init
      --------------------------------------------------------------- */
@@ -223,11 +276,15 @@ const AUDIO = (function () {
     fxDelay.connect(fxTone);
     fxTone.connect(preComp);
 
-    /* ---- music sub-busses ---- */
+    /* ---- music sub-busses ----
+       bass/arp/pad all pass through duckBus, which the kick drum pumps on
+       every hit (classic sidechain duck) - drumBus bypasses it so the kick
+       doesn't duck itself. Gives the mix that "modern digital" pump feel. */
+    duckBus = gainNode(1); duckBus.connect(musicFilter);
     drumBus = gainNode(0.9); drumBus.connect(musicFilter);
-    bassBus = gainNode(0.0); bassBus.connect(musicFilter);
-    arpBus = gainNode(0.0); arpBus.connect(musicFilter);
-    padBus = gainNode(0.0); padBus.connect(musicFilter);
+    bassBus = gainNode(0.0); bassBus.connect(duckBus);
+    arpBus = gainNode(0.0); arpBus.connect(duckBus);
+    padBus = gainNode(0.0); padBus.connect(duckBus);
 
     buildEngine();
 
@@ -695,6 +752,9 @@ const AUDIO = (function () {
     head.connect(drumBus);
     var srcs = [];
 
+    // sidechain the rest of the mix to this hit - deeper/snappier as tension rises
+    duckPump(t, (0.22 + 0.3 * intens) * Math.min(1, amp / 0.9), 0.1 + 0.1 * intens);
+
     var o = osc('sine', 165, t);
     o.frequency.exponentialRampToValueAtTime(fclamp(44), t + 0.07);
     o.frequency.exponentialRampToValueAtTime(fclamp(36), t + 0.3);
@@ -798,26 +858,35 @@ const AUDIO = (function () {
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     flt.connect(g); g.connect(head);
 
+    // saw + square hybrid stack - the square edge reads more digital/growly
+    // than a plain double-saw while the resonant lowpass keeps it from
+    // getting harsh
     var a = osc('sawtooth', f0, t); a.detune.value = -8;
-    var b = osc('sawtooth', f0, t); b.detune.value = 9;
-    a.connect(flt); b.connect(flt);
+    var b = osc('square', f0, t); b.detune.value = 9;
+    var bTrim = gainNode(0.6);
+    a.connect(flt);
+    b.connect(bTrim); bTrim.connect(flt);
     a.start(t); a.stop(t + dur + 0.02);
     b.start(t); b.stop(t + dur + 0.02);
     srcs.push(a, b);
 
-    // sub sine keeps the low end solid regardless of the filter
+    // separate sub-bass layer: pure sine, its own envelope, unaffected by
+    // the resonant filter so the low end always stays solid and clean
     var s = osc('sine', f0 * 0.5, t);
-    var sg = pluck(t, 0.45, dur * 0.95, 0.004);
+    var sg = pluck(t, 0.48, dur * 0.95, 0.004);
     s.connect(sg); sg.connect(head);
     s.start(t); s.stop(t + dur + 0.02);
     srcs.push(s);
 
-    // boss: octave-up doubling for aggression
+    // boss: octave-up doubling, run through a bitcrusher for a snarling
+    // digital edge instead of a plain extra saw
     if (octave) {
       var o2 = osc('sawtooth', f0 * 2, t); o2.detune.value = 6;
       var og = pluck(t, 0.22, dur * 0.85, 0.003);
       var of = lp(fclamp(cutBase * 3.2), 4);
-      o2.connect(of); of.connect(og); og.connect(head);
+      var crush = ctx.createWaveShaper();
+      crush.curve = getCrushCurve();
+      o2.connect(crush); crush.connect(of); of.connect(og); og.connect(head);
       o2.start(t); o2.stop(t + dur + 0.02);
       srcs.push(o2);
     }
@@ -840,13 +909,18 @@ const AUDIO = (function () {
     flt.connect(g); g.connect(head);
 
     var a = osc('sawtooth', f0, t); a.detune.value = -7;
-    var b = osc('square', f0, t); b.detune.value = 8;
-    var bg = gainNode(0.4);
-    a.connect(flt); b.connect(bg); bg.connect(flt);
+    a.connect(flt);
     a.start(t); a.stop(t + dur + 0.02);
-    b.start(t); b.stop(t + dur + 0.02);
 
-    voice(head, [a, b]);
+    // PWM pulse layer, width slowly breathing over real time - a cheap but
+    // convincing "analog synth gone digital" movement on the lead voice
+    var duty = 0.5 - 0.28 * (0.5 + 0.5 * Math.sin(t * 0.9));
+    var pw = pulseOsc(f0 * 1.003, t, dur, duty);
+    pw.srcs[0].detune.value = 6; pw.srcs[1].detune.value = 6;
+    var bg = gainNode(0.4);
+    pw.out.connect(bg); bg.connect(flt);
+
+    voice(head, [a].concat(pw.srcs));
     setTimeout(function () { try { send.disconnect(); } catch (e) { } }, (dur + 0.4) * 1000);
   }
 
@@ -868,21 +942,39 @@ const AUDIO = (function () {
     var det = [-14, 0, 15];
     for (var i = 0; i < chord.length; i++) {
       var f0 = mtof(chord[i]);
-      for (var k = 0; k < (nasty ? 3 : 2); k++) {
-        var o = osc('sawtooth', f0, t);
-        o.detune.value = det[k] * (nasty ? 1.6 : 1);
-        o.connect(flt);
-        o.start(t); o.stop(t + dur + 0.02);
-        srcs.push(o);
+      var kmax = nasty ? 3 : 2;
+      for (var k = 0; k < kmax; k++) {
+        // boss stacks get one unison voice swapped for a duty-varied pulse
+        // instead of another saw - a "synth stack" of saw + pulse reads
+        // more digital than pure supersaw
+        if (nasty && k === 2) {
+          var duty = 0.3 + 0.15 * Math.sin(t * 1.7 + i);
+          var pw = pulseOsc(f0, t, dur, duty);
+          pw.srcs[0].detune.value = det[k] * 1.6;
+          pw.srcs[1].detune.value = det[k] * 1.6;
+          pw.out.connect(flt);
+          srcs.push(pw.srcs[0], pw.srcs[1]);
+        } else {
+          var o = osc('sawtooth', f0, t);
+          o.detune.value = det[k] * (nasty ? 1.6 : 1);
+          o.connect(flt);
+          o.start(t); o.stop(t + dur + 0.02);
+          srcs.push(o);
+        }
       }
     }
     if (nasty) {
-      // minor second clash against the root - boss dissonance
+      // minor second clash against the root - ring-modulated for a
+      // metallic/alien snarl instead of a plain dissonant saw
       var c = osc('sawtooth', mtof(chord[0] + 13), t);
-      var cg = gainNode(0.4);
-      c.connect(cg); cg.connect(flt);
+      var ringLFO = osc('sine', mtof(chord[0] + 13) * 0.5, t);
+      var ringAmt = gainNode(0.35);
+      var ringGain = gainNode(0);      // base 0 -> output = carrier * modulator (true ring mod)
+      ringLFO.connect(ringAmt); ringAmt.connect(ringGain.gain);
+      c.connect(ringGain); ringGain.connect(flt);
       c.start(t); c.stop(t + dur + 0.02);
-      srcs.push(c);
+      ringLFO.start(t); ringLFO.stop(t + dur + 0.02);
+      srcs.push(c, ringLFO);
     }
 
     voice(head, srcs);
@@ -890,7 +982,7 @@ const AUDIO = (function () {
   }
 
   function pad(t, chord, dur) {
-    if (!budget(6)) return;
+    if (!budget(8)) return;      // 4-note (add9) voicings now, was 3
     var head = gainNode(0.22);
     head.connect(padBus);
     var flt = lp(700 + 900 * intens, 1.2);
@@ -899,12 +991,24 @@ const AUDIO = (function () {
     g.gain.exponentialRampToValueAtTime(0.35, t + dur * 0.3);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     flt.connect(g); g.connect(head);
-    var srcs = [];
+
+    // slow filter shimmer across the sustain - subtle, futuristic movement
+    // rather than a static drone
+    var lfo = osc('sine', 0.18, t);
+    var lfoAmt = gainNode(220 + 260 * intens);
+    lfo.connect(lfoAmt); lfoAmt.connect(flt.frequency);
+    lfo.start(t); lfo.stop(t + dur + 0.05);
+
+    var srcs = [lfo];
     for (var i = 0; i < chord.length; i++) {
       var f0 = mtof(chord[i] - 12);
+      // saw + square hybrid: the square layer gives a bit of "digital choir"
+      // brightness on top of the saw body, trimmed so it doesn't overpower
       var a = osc('sawtooth', f0, t); a.detune.value = -9;
-      var b = osc('sawtooth', f0, t); b.detune.value = 11;
-      a.connect(flt); b.connect(flt);
+      var b = osc('square', f0, t); b.detune.value = 11;
+      var bTrim = gainNode(0.55);
+      a.connect(flt);
+      b.connect(bTrim); bTrim.connect(flt);
       a.start(t); a.stop(t + dur + 0.05);
       b.start(t); b.stop(t + dur + 0.05);
       srcs.push(a, b);
@@ -951,8 +1055,11 @@ const AUDIO = (function () {
 
   function applyIntensity(t, immediate) {
     var tc = immediate ? 0.001 : 0.5;
-    // master music tone opens up dramatically with intensity
+    // master music tone opens up dramatically with intensity - the rising
+    // resonance on top of the sweep is what gives it that "trance filter
+    // riser" sci-fi character rather than just sounding brighter
     musicFilter.frequency.setTargetAtTime(fclamp(520 + 15000 * Math.pow(intens, 1.35)), t, tc);
+    musicFilter.Q.setTargetAtTime(0.8 + 3.4 * Math.pow(intens, 1.1), t, tc);
     musicGain.gain.setTargetAtTime(0.5 + 0.24 * intens, t, tc);
 
     bassBus.gain.setTargetAtTime(0.32 + 0.24 * Math.min(1, intens * 2.2), t, tc);
@@ -1035,7 +1142,9 @@ const AUDIO = (function () {
     if (I > 0.42) {
       var arpOn = (I > 0.62) ? true : (st % 2 === 0);
       if (arpOn) {
-        var ex = [chord[0], chord[1], chord[2], chord[0] + 12, chord[1] + 12, chord[2] + 12];
+        // fold the add9 colour tone into the arp pool (in two registers)
+        // instead of just doubling the triad an octave up
+        var ex = [chord[0], chord[3] - 12, chord[1], chord[2], chord[3], chord[0] + 12];
         var idx = ARP_IDX[(st + bar * 3) % 16] % ex.length;
         var n = ex[idx] + (boss ? 12 : 0);
         arpNote(t, n, STEP * (boss ? 0.85 : 1.4));
@@ -1046,8 +1155,8 @@ const AUDIO = (function () {
     if (I > 0.6) {
       var stabHere = (st === 6 || st === 14) || (boss && st === 10);
       if (stabHere) {
-        var voicing = [chord[0], chord[1], chord[2]];
-        if (boss) voicing = [chord[0] - 12, chord[1], chord[2], chord[0] + 12];
+        var voicing = chord.slice(0, 4);   // full add9 stack
+        if (boss) voicing = [chord[0] - 12, chord[1], chord[2], chord[3], chord[0] + 12];
         stab(t, voicing, boss ? 0.3 : 0.22, boss);
       }
     }
@@ -1718,6 +1827,11 @@ const AUDIO = (function () {
      --------------------------------------------------------------- */
   function setIntensity(v) {
     v = clamp(v, 0, 1);
+    // a sudden escalation (e.g. boss engaged) gets a quick digital riser
+    // stinger on top of the smooth filter sweep already in applyIntensity
+    if (ready && !muted && v - intensTarget > 0.22) {
+      try { riser(now() + 0.01, 0.4 + 0.5 * (v - intensTarget)); } catch (e) { }
+    }
     intensTarget = v;               // applied smoothly inside the scheduler
   }
 
