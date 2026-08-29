@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKYFALL INTERCEPTOR</title>
+<style>
+  :root{--cyan:#22e0ff;--mag:#ff3cf0;--red:#ff2b4d;--green:#3cff9e}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:#04050c;overflow:hidden;
+    font-family:"Courier New",monospace;color:#cfefff;user-select:none;cursor:none}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #gl{z-index:1} #hud{z-index:2}
+  #crt{position:fixed;inset:0;pointer-events:none;z-index:3;
+    background:
+      radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 42%, rgba(0,0,0,.5) 100%),
+      repeating-linear-gradient(to bottom, rgba(0,0,0,.22) 0 1px, rgba(0,0,0,0) 1px 3px);
+    animation:flick 4.2s infinite steps(60)}
+  @keyframes flick{0%,100%{opacity:.9}47%{opacity:.8}48%{opacity:1}}
+
+  .screen{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;
+    background:radial-gradient(ellipse at 50% 40%,#180614 0%,#04050c 70%)}
+  .screen.hidden{display:none}
+  #alarm{position:absolute;inset:0;pointer-events:none;
+    box-shadow:inset 0 0 160px 30px rgba(255,43,77,.55);animation:pulse .78s infinite ease-in-out}
+  @keyframes pulse{0%,100%{opacity:.25}50%{opacity:.95}}
+  #intro .warn{color:var(--red);letter-spacing:.38em;font-size:clamp(13px,1.7vw,20px);
+    text-shadow:0 0 18px var(--red);animation:pulse .78s infinite}
+  #intro h1{margin:.28em 0 .1em;font-size:clamp(34px,7.4vw,88px);letter-spacing:.14em;color:#fff;
+    text-shadow:0 0 12px var(--cyan),0 0 42px var(--cyan)}
+  #intro .sub{color:var(--cyan);letter-spacing:.3em;font-size:clamp(10px,1.3vw,14px);opacity:.85}
+  #log{margin:22px 0 6px;min-height:5.2em;font-size:clamp(11px,1.35vw,15px);line-height:1.75;
+    color:var(--green);text-shadow:0 0 10px rgba(60,255,158,.6)}
+  #log div{opacity:0;animation:fadein .18s forwards}
+  @keyframes fadein{to{opacity:1}}
+  .btn{margin-top:16px;padding:16px 42px;font:inherit;font-size:clamp(15px,2vw,22px);
+    letter-spacing:.22em;color:#04050c;background:var(--cyan);border:0;cursor:none;
+    box-shadow:0 0 24px var(--cyan),0 0 70px rgba(34,224,255,.5);
+    animation:breathe 1.1s infinite ease-in-out;opacity:0;pointer-events:none;transition:opacity .25s}
+  .btn.on{opacity:1;pointer-events:auto}
+  .btn:hover{background:#fff;box-shadow:0 0 34px #fff,0 0 90px var(--cyan)}
+  @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
+  .keys{margin-top:26px;font-size:clamp(9px,1.15vw,13px);letter-spacing:.18em;color:#6d8fa6}
+  .keys b{color:var(--cyan);font-weight:400}
+  #over h1{font-size:clamp(30px,6.4vw,74px);letter-spacing:.16em;margin:0;color:#fff;
+    text-shadow:0 0 14px var(--red),0 0 60px var(--red)}
+  #over .stat{margin-top:14px;font-size:clamp(13px,1.8vw,20px);letter-spacing:.16em;color:var(--cyan)}
+  #over .stat span{color:#fff}
+  #cine{position:fixed;inset:0;width:100%;height:100%;display:none;z-index:40;background:#000}
+  #err{position:fixed;inset:0;z-index:99;display:none;padding:40px;background:#100;color:#f88;
+    font-size:14px;white-space:pre-wrap;overflow:auto}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="hud"></canvas>
+<div id="crt"></div>
+<canvas id="cine"></canvas>
+
+<div id="intro" class="screen hidden">
+  <div id="alarm"></div>
+  <div class="warn">&#9888; ALIEN INCURSION &mdash; SECTOR 7 &#9888;</div>
+  <h1>SKYFALL</h1>
+  <div class="sub">I N T E R C E P T O R</div>
+  <div id="log"></div>
+  <button id="launch" class="btn">LAUNCH INTERCEPTOR</button>
+  <div class="keys"><b>W</b> CLIMB &middot; <b>S</b> DIVE &middot; <b>A/D</b> LEFT/RIGHT &middot; <b>CLICK</b> GUNS &middot; <b>SPACE</b> MISSILE &middot; <b>SHIFT</b> BOOST &middot; <b>AA/DD</b> ROLL</div>
+</div>
+
+<div id="over" class="screen hidden">
+  <h1>INTERCEPTOR LOST</h1>
+  <div class="stat">SCORE <span id="fScore">0</span></div>
+  <div class="stat">DISTANCE <span id="fDist">0</span> KM &middot; KILLS <span id="fKills">0</span></div>
+  <button id="again" class="btn on">RE-LAUNCH</button>
+</div>
+
+<pre id="err"></pre>
+<script>
+window.addEventListener('error', e=>{
+  const el=document.getElementById('err');
+  el.style.display='block';
+  el.textContent += (e.error && e.error.stack ? e.error.stack : e.message)+'\n\n';
+});
+</script>
+<script src="_gen/models.js"></script>
+<script src="_gen/shaders.js"></script>
+<script src="_gen/audio.js"></script>
+<script src="_gen/cine_art.js"></script>
+<script src="_gen/intro.js"></script>
+<script src="_gen/game.js"></script>
+</body>
+</html>
