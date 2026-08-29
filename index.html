@@ -751,6 +751,10 @@ uniform float uAlpha;
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
+/* 0.0 = the usual neon fresnel edge (default for an unset uniform, so every
+   existing draw call is untouched). 1.0 = matte, for huge grazing-angle
+   surfaces like the desert floor, where a full-strength rim washes to white. */
+uniform float uMatte;
 
 void main() {
   /* winding is inconsistent and culling is off -> face the normal at us */
@@ -778,24 +782,30 @@ void main() {
   float under = pow(clamp(-N.y, 0.0, 1.0), 1.5);
   amb += vec3(0.55, 0.08, 0.42) * under * 0.55;
 
-  /* --- specular ------------------------------------------------- */
-  vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 42.0);
-
-  /* --- FRESNEL RIM : the neon edge, the whole point ------------- */
+  /* --- FRESNEL RIM : the neon edge, the whole point -------------
+     A grazing-angle ground plane has fres ~= 1 everywhere, so a full rim
+     washes the desert to white. uMatte damps it; it also lets the three
+     pow() calls be skipped entirely on the big terrain fills. */
   float fres = 1.0 - max(dot(N, V), 0.0);
-  float rim = pow(fres, 3.0);
-  float hotRim = pow(fres, 9.0);
-
-  /* rim hue: cyan on the up-facing edges, magenta on the low ones */
-  vec3 rimCol = mix(vec3(1.00, 0.14, 0.72), vec3(0.32, 0.94, 1.00), up);
-  rimCol *= (0.55 + 0.85 * vCol);
+  float rimK = 1.0 - clamp(uMatte, 0.0, 1.0);
 
   /* --- composite ------------------------------------------------ */
   vec3 col = vCol * (amb + keyCol * ndl + fillCol * ndf);
-  col += keyCol * spec * 1.15;
-  col += rimCol * rim * 2.10;
-  col += vec3(1.0) * hotRim * 0.45;
+
+  if (rimK > 0.004) {
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 42.0);
+    float rim = pow(fres, 3.0);
+    float hotRim = pow(fres, 9.0);
+
+    /* rim hue: cyan on the up-facing edges, magenta on the low ones */
+    vec3 rimCol = mix(vec3(1.00, 0.14, 0.72), vec3(0.32, 0.94, 1.00), up);
+    rimCol *= (0.55 + 0.85 * vCol);
+
+    col += keyCol * spec * 1.15 * rimK;
+    col += rimCol * rim * 2.10 * rimK;
+    col += vec3(1.0) * hotRim * 0.45 * rimK;
+  }
 
   /* additive emissive (damage flashes / boss phases) */
   col += uTint * (0.85 + 0.95 * fres);
@@ -2821,8 +2831,7 @@ try { if (typeof globalThis !== 'undefined' && !globalThis.AUDIO) globalThis.AUD
      rocket   (c, x, y, s, rot, thrust, tt)
      warship  (c, x, y, s, alpha, charge, tt)  -> { tips:[[x,y],[x,y]] }
      jet      (c, x, y, s, rot, thrust, tint)
-     glove    (c, x, y, s, rot, mirror, alpha)
-     mask     (c, x, y, s, rot, alpha)
+     pilot    (c, x, y, s, opts)               seated aircrew, 3rd person
      cockpit  (c, tt, boot, sealed)            absolute 1600x900
      silo     (c, x, y, w, open, glowCol)
      cloudBank(c, y, h, tt, tint, alpha)
@@ -3803,217 +3812,75 @@ const CINE_ART = (function () {
   }
 
   /* ==================================================================
-     4. GLOVE — pilot's gloved hand + forearm, first person,
-     reaching UP from the bottom of frame. ~120 long.
-     y +50 (cuff) .. y -70 (fingertips)
-     ================================================================== */
-
-  /* one tapered, creased finger segment chain */
-  function finger(c, bx, by, segs) {
-    /* segs: [ [len, ang, w0, w1], ... ] applied cumulatively */
-    c.save();
-    c.translate(bx, by);
-    for (let i = 0; i < segs.length; i++) {
-      const L = segs[i][0], A = segs[i][1], w0 = segs[i][2], w1 = segs[i][3];
-      c.rotate(A);
-      const g = lg(c, 'gl.fs' + i, -w0, 0, w0, 0, [
-        [0, '#3d465c'], [0.28, '#5b6880'], [0.6, '#252c3b'], [1, '#111621']
-      ]);
-      c.beginPath();
-      c.moveTo(-w0, 0);
-      c.lineTo(-w1, -L + w1);
-      c.quadraticCurveTo(-w1, -L, 0, -L);
-      c.quadraticCurveTo(w1, -L, w1, -L + w1);
-      c.lineTo(w0, 0);
-      c.closePath();
-      c.fillStyle = g; c.fill();
-      c.strokeStyle = 'rgba(5,8,14,0.75)'; c.lineWidth = 0.8; c.stroke();
-      /* knuckle crease at the base of each segment */
-      c.beginPath();
-      c.moveTo(-w0 * 0.92, -1.6);
-      c.quadraticCurveTo(0, -4.2, w0 * 0.92, -1.6);
-      c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1.0; c.stroke();
-      c.beginPath();
-      c.moveTo(-w0 * 0.9, -0.2);
-      c.quadraticCurveTo(0, -2.6, w0 * 0.9, -0.2);
-      c.strokeStyle = 'rgba(180,205,235,0.14)'; c.lineWidth = 0.7; c.stroke();
-      /* cyan rim down the left edge of the segment */
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      seg(c, -w0 + 0.4, -1, -w1 + 0.3, -L + w1, rgba(CY, 0.28), 1.0);
-      c.restore();
-      c.translate(0, -L);
-    }
-    c.restore();
-  }
-
-  function glove(c, x, y, s, rot, mirror, alpha) {
-    alpha = alpha == null ? 1 : sat(alpha);
-    if (alpha <= 0.002) return;
-
-    c.save();
-    c.translate(x, y);
-    c.rotate(rot || 0);
-    c.scale(s, s);
-    if (mirror) c.scale(-1, 1);
-    c.globalAlpha = alpha;
-    c.lineJoin = 'round';
-
-    /* ---------- forearm gauntlet -------------------------------- */
-    const armG = lg(c, 'gl.arm', -18, 0, 18, 0, [
-      [0.00, '#0c1018'], [0.14, '#252d3e'], [0.36, '#48546c'],
-      [0.58, '#2b3344'], [0.84, '#151a25'], [1.00, '#090c13']
-    ]);
-    c.beginPath();
-    c.moveTo(-17, 52);
-    c.lineTo(-16, 18);
-    c.quadraticCurveTo(-15, 6, -14, 2);
-    c.lineTo(14, 2);
-    c.quadraticCurveTo(15, 6, 16, 18);
-    c.lineTo(17, 52);
-    c.closePath();
-    c.fillStyle = armG; c.fill();
-
-    /* segmented armour plates on the gauntlet */
-    const plG = lg(c, 'gl.pl', -15, 0, 15, 0, [
-      [0, '#161c29'], [0.3, '#3a4459'], [0.62, '#232a39'], [1, '#0d1119']
-    ]);
-    fillP(c, [-15.4, 30, 15.4, 30, 15.0, 20, -15.0, 20], plG);
-    fillP(c, [-14.6, 17, 14.6, 17, 14.2, 8, -14.2, 8], plG);
-    strokeP(c, [-15.4, 30, 15.4, 30, 15.0, 20, -15.0, 20], 'rgba(4,6,11,0.8)', 0.9);
-    strokeP(c, [-14.6, 17, 14.6, 17, 14.2, 8, -14.2, 8], 'rgba(4,6,11,0.8)', 0.9);
-    seg(c, -14.8, 21.2, 14.8, 21.2, 'rgba(190,215,245,0.14)', 0.7);
-    seg(c, -14.0, 9.2, 14.0, 9.2, 'rgba(190,215,245,0.12)', 0.7);
-
-    /* ribbed cuff */
-    for (let i = 0; i < 6; i++) {
-      const yy = 52 - i * 3.4;
-      seg(c, -16.8 + i * 0.12, yy, 16.8 - i * 0.12, yy, 'rgba(0,0,0,0.5)', 1.3);
-      seg(c, -16.6 + i * 0.12, yy + 1.3, 16.6 - i * 0.12, yy + 1.3, 'rgba(160,190,220,0.13)', 0.8);
-    }
-    /* cyan status LED + label block */
-    fillP(c, [4, 24, 13, 24, 13, 29, 4, 29], '#080b12');
-    c.save();
-    c.globalCompositeOperation = 'lighter';
-    disc(c, 8.5, 26.5, 1.7, rgba(CY, 0.95));
-    blob(c, 8.5, 26.5, 10, CY, 0.45);
-    c.restore();
-    fillP(c, [-13, 23, -5, 23, -5, 27, -13, 27], '#1b2130');
-    seg(c, -12, 25, -6, 25, 'rgba(140,170,200,0.35)', 0.7);
-
-    /* ---------- padded palm / back-of-hand ---------------------- */
-    const palmG = lg(c, 'gl.palm', -19, 0, 19, 0, [
-      [0.00, '#0d111a'], [0.16, '#2b3446'], [0.38, '#586880'],
-      [0.60, '#333c4e'], [0.86, '#171d29'], [1.00, '#0a0d14']
-    ]);
-    c.beginPath();
-    c.moveTo(-14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.closePath();
-    c.fillStyle = palmG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.7)'; c.lineWidth = 1.0; c.stroke();
-
-    /* quilted padding on the back of the hand */
-    c.save();
-    c.beginPath();
-    c.moveTo(-14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.closePath();
-    c.clip();
-    c.strokeStyle = 'rgba(0,0,0,0.42)'; c.lineWidth = 0.9;
-    for (let i = -2; i <= 2; i++) seg(c, i * 7.4, -32, i * 7.4 + 2, 6, 'rgba(0,0,0,0.42)', 0.9);
-    for (let i = 0; i < 3; i++) seg(c, -20, -24 + i * 10, 20, -26 + i * 10, 'rgba(0,0,0,0.34)', 0.9);
-    /* knuckle bumps */
-    for (let i = 0; i < 4; i++) {
-      ell(c, -11 + i * 8.6, -26, 4.2, 3.0, 'rgba(120,150,185,0.16)');
-    }
-    c.restore();
-
-    /* ---------- thumb (distinct, off the near side) ------------- */
-    c.save();
-    c.translate(-12.5, -9);
-    c.rotate(-0.34);
-    const thG = lg(c, 'gl.th', -7, 0, 7, 0, [
-      [0, '#39435a'], [0.3, '#5a6880'], [0.65, '#232b3a'], [1, '#0e131c']
-    ]);
-    c.beginPath();
-    c.moveTo(-7, 4); c.lineTo(-6.4, -13);
-    c.quadraticCurveTo(-6.0, -18, -1.5, -18.5);
-    c.quadraticCurveTo(3.0, -19, 3.6, -13);
-    c.lineTo(4.4, 4);
-    c.closePath();
-    c.fillStyle = thG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.75)'; c.lineWidth = 0.9; c.stroke();
-    seg(c, -6.4, -12, 3.6, -12.6, 'rgba(0,0,0,0.5)', 1.0);
-    /* thumb tip pad */
-    c.translate(-1.2, -18.5);
-    c.rotate(-0.5);
-    c.beginPath();
-    c.moveTo(-5.4, 1); c.lineTo(-4.6, -11);
-    c.quadraticCurveTo(-4.2, -15, 0, -15);
-    c.quadraticCurveTo(4.0, -15, 4.0, -11);
-    c.lineTo(4.6, 1);
-    c.closePath();
-    c.fillStyle = thG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.75)'; c.lineWidth = 0.9; c.stroke();
-    c.restore();
-
-    /* ---------- four fingers, curled as if gripping ------------- */
-    /* base x, base y, then [len, angle, w0, w1] per segment */
-    const F = [
-      [-9.5, -28, [[17, -0.10, 5.4, 4.7], [13, 0.52, 4.6, 4.0], [9, 0.60, 3.9, 3.2]]],
-      [-0.6, -30, [[19, -0.02, 5.6, 4.9], [14, 0.55, 4.8, 4.1], [9.5, 0.62, 4.0, 3.2]]],
-      [7.8, -29, [[17.5, 0.08, 5.4, 4.6], [13, 0.58, 4.5, 3.9], [9, 0.64, 3.8, 3.0]]],
-      [15.4, -25, [[13.5, 0.20, 4.6, 3.9], [10.5, 0.60, 3.8, 3.3], [7.5, 0.66, 3.2, 2.6]]]
-    ];
-    for (let i = 0; i < F.length; i++) finger(c, F[i][0], F[i][1], F[i][2]);
-
-    /* ---------- lighting: cyan rim one edge, warm bounce other ---
-       Clipped to the arm+palm silhouette so no light spills onto the
-       background — a rectangle of glow here would betray the vector. */
-    c.save();
-    c.globalCompositeOperation = 'lighter';
-    c.beginPath();
-    c.moveTo(-17, 52);
-    c.lineTo(-16, 18);
-    c.quadraticCurveTo(-15, 6, -14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.quadraticCurveTo(15, 6, 16, 18);
-    c.lineTo(17, 52);
-    c.closePath();
-    c.clip();
-    const rimG = lg(c, 'gl.rim', -19, 0, -11, 0, [
-      [0, 'rgba(58,224,255,0.5)'], [1, 'rgba(58,224,255,0)']
-    ]);
-    c.fillStyle = rimG;
-    c.fillRect(-19, -34, 9, 90);
-    const wrmG = lg(c, 'gl.wrm', 19, 0, 7, 0, [
-      [0, 'rgba(255,168,88,0.34)'], [1, 'rgba(255,168,88,0)']
-    ]);
-    c.fillStyle = wrmG;
-    c.fillRect(7, -32, 12, 88);
-    c.restore();
-
-    c.restore();
-  }
-
   /* ==================================================================
-     5. MASK — pilot's oxygen mask, face on. ~130 wide (x +/-65).
-     NOTE: the breathing hose trails well past the nominal bounds,
-     down to roughly (-125, +125) in local units.
+     4. PILOT — helmeted aircrew strapped into an ejection seat, seen
+     from OUTSIDE the canopy (three-quarter / profile).  This is a
+     character, not a first-person prop: shell, visor, mask, harness,
+     seat, lit warm from the instruments below and cold from the
+     canopy behind.
+
+       pilot(c, x, y, s, o)
+         (x,y) is the notch of the throat.  The crown of the helmet
+         sits at y-220*s, the shoulders at y+90*s and the torso runs
+         off to y+440*s — put the origin high enough in the frame that
+         the chest leaves the bottom edge.
+         o.turn   0 = head in profile facing frame-LEFT (down the nose),
+                  1 = head turned toward the lens.
+         o.pitch  head tilt: -1 chin up .. +1 chin down onto the panel.
+         o.visor  0 = visor stowed on the brow, 1 = visor snapped down.
+         o.hud    0..1 HUD symbology reflected across the visor glass.
+         o.glow   0..1 warm instrument key light from below-left.
+         o.rim    0..1 cold canopy rim light from above-right.
+         o.breath 0..1 exhale — mask fog + valve puff.
+         o.tt     seconds; drives the idle breathing + airframe buzz.
+         o.alpha
      ================================================================== */
+
+  /* Closed smooth curve through a flat control-point list (quadratics
+     joined at the midpoints).  Two lists of equal length can therefore
+     be lerped freely, which is how the head turns. */
+  function smoothP(c, p) {
+    const n = p.length >> 1;
+    if (n < 3) return;
+    c.beginPath();
+    c.moveTo((p[0] + p[(n - 1) * 2]) * 0.5, (p[1] + p[(n - 1) * 2 + 1]) * 0.5);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      c.quadraticCurveTo(p[i * 2], p[i * 2 + 1],
+        (p[i * 2] + p[j * 2]) * 0.5, (p[i * 2 + 1] + p[j * 2 + 1]) * 0.5);
+    }
+    c.closePath();
+  }
+  function lerpP(a, b, t, out) {
+    for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+    out.length = a.length;
+    return out;
+  }
+  function mixv(a, b, t) { return a + (b - a) * t; }
+
+  /* Helmet shell.  12 control points, same roles in both poses, so the
+     head can be turned by lerping between them:
+       0 brow front   1 front upper  2 crown front  3 crown
+       4 crown back   5 occiput      6 back lower   7 behind the ear
+       8 ear-flap     9 cheek edge  10 front cheek 11 brow lower      */
+  const SH_A = [
+    -96, -24, -86, -64, -42, -94, 16, -98, 66, -76, 94, -34,
+    90, 16, 66, 50, 22, 60, -26, 44, -62, 16, -92, -4
+  ];
+  const SH_B = [
+    -70, -30, -78, -66, -40, -94, 10, -98, 56, -78, 82, -38,
+    78, 8, 58, 46, 26, 30, -6, 18, -38, 28, -64, 42
+  ];
+  /* The jaw / lower face that hangs out of the front of the shell. */
+  const JW_A = [
+    -90, -10, -104, 26, -94, 58, -62, 84, -14, 80, 32, 56, -30, 30
+  ];
+  const JW_B = [
+    -58, 0, -64, 34, -48, 64, -12, 82, 26, 74, 54, 40, 0, 8
+  ];
+  const SH_T = [], JW_T = [];
+
+  /* the oxygen-mask cup, half-width 65 at scale 1 */
   function maskCup(c) {
     c.beginPath();
     c.moveTo(-65, -30);
@@ -4028,185 +3895,659 @@ const CINE_ART = (function () {
     c.closePath();
   }
 
-  function mask(c, x, y, s, rot, alpha) {
-    alpha = alpha == null ? 1 : sat(alpha);
-    if (alpha <= 0.002) return;
+  /* the drop visor, in visor space: pivot (0,0) sits on the brow bar */
+  function visorShape(c) {
+    c.beginPath();
+    c.moveTo(-58, -6);
+    c.quadraticCurveTo(-68, 18, -52, 40);
+    c.quadraticCurveTo(-16, 56, 30, 42);
+    c.quadraticCurveTo(52, 30, 50, -8);
+    c.closePath();
+  }
+
+  function pilot(c, x, y, s, o) {
+    o = o || {};
+    const alpha = o.alpha == null ? 1 : sat(o.alpha);
+    if (alpha <= 0.003) return;
+    const turn = sat(o.turn == null ? 0.5 : o.turn);
+    const pitch = o.pitch == null ? 0 : o.pitch;
+    const vis = sat(o.visor == null ? 1 : o.visor);
+    const hud = sat(o.hud || 0);
+    const key = o.glow == null ? 1 : sat(o.glow);
+    const rim = o.rim == null ? 1 : sat(o.rim);
+    const breath = sat(o.breath || 0);
+    const tt = o.tt || 0;
+
+    const brt = Math.sin(tt * 1.25);                       // slow breathing
+    const buzz = (noise(tt * 13.0) - 0.5) * 2;             // airframe buzz
+
+    /* head frame */
+    const hcx = mixv(-16, 6, turn) - pitch * 8;
+    const hcy = -112 + brt * 1.4 + buzz * 0.8 + pitch * 12;
+    const hrot = pitch * 0.30 + mixv(-0.05, 0.03, turn);
+    const hcs = Math.cos(hrot), hsn = Math.sin(hrot);
+    function h2b(px, py) {           // head local -> body local
+      return [hcx + px * hcs - py * hsn, hcy + px * hsn + py * hcs];
+    }
 
     c.save();
     c.translate(x, y);
-    c.rotate(rot || 0);
     c.scale(s, s);
     c.globalAlpha = alpha;
     c.lineJoin = 'round';
 
-    /* ---------- corrugated breathing hose (behind the cup) ------ */
-    /* chain of overlapping ribbed segments, tapering as it recedes */
-    const HN = 14;
+    /* ==================================================================
+       EJECTION SEAT — the mass behind him
+       ================================================================== */
     c.save();
-    for (let i = HN - 1; i >= 0; i--) {
-      const t = i / (HN - 1);
-      /* quadratic path from under the cup out to the lower left */
-      const px = mix(mix(-22, -74, t), mix(-74, -122, t), t);
-      const py = mix(mix(40, 66, t), mix(66, 124, t), t);
-      /* tangent for segment orientation */
-      const tx = mix(-74 - -22, -122 - -74, t);
-      const ty = mix(66 - 40, 124 - 66, t);
-      const a = Math.atan2(ty, tx);
-      const r = mix(16.5, 8.5, t);
-      c.save();
-      c.translate(px, py);
-      c.rotate(a);
-      const hgG = lg(c, 'mk.hose', 0, -18, 0, 18, [
-        [0.00, '#0b0e15'], [0.20, '#39445a'], [0.42, '#5c6b86'],
-        [0.62, '#2b3443'], [1.00, '#070a10']
-      ]);
-      c.save();
-      c.scale(1, r / 16.5);
-      c.beginPath();
-      c.moveTo(-7, -16.5);
-      c.quadraticCurveTo(0, -19.5, 7, -16.5);
-      c.lineTo(7, 16.5);
-      c.quadraticCurveTo(0, 19.5, -7, 16.5);
-      c.closePath();
-      c.fillStyle = hgG; c.fill();
-      c.strokeStyle = 'rgba(3,5,9,0.75)'; c.lineWidth = 1.2; c.stroke();
-      /* rib highlight */
-      c.beginPath();
-      c.moveTo(-2.4, -16.0);
-      c.quadraticCurveTo(-2.4, 0, -2.4, 16.0);
-      c.strokeStyle = 'rgba(175,205,240,0.16)'; c.lineWidth = 2.0; c.stroke();
-      c.restore();
-      c.restore();
-    }
-    c.restore();
-    /* hose collar where it enters the cup */
-    ell(c, -22, 38, 15, 13, '#0d1119');
-
-    /* ---------- strap tabs + buckles ---------------------------- */
-    for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      c.save();
-      c.scale(sg, 1);
-      const tbG = lg(c, 'mk.tab', 58, 0, 84, 0, [
-        [0, '#39424f'], [0.4, '#5e6a7c'], [1, '#161b24']
-      ]);
-      fillP(c, [56, -36, 82, -30, 82, -12, 56, -14], tbG);
-      strokeP(c, [56, -36, 82, -30, 82, -12, 56, -14], 'rgba(4,6,11,0.8)', 1.1);
-      /* buckle */
-      fillP(c, [68, -30, 80, -27, 80, -16, 68, -17], '#0a0d13');
-      strokeP(c, [70, -28, 78, -26, 78, -19, 70, -20], 'rgba(180,200,225,0.55)', 1.6);
-      seg(c, 74, -27, 74, -19, 'rgba(180,200,225,0.4)', 1.2);
-      c.restore();
-    }
-
-    /* ---------- mic boom stub (right side) ---------------------- */
-    c.save();
-    c.translate(52, 6);
-    c.rotate(0.55);
-    const mbG = lg(c, 'mk.mb', 0, -6, 0, 6, [
-      [0, '#4d5768'], [0.45, '#6e7c92'], [1, '#12161e']
+    c.translate(-152, -30);
+    c.translate(178, 0); c.scale(1.34, 1.04); c.translate(-178, 0);
+    const stG = lg(c, 'pl.seat', 30, -260, 320, 320, [
+      [0.00, '#19222e'], [0.22, '#101720'], [0.60, '#0a0e15'], [1.00, '#04060a']
     ]);
     c.beginPath();
-    c.moveTo(0, -6); c.lineTo(26, -4.6);
-    c.quadraticCurveTo(31, -4.6, 31, 0);
-    c.quadraticCurveTo(31, 4.6, 26, 4.6);
-    c.lineTo(0, 6);
+    c.moveTo(58, 460);
+    c.lineTo(34, -60);
+    c.quadraticCurveTo(30, -204, 104, -222);
+    c.lineTo(232, -244);
+    c.quadraticCurveTo(288, -246, 292, -170);
+    c.lineTo(322, 460);
     c.closePath();
-    c.fillStyle = mbG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.8)'; c.lineWidth = 1.0; c.stroke();
-    for (let i = 0; i < 4; i++) seg(c, 8 + i * 5, -5.4, 8 + i * 5, 5.4, 'rgba(0,0,0,0.4)', 0.8);
-    disc(c, 27, 0, 3.0, '#080b11');
+    c.fillStyle = stG; c.fill();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 3; c.stroke();
+
+    /* quilted headrest pad — the helmet is silhouetted against it */
+    const hrG = lg(c, 'pl.hrest', 40, -220, 240, -60, [
+      [0.00, '#33404f'], [0.40, '#1f2833'], [1.00, '#0c1118']
+    ]);
+    c.beginPath();
+    c.moveTo(46, -56);
+    c.lineTo(42, -172);
+    c.quadraticCurveTo(44, -206, 106, -212);
+    c.lineTo(218, -224);
+    c.quadraticCurveTo(258, -224, 260, -178);
+    c.lineTo(264, -64);
+    c.quadraticCurveTo(154, -40, 46, -56);
+    c.closePath();
+    c.fillStyle = hrG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 2.4; c.stroke();
+    for (let i = 0; i < 3; i++) {
+      const px = 92 + i * 58;
+      seg(c, px, -210 + i * 3, px + 4, -52 - i * 2, 'rgba(0,0,0,0.45)', 2.4);
+      seg(c, px + 4, -210 + i * 3, px + 8, -52 - i * 2, 'rgba(160,195,230,0.08)', 1.2);
+    }
+    /* head-box wings that bracket the headrest */
+    fillP(c, [40, -196, 62, -212, 66, -70, 44, -60], '#0a0f16');
+    fillP(c, [258, -206, 292, -196, 296, -60, 262, -66], '#0a0f16');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, 44, -196, 48, -62, rgba(CY, 0.16 * rim), 2);
+    seg(c, 292, -194, 296, -64, rgba(CY, 0.34 * rim), 2.6);
     c.restore();
 
-    /* ---------- main rubber cup --------------------------------- */
-    const cupG = lg(c, 'mk.cup', -66, -46, 40, 56, [
-      [0.00, '#2b3240'], [0.22, '#3b4454'], [0.48, '#242b38'],
-      [0.74, '#161b25'], [1.00, '#0a0d13']
+    /* seat rails + inertia-reel housing */
+    fillP(c, [284, -150, 322, -140, 336, 460, 292, 460], '#080b11');
+    for (let i = 0; i < 7; i++) {
+      const py = -90 + i * 84;
+      disc(c, 300 + i * 1.6, py, 3.6, 'rgba(6,9,14,0.9)');
+      disc(c, 299 + i * 1.6, py - 1, 1.6, 'rgba(170,200,230,0.16)');
+    }
+
+    /* ejection handle — the striped loop over the head box */
+    c.save();
+    c.translate(190, -250);
+    c.rotate(-0.08);
+    c.beginPath();
+    c.moveTo(-72, 8);
+    c.quadraticCurveTo(-76, -14, -42, -16);
+    c.lineTo(46, -20);
+    c.quadraticCurveTo(76, -20, 74, 2);
+    c.lineTo(62, 4);
+    c.quadraticCurveTo(62, -8, 42, -8);
+    c.lineTo(-40, -4);
+    c.quadraticCurveTo(-60, -4, -60, 10);
+    c.closePath();
+    c.fillStyle = '#141821'; c.fill();
+    c.save();
+    c.clip();
+    for (let i = -6; i < 12; i++) {
+      c.save();
+      c.translate(i * 15, 0); c.rotate(0.5);
+      c.fillStyle = i % 2 ? 'rgba(226,172,52,0.75)' : 'rgba(16,14,10,0.9)';
+      c.fillRect(-7.5, -30, 15, 60);
+      c.restore();
+    }
+    c.restore();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 1.6; c.stroke();
+    c.restore();
+    c.restore();                       /* end seat transform */
+
+    /* ==================================================================
+       TORSO — flight suit, survival vest, harness
+       ================================================================== */
+    const shrug = breath * 4 + brt * 2.2;
+    function bodyPath() {
+      c.beginPath();
+      c.moveTo(-268, 460);
+      c.lineTo(-230, 206);
+      c.quadraticCurveTo(-200, 96 - shrug, -128, 44 - shrug);
+      c.quadraticCurveTo(-62, 10, 42, 6);
+      c.quadraticCurveTo(144, 20, 206, 96 - shrug * 0.6);
+      c.quadraticCurveTo(240, 138, 250, 244);
+      c.lineTo(268, 460);
+      c.closePath();
+    }
+    const bdG = lg(c, 'pl.body', -250, 40, 230, 380, [
+      [0.00, '#242c35'], [0.20, '#191f27'], [0.52, '#11161d'], [1.00, '#080b10']
+    ]);
+    bodyPath();
+    c.fillStyle = bdG; c.fill();
+
+    c.save();
+    bodyPath();
+    c.clip();
+
+    /* survival vest sitting proud of the suit */
+    const vsG = lg(c, 'pl.vest', -170, 60, 180, 400, [
+      [0.00, '#2d3742'], [0.40, '#1c232b'], [1.00, '#0c1016']
+    ]);
+    c.beginPath();
+    c.moveTo(-196, 460);
+    c.lineTo(-178, 156);
+    c.quadraticCurveTo(-156, 88, -88, 62);
+    c.lineTo(-30, 86);
+    c.lineTo(50, 82);
+    c.quadraticCurveTo(130, 96, 166, 152);
+    c.lineTo(190, 460);
+    c.closePath();
+    c.fillStyle = vsG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.7)'; c.lineWidth = 2.6; c.stroke();
+    seg(c, -18, 92, -6, 460, 'rgba(0,0,0,0.5)', 3);
+    seg(c, -13, 92, -1, 460, 'rgba(165,195,225,0.08)', 1.2);
+    fillP(c, [-168, 250, -56, 266, -60, 336, -172, 320], 'rgba(255,255,255,0.03)');
+    strokeP(c, [-168, 250, -56, 266, -60, 336, -172, 320], 'rgba(0,0,0,0.45)', 2);
+    fillP(c, [48, 262, 158, 250, 166, 322, 52, 334], 'rgba(0,0,0,0.22)');
+    strokeP(c, [48, 262, 158, 250, 166, 322, 52, 334], 'rgba(0,0,0,0.45)', 2);
+    /* survival radio on the near chest */
+    fillP(c, [84, 136, 164, 162, 148, 232, 70, 206], '#10151d');
+    strokeP(c, [84, 136, 164, 162, 148, 232, 70, 206], 'rgba(2,4,8,0.85)', 2);
+    seg(c, 102, 156, 146, 170, 'rgba(150,180,210,0.12)', 2);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    disc(c, 134, 202, 3.2, rgba([70, 255, 158], 0.9));
+    blob(c, 134, 202, 16, [70, 255, 158], 0.35);
+    c.restore();
+
+    /* harness webbing */
+    const wbG = lg(c, 'pl.web', -60, 60, 40, 320, [
+      [0.00, '#4c5139'], [0.42, '#353b2a'], [1.00, '#1a1e15']
+    ]);
+    function strap(x0, y0, x1, y1, w0, w1) {
+      const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1;
+      const nx = -dy / L, ny = dx / L;
+      const q = [
+        x0 + nx * w0, y0 + ny * w0, x1 + nx * w1, y1 + ny * w1,
+        x1 - nx * w1, y1 - ny * w1, x0 - nx * w0, y0 - ny * w0
+      ];
+      fillP(c, q, wbG);
+      strokeP(c, q, 'rgba(2,4,8,0.7)', 1.8);
+      seg(c, x0 + nx * w0 * 0.45, y0 + ny * w0 * 0.45,
+        x1 + nx * w1 * 0.45, y1 + ny * w1 * 0.45, 'rgba(210,230,255,0.10)', 1.4);
+    }
+    strap(-132, 58 - shrug, -36, 216, 22, 17);
+    strap(120, 76 - shrug * 0.6, 18, 214, 20, 16);
+    strap(-196, 336, -24, 294, 20, 18);
+    strap(186, 342, 26, 298, 20, 18);
+    /* quick-release rotary buckle */
+    const bkG = rg(c, 'pl.buck', -14, 240, 2, -6, 250, 40, [
+      [0.00, '#c9d6e6'], [0.28, '#7c8b9f'], [0.62, '#3a4451'], [1.00, '#10141b']
+    ]);
+    disc(c, -4, 254, 33, 'rgba(0,0,0,0.5)');
+    disc(c, -6, 251, 30, bkG);
+    ring(c, -6, 251, 30, 'rgba(3,5,9,0.85)', 2.4);
+    ring(c, -6, 251, 19, 'rgba(12,16,22,0.8)', 3);
+    disc(c, -6, 251, 10, '#0b0f15');
+    for (let i = 0; i < 4; i++) {
+      const a = i * TAU / 4 + 0.7;
+      seg(c, -6 + Math.cos(a) * 12, 251 + Math.sin(a) * 12,
+        -6 + Math.cos(a) * 26, 251 + Math.sin(a) * 26, 'rgba(6,9,14,0.75)', 3);
+    }
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    ell(c, -18, 241, 9, 5, 'rgba(255,236,205,0.30)');
+    c.restore();
+
+    /* --- lighting on the body --------------------------------- */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const kyG = lg(c, 'pl.key', -270, 440, 60, 50, [
+      [0.00, 'rgba(255,170,78,0.58)'], [0.42, 'rgba(255,134,56,0.22)'],
+      [1.00, 'rgba(255,120,40,0)']
+    ]);
+    c.globalAlpha = alpha * key;
+    c.fillStyle = kyG; c.fillRect(-270, 10, 540, 470);
+    const rmG = lg(c, 'pl.rim', 268, 30, 40, 270, [
+      [0.00, 'rgba(130,228,255,0.36)'], [1.00, 'rgba(80,200,255,0)']
+    ]);
+    c.globalAlpha = alpha * rim;
+    c.fillStyle = rmG; c.fillRect(-60, -30, 340, 510);
+    c.globalAlpha = alpha;
+    c.restore();
+    /* deep shadow in the chest hollow under the chin */
+    const shG = lg(c, 'pl.bshade', 0, -6, 0, 190, [
+      [0.00, 'rgba(0,0,0,0.62)'], [1.00, 'rgba(0,0,0,0)']
+    ]);
+    c.fillStyle = shG; c.fillRect(-320, -30, 640, 240);
+    c.restore();
+
+    /* body rim strokes: warm on the panel side, cold from the canopy */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    bodyPath();
+    const bsG = lg(c, 'pl.bstroke', -240, 0, 260, 0, [
+      [0.00, 'rgba(255,152,62,0.52)'], [0.34, 'rgba(255,150,60,0.07)'],
+      [0.70, 'rgba(120,225,255,0.12)'], [1.00, 'rgba(160,240,255,0.70)']
+    ]);
+    c.strokeStyle = bsG; c.lineWidth = 4.2; c.stroke();
+    c.restore();
+
+    /* ==================================================================
+       NECK + COLLAR
+       ================================================================== */
+    const nkx = mixv(-24, -2, turn);
+    fillP(c, [nkx - 38, -80, nkx + 34, -80, nkx + 42, 40, nkx - 46, 40], '#070a0f');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, nkx + 34, -70, nkx + 40, 30, rgba(CY, 0.20 * rim), 4);
+    c.restore();
+    const clG = lg(c, 'pl.collar', -110, 6, 110, 78, [
+      [0.00, '#2e3641'], [0.38, '#1b212a'], [1.00, '#0a0e14']
+    ]);
+    c.beginPath();
+    c.moveTo(nkx - 106, 74);
+    c.quadraticCurveTo(nkx - 98, 16, nkx - 44, 4);
+    c.quadraticCurveTo(nkx, -4, nkx + 48, 6);
+    c.quadraticCurveTo(nkx + 98, 20, nkx + 106, 76);
+    c.quadraticCurveTo(nkx, 104, nkx - 106, 74);
+    c.closePath();
+    c.fillStyle = clG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 2.4; c.stroke();
+    seg(c, nkx - 94, 58, nkx + 94, 60, 'rgba(0,0,0,0.4)', 2);
+    seg(c, nkx - 92, 63, nkx + 92, 65, 'rgba(170,200,230,0.09)', 1.2);
+
+    /* ==================================================================
+       MASK HOSE — from the mask down into the chest connector
+       ================================================================== */
+    const mkx = mixv(-74, -14, turn), mky = 42;
+    const mkw = mixv(0.82, 1.06, turn);
+    const hoseTop = h2b(mkx - 22 * mkw, mky + 30);
+    const cnx = -150, cny = 250;
+    (function () {
+      const HN = 12;
+      const flex = breath * 6 + brt * 3;
+      const mx = hoseTop[0] - 54 - flex, my = hoseTop[1] + 104;
+      for (let i = HN - 1; i >= 0; i--) {
+        const q = i / (HN - 1);
+        const ax = mixv(hoseTop[0], mx, q), ay = mixv(hoseTop[1], my, q);
+        const bx = mixv(mx, cnx, q), by = mixv(my, cny, q);
+        const px = mixv(ax, bx, q), py = mixv(ay, by, q);
+        const r = mixv(11.5, 9, q);
+        c.save();
+        c.translate(px, py);
+        c.rotate(Math.atan2(by - ay, bx - ax));
+        const hgG = lg(c, 'pl.hose', 0, -12, 0, 12, [
+          [0.00, '#070a11'], [0.24, '#2c3546'], [0.46, '#4c586d'],
+          [0.68, '#222933'], [1.00, '#05080e']
+        ]);
+        c.scale(1, r / 11.5);
+        c.beginPath();
+        c.moveTo(-6, -11.5);
+        c.quadraticCurveTo(0, -14, 6, -11.5);
+        c.lineTo(6, 11.5);
+        c.quadraticCurveTo(0, 14, -6, 11.5);
+        c.closePath();
+        c.fillStyle = hgG; c.fill();
+        c.strokeStyle = 'rgba(3,5,9,0.8)'; c.lineWidth = 1.1; c.stroke();
+        c.restore();
+      }
+      fillP(c, [cnx - 24, cny - 20, cnx + 20, cny - 24, cnx + 24, cny + 18, cnx - 20, cny + 22], '#131922');
+      strokeP(c, [cnx - 24, cny - 20, cnx + 20, cny - 24, cnx + 24, cny + 18, cnx - 20, cny + 22],
+        'rgba(2,4,8,0.9)', 2);
+      seg(c, cnx - 14, cny - 8, cnx + 12, cny - 11, 'rgba(160,190,220,0.14)', 2);
+    })();
+
+    /* ==================================================================
+       HEAD
+       ================================================================== */
+    c.save();
+    c.translate(hcx, hcy);
+    c.rotate(hrot);
+
+    const shell = lerpP(SH_A, SH_B, turn, SH_T);
+    const jaw = lerpP(JW_A, JW_B, turn, JW_T);
+
+    /* contact shadow thrown back onto the headrest */
+    c.save();
+    c.globalAlpha = alpha * 0.5;
+    c.translate(20, 14);
+    smoothP(c, shell);
+    c.fillStyle = 'rgba(0,0,0,0.62)'; c.fill();
+    c.restore();
+    c.globalAlpha = alpha;
+
+    /* --- jaw / lower face (drawn under the shell) --------------- */
+    smoothP(c, jaw);
+    const skG = lg(c, 'pl.skin', -104, 30, 20, -10, [
+      [0.00, '#6d4634'], [0.34, '#3a251c'], [0.72, '#1a1310'], [1.00, '#0a0808']
+    ]);
+    c.fillStyle = skG; c.fill();
+    c.save();
+    smoothP(c, jaw);
+    c.clip();
+    const jsG = lg(c, 'pl.jshade', 0, 10, 0, 84, [
+      [0.00, 'rgba(0,0,0,0.7)'], [0.5, 'rgba(0,0,0,0.15)'], [1.00, 'rgba(0,0,0,0.65)']
+    ]);
+    c.fillStyle = jsG; c.fillRect(-120, -20, 240, 120);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = alpha * key;
+    const jkG = lg(c, 'pl.jkey', -110, 70, -10, 10, [
+      [0.00, 'rgba(255,170,96,0.5)'], [1.00, 'rgba(255,150,70,0)']
+    ]);
+    c.fillStyle = jkG; c.fillRect(-120, -20, 240, 120);
+    c.globalAlpha = alpha;
+    c.restore();
+    c.restore();
+
+    /* --- ear cup, bulging out of the shell's side --------------- */
+    c.save();
+    c.translate(mixv(26, 58, turn), mixv(16, 10, turn));
+    c.scale(mixv(1, 0.30, turn), 1);
+    ell(c, 0, 1, 25, 29, '#080c12');
+    ell(c, -1, -1, 21, 25, '#161d26');
+    ring(c, -1, -1, 21, 'rgba(3,5,9,0.9)', 2);
+    /* the comms box screwed onto the cup */
+    fillP(c, [-9, -9, 9, -11, 11, 8, -7, 10], '#0b1017');
+    strokeP(c, [-9, -9, 9, -11, 11, 8, -7, 10], 'rgba(3,5,9,0.9)', 1.4);
+    seg(c, -5, -4, 6, -5, 'rgba(170,200,230,0.16)', 1.6);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    ell(c, -11, -14, 5, 3, 'rgba(190,225,255,0.14)');
+    c.restore();
+    c.restore();
+    /* comms lead dropping behind the shoulder */
+    c.beginPath();
+    c.moveTo(mixv(34, 66, turn), 48);
+    c.quadraticCurveTo(mixv(76, 96, turn), 100, mixv(58, 82, turn), 176);
+    c.strokeStyle = 'rgba(5,8,13,0.9)'; c.lineWidth = 7; c.stroke();
+    c.strokeStyle = 'rgba(150,180,215,0.10)'; c.lineWidth = 2.2; c.stroke();
+
+    /* --- shell -------------------------------------------------- */
+    const hsG = lg(c, 'pl.shell', -92, -96, 80, 60, [
+      [0.00, '#3c4653'], [0.15, '#2a333e'], [0.42, '#1a212a'],
+      [0.72, '#10151c'], [1.00, '#070a0f']
+    ]);
+    smoothP(c, shell);
+    c.fillStyle = hsG; c.fill();
+
+    c.save();
+    smoothP(c, shell);
+    c.clip();
+    /* crown sheen */
+    const cwG = lg(c, 'pl.crown', -34, -106, 4, -12, [
+      [0.00, 'rgba(200,226,255,0.18)'], [1.00, 'rgba(200,226,255,0)']
+    ]);
+    c.fillStyle = cwG; c.fillRect(-110, -110, 220, 110);
+    /* the back of the shell falls away into the dark */
+    const ocG = lg(c, 'pl.occ', 24, 0, 104, 0, [
+      [0.00, 'rgba(0,0,0,0)'], [1.00, 'rgba(0,0,0,0.55)']
+    ]);
+    c.fillStyle = ocG; c.fillRect(16, -110, 96, 200);
+    /* moulded seam over the crown */
+    c.beginPath();
+    c.moveTo(mixv(-88, -66, turn), mixv(-14, -26, turn));
+    c.quadraticCurveTo(mixv(-34, -12, turn), -102, mixv(58, 44, turn), mixv(-64, -70, turn));
+    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 4; c.stroke();
+    c.strokeStyle = 'rgba(180,210,240,0.09)'; c.lineWidth = 1.4; c.stroke();
+    /* squadron flash, low on the back of the shell */
+    c.save();
+    c.globalAlpha = alpha * (0.45 + 0.35 * key);
+    c.translate(mixv(52, 66, turn), -12);
+    c.scale(mixv(0.85, 0.34, turn), 1);
+    fillP(c, [-22, -18, 4, -26, 14, -14, -12, -6], 'rgba(236,64,84,0.6)');
+    fillP(c, [-22, -2, 4, -10, 14, 2, -12, 10], 'rgba(232,242,255,0.28)');
+    c.restore();
+    c.globalAlpha = alpha;
+    /* warm bounce from the panel under the front edge */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = alpha * key;
+    const hkG = lg(c, 'pl.hkey', -104, 70, -14, -30, [
+      [0.00, 'rgba(255,176,84,0.44)'], [0.55, 'rgba(255,140,56,0.12)'],
+      [1.00, 'rgba(255,130,50,0)']
+    ]);
+    c.fillStyle = hkG; c.fillRect(-110, -110, 220, 220);
+    c.globalAlpha = alpha;
+    c.restore();
+    c.restore();
+
+    /* front / lower trim band of the shell */
+    c.save();
+    smoothP(c, shell);
+    c.clip();
+    c.beginPath();
+    c.moveTo(mixv(-100, -76, turn), mixv(-22, -30, turn));
+    c.quadraticCurveTo(mixv(-58, -12, turn), mixv(34, 30, turn),
+      mixv(24, 58, turn), mixv(58, 46, turn));
+    c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 9; c.stroke();
+    c.strokeStyle = 'rgba(178,206,238,0.13)'; c.lineWidth = 2.2; c.stroke();
+    c.restore();
+
+    /* shell rim: warm along the front, cold along the back */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    smoothP(c, shell);
+    const hrimG = lg(c, 'pl.hrim', -98, -60, 94, 56, [
+      [0.00, 'rgba(255,170,80,0.5)'], [0.26, 'rgba(255,150,60,0.05)'],
+      [0.60, 'rgba(120,220,255,0.10)'], [1.00, 'rgba(180,244,255,0.8)']
+    ]);
+    c.strokeStyle = hrimG; c.lineWidth = 3.2; c.stroke();
+    c.restore();
+
+    /* --- the eye, while the visor is still up ------------------- */
+    if (vis < 0.75) {
+      const ea = alpha * (1 - vis / 0.75);
+      const ex = mixv(-72, -26, turn), ey = -6;
+      const ew = mixv(0.42, 1, turn);
+      c.save();
+      c.globalAlpha = ea;
+      c.translate(ex, ey);
+      c.scale(ew, 1);
+      ell(c, 0, 0, 15, 8, 'rgba(14,9,9,0.9)');
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      ell(c, -4, -2, 4.0, 2.8, 'rgba(196,228,255,0.85)');
+      blob(c, -4, -2, 13, [150, 210, 255], 0.28);
+      c.restore();
+      c.restore();
+      if (turn > 0.4) {
+        c.save();
+        c.globalAlpha = ea * sat((turn - 0.4) * 3);
+        ell(c, 22, -6, 12, 7, 'rgba(14,9,9,0.85)');
+        c.globalCompositeOperation = 'lighter';
+        ell(c, 19, -8, 3.2, 2.2, 'rgba(196,228,255,0.6)');
+        c.restore();
+      }
+      c.globalAlpha = alpha;
+    }
+
+    /* --- oxygen mask -------------------------------------------- */
+    c.save();
+    c.translate(mkx, mky);
+    c.scale(0.60 * mkw, 0.60);
+    const mcG = lg(c, 'pl.mask', -66, -46, 44, 56, [
+      [0.00, '#333d4a'], [0.20, '#3f4a5a'], [0.5, '#212832'],
+      [0.78, '#141920'], [1.00, '#080b10']
     ]);
     maskCup(c);
-    c.fillStyle = cupG; c.fill();
-    c.strokeStyle = 'rgba(3,5,9,0.8)'; c.lineWidth = 1.6; c.stroke();
-
+    c.fillStyle = mcG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 3; c.stroke();
     c.save();
     maskCup(c);
     c.clip();
-
-    /* upper cheek facets so the form turns */
-    fillP(c, [-65, -30, -44, -46, -6, -40, -18, -6, -56, -4], 'rgba(88,102,124,0.22)');
-    fillP(c, [65, -30, 44, -46, 6, -40, 18, -6, 56, -4], 'rgba(10,13,19,0.30)');
-    /* lower jaw shadow */
-    fillP(c, [-52, 16, 52, 16, 30, 46, -30, 46], 'rgba(6,8,13,0.45)');
-    /* seam between the moulded halves */
-    seg(c, -60, -4, 60, -4, 'rgba(0,0,0,0.55)', 1.6);
-    seg(c, -60, -2.2, 60, -2.2, 'rgba(190,215,245,0.12)', 0.9);
-    /* stitched edge following the rim */
-    c.beginPath();
-    c.moveTo(-58, -28);
-    c.quadraticCurveTo(-59, -8, -46, 14);
-    c.quadraticCurveTo(-33, 37, 0, 46);
-    c.quadraticCurveTo(33, 37, 46, 14);
-    c.quadraticCurveTo(59, -8, 58, -28);
-    c.strokeStyle = 'rgba(0,0,0,0.4)'; c.lineWidth = 1.0;
-    c.setLineDash([3, 3]); c.stroke(); c.setLineDash([]);
-
-    /* specular sheen along the top of the cup */
-    const shG = lg(c, 'mk.sheen', 0, -48, 0, -10, [
-      [0, 'rgba(215,238,255,0.34)'], [1, 'rgba(215,238,255,0)']
-    ]);
-    c.beginPath();
-    c.moveTo(-58, -30);
-    c.quadraticCurveTo(-46, -45, -8, -44);
-    c.quadraticCurveTo(34, -43, 56, -30);
-    c.quadraticCurveTo(30, -22, -6, -23);
-    c.quadraticCurveTo(-40, -24, -58, -30);
-    c.closePath();
-    c.fillStyle = shG; c.fill();
-
-    /* cyan rim light down the left */
+    fillP(c, [-65, -30, -44, -46, -6, -40, -18, -6, -56, -4], 'rgba(102,120,146,0.20)');
+    fillP(c, [65, -30, 44, -46, 6, -40, 18, -6, 56, -4], 'rgba(8,11,17,0.4)');
+    seg(c, -60, -4, 60, -4, 'rgba(0,0,0,0.5)', 2.4);
+    seg(c, -60, -1, 60, -1, 'rgba(190,215,245,0.10)', 1.2);
+    fillP(c, [-52, 16, 52, 16, 30, 46, -30, 46], 'rgba(5,7,12,0.45)');
     c.save();
     c.globalCompositeOperation = 'lighter';
-    const rimG = lg(c, 'mk.rim', -66, 0, -48, 0, [
-      [0, 'rgba(58,224,255,0.34)'], [1, 'rgba(58,224,255,0)']
+    c.globalAlpha = alpha * key;
+    const mkG = lg(c, 'pl.mkey', -74, 34, 6, -30, [
+      [0.00, 'rgba(255,176,92,0.30)'], [1.00, 'rgba(255,150,60,0)']
     ]);
-    c.fillStyle = rimG;
-    c.fillRect(-66, -48, 20, 106);
+    c.fillStyle = mkG; c.fillRect(-70, -50, 140, 112);
+    c.globalAlpha = alpha;
     c.restore();
     c.restore();
-
-    /* ---------- chromed exhalation valve ------------------------ */
-    const vx = 0, vy = 26;
-    /* housing shadow so it sits proud of the rubber */
-    ell(c, vx, vy + 2.5, 19, 18, 'rgba(0,0,0,0.55)');
-    const vG = rg(c, 'mk.valve', vx - 6, vy - 7, 1, vx, vy, 18, [
-      [0.00, '#e7eef8'], [0.22, '#a9b6c8'], [0.50, '#4f5b6d'],
-      [0.74, '#8998ad'], [1.00, '#1a2029']
+    /* exhalation valve */
+    const vG = rg(c, 'pl.valve', -6, 19, 1, 0, 26, 18, [
+      [0.00, '#dde6f2'], [0.24, '#9fadc0'], [0.52, '#4a5668'],
+      [0.76, '#7f8ea3'], [1.00, '#171d25']
     ]);
-    disc(c, vx, vy, 17.5, vG);
-    ring(c, vx, vy, 17.5, 'rgba(4,6,11,0.8)', 1.4);
-    ring(c, vx, vy, 14.0, 'rgba(20,26,34,0.85)', 1.6);
-    ring(c, vx, vy, 11.0, 'rgba(210,228,248,0.35)', 1.0);
-    ring(c, vx, vy, 8.0, 'rgba(20,26,34,0.7)', 1.4);
-    disc(c, vx, vy, 5.4, '#0b0e15');
-    /* radial valve slots */
-    for (let i = 0; i < 10; i++) {
-      const a = i * TAU / 10 + 0.15;
-      seg(c, vx + Math.cos(a) * 8.6, vy + Math.sin(a) * 8.6,
-        vx + Math.cos(a) * 13.4, vy + Math.sin(a) * 13.4, 'rgba(6,9,14,0.7)', 1.4);
+    disc(c, 0, 29, 12.5, vG);
+    ring(c, 0, 29, 12.5, 'rgba(4,6,11,0.85)', 2);
+    ring(c, 0, 29, 7.5, 'rgba(20,26,34,0.8)', 2);
+    disc(c, 0, 29, 3.6, '#0a0d13');
+    /* bayonet clips reaching back to the shell */
+    for (let i = 0; i < 2; i++) {
+      const sg = i ? 1 : -1;
+      c.save(); c.scale(sg, 1);
+      fillP(c, [54, -28, 86, -22, 86, -6, 54, -10], '#212934');
+      strokeP(c, [54, -28, 86, -22, 86, -6, 54, -10], 'rgba(3,5,9,0.85)', 1.8);
+      seg(c, 62, -22, 82, -17, 'rgba(180,205,235,0.14)', 2.2);
+      c.restore();
     }
-    /* chrome specular hotspot */
     c.save();
     c.globalCompositeOperation = 'lighter';
-    ell(c, vx - 6, vy - 8, 5.5, 3.4, 'rgba(255,255,255,0.5)');
-    blob(c, vx - 6, vy - 8, 12, WH, 0.22);
+    maskCup(c);
+    const mrG = lg(c, 'pl.mrim', -66, 0, 66, 0, [
+      [0.00, 'rgba(255,190,104,0.8)'], [0.34, 'rgba(255,170,80,0.05)'],
+      [1.00, 'rgba(150,232,255,0.3)']
+    ]);
+    c.strokeStyle = mrG; c.lineWidth = 3; c.stroke();
+    c.restore();
     c.restore();
 
-    /* ---------- two small hardware greebles --------------------- */
-    disc(c, -34, 30, 2.6, '#0a0d13');
-    disc(c, -34, 30, 1.2, 'rgba(170,195,225,0.5)');
-    fillP(c, [24, 34, 36, 31, 37, 38, 25, 41], '#12171f');
+    /* --- exhale: fog off the valve ------------------------------ */
+    if (breath > 0.01) {
+      const bp = h2b(mkx, mky + 22);
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      blob(c, bp[0] - 18, bp[1] + 6, 30 + 24 * breath, [200, 226, 255], 0.09 * breath);
+      blob(c, bp[0] - 42, bp[1] + 18, 22 + 36 * breath, [190, 215, 250], 0.06 * breath);
+      c.restore();
+    }
 
+    /* --- visor --------------------------------------------------- */
+    const vx = mixv(-64, -12, turn), vy = -34;
+    const vw = mixv(0.56, 0.94, turn) * 0.94;
+    /* reflections only read when the glass faces the lens */
+    const vfx = 0.24 + 0.76 * turn;
+    c.save();
+    c.translate(vx, vy);
+    c.scale(vw, 0.94);
+
+    /* the glass, pivoting up onto the brow when stowed */
+    c.save();
+    c.rotate(mixv(-0.42, 0, vis));
+    c.translate(0, mixv(-16, 6, vis));
+    c.scale(1, mixv(0.22, 1, vis));
+    visorShape(c);
+    const gl = c.createLinearGradient(-58, -8, 40, 50);
+    gl.addColorStop(0.00, 'rgba(' + (36 + 58 * vis) + ',' + (26 + 38 * vis) + ',12,0.9)');
+    gl.addColorStop(0.34, 'rgba(' + (24 + 26 * vis) + ',' + (18 + 18 * vis) + ',10,0.93)');
+    gl.addColorStop(0.72, 'rgba(14,12,10,0.95)');
+    gl.addColorStop(1.00, 'rgba(' + (26 + 38 * vis) + ',' + (20 + 26 * vis) + ',10,0.92)');
+    c.fillStyle = gl; c.fill();
+
+    c.save();
+    visorShape(c);
+    c.clip();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const gg = c.createLinearGradient(-62, 48, 26, -14);
+    gg.addColorStop(0.00, 'rgba(255,176,72,' + (0.22 * vfx).toFixed(3) + ')');
+    gg.addColorStop(0.45, 'rgba(255,132,54,' + (0.06 * vfx).toFixed(3) + ')');
+    gg.addColorStop(1.00, 'rgba(150,215,255,' + (0.16 * vfx).toFixed(3) + ')');
+    c.fillStyle = gg; c.fillRect(-72, -18, 144, 82);
+    if (hud * vfx > 0.02) {
+      c.globalAlpha = alpha * hud * vfx;
+      const gc = 'rgba(120,255,196,0.85)';
+      c.strokeStyle = gc; c.lineWidth = 2;
+      c.beginPath(); c.arc(-4, 20, 15, 0, TAU); c.stroke();
+      seg(c, -46, 20, -22, 20, gc, 2);
+      seg(c, 13, 20, 37, 20, gc, 2);
+      seg(c, -4, 2, -4, 9, gc, 2);
+      for (let i = -1; i <= 1; i += 2) {
+        const ly = 20 + i * 17 + Math.sin(tt * 0.8 + i) * 2;
+        seg(c, -42, ly, -20, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
+        seg(c, 12, ly, 34, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
+      }
+      blob(c, -4, 20, 52, [96, 255, 182], 0.15 * hud * vfx);
+      c.globalAlpha = alpha;
+    }
+    /* the canopy reflected as a hard streak across the glass */
+    const sp = c.createLinearGradient(-58, -6, 16, 46);
+    sp.addColorStop(0.00, 'rgba(255,255,255,0)');
+    sp.addColorStop(0.44, 'rgba(226,244,255,' + (0.28 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.53, 'rgba(255,255,255,' + (0.46 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.63, 'rgba(226,244,255,' + (0.15 * vfx).toFixed(3) + ')');
+    sp.addColorStop(1.00, 'rgba(255,255,255,0)');
+    c.fillStyle = sp; c.fillRect(-72, -18, 144, 82);
     c.restore();
+    if (breath > 0.02) {
+      const fg = c.createLinearGradient(0, 48, 0, 12);
+      fg.addColorStop(0, 'rgba(210,232,255,' + (0.18 * breath).toFixed(3) + ')');
+      fg.addColorStop(1, 'rgba(210,232,255,0)');
+      c.fillStyle = fg; c.fillRect(-72, 6, 144, 48);
+    }
+    c.restore();
+    visorShape(c);
+    c.strokeStyle = 'rgba(4,6,11,0.85)'; c.lineWidth = 2.6; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    visorShape(c);
+    const veG = lg(c, 'pl.vedge', -58, 0, 52, 0, [
+      [0.00, 'rgba(255,200,116,0.8)'], [0.42, 'rgba(255,180,90,0.08)'],
+      [1.00, 'rgba(180,244,255,0.5)']
+    ]);
+    c.strokeStyle = veG; c.lineWidth = 2.2; c.stroke();
+    c.restore();
+    c.restore();
+
+    /* housing / track across the brow — the glass slides under it */
+    c.beginPath();
+    c.moveTo(-72, -18);
+    c.quadraticCurveTo(-8, -38, 64, -20);
+    c.lineTo(64, 4);
+    c.quadraticCurveTo(-8, -14, -72, 6);
+    c.closePath();
+    c.fillStyle = '#1d242e'; c.fill();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 2.2; c.stroke();
+    seg(c, -66, -14, 58, -18, 'rgba(184,212,242,0.16)', 2.4);
+    disc(c, -64, -2, 7, '#0c1017'); disc(c, -64, -2, 3, 'rgba(170,200,230,0.34)');
+    disc(c, 56, -6, 7, '#0c1017'); disc(c, 56, -6, 3, 'rgba(170,200,230,0.34)');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, -66, -16, 58, -20, rgba(AM, 0.20 * key), 2);
+    c.restore();
+    c.restore();
+
+    c.restore();  /* end head */
+    c.restore();  /* end pilot */
   }
+
 
   /* ==================================================================
      7. SILO — underground hangar launch door in the ground plane.
@@ -4940,8 +5281,8 @@ const CINE_ART = (function () {
   }
 
   return {
-    rocket: rocket, warship: warship, jet: jet, glove: glove,
-    mask: mask, cockpit: cockpit, silo: silo, cloudBank: cloudBank
+    rocket: rocket, warship: warship, jet: jet, pilot: pilot,
+    cockpit: cockpit, silo: silo, cloudBank: cloudBank
   };
 })();
 try { if (typeof globalThis !== 'undefined' && !globalThis.CINE_ART) globalThis.CINE_ART = CINE_ART; } catch (e) { }
@@ -5400,94 +5741,264 @@ const CINE = (function () {
   }
 
   /* ================================================================
-     SCENE 3 — the pilot, first person
+     SCENE 3 — THE PILOT.  Camera is outside the canopy looking in at
+     him: helmet, visor, mask, harness, seat, lit warm from the panel
+     below and cold from the bay lights streaming past behind.
      ================================================================ */
   const BOOTLINES = [
     'APU .............. ONLINE', 'FLT CTRL ......... NOMINAL',
     'INS ALIGN ........ LOCKED', 'WEAPONS .......... ARMED',
     'O2 SUPPLY ........ 100%', 'CATAPULT ......... CHARGED'
   ];
+
+  /* the pilot sits here in the 1600x900 frame */
+  const P3X = 662, P3Y = 434, P3S = 1.18;
+  const FX3 = 644, FY3 = 286;              /* focal point: his head */
+
   function scene3(u, dt) {
     const A = art();
     const cat = ramp(4.75, 6.5, u);          // catapult wind-up
     const boot = ramp(0.45, 3.2, u);
-    const sealed = ramp(2.5, 3.05, u);
+    const snap = ramp(2.30, 2.46, u);        // the visor coming down
+    const sealed = ramp(2.46, 3.10, u);      // HUD blooming across it
+    const fade = 1 - ramp(6.1, 6.5, u);
 
     once('c3rumble', T2 + 0.15, function () {
       rumbleH = sfx('rumble', 0.12); sfx('setIntensity', 0.45);
     });
     if (rumbleH && rumbleH.set) rumbleH.set(0.12 + 0.88 * cat);
 
-    /* ---- outside: the launch tunnel ---- */
-    const vpx = 800, vpy = 330;
-    c.fillStyle = '#02030a'; c.fillRect(0, 0, VW, VH);
-    const speed = 0.6 + cat * 14;
-    /* receding floor + ceiling strip lights */
-    c.save(); c.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 26; i++) {
-      const f = ((i + (t * speed) % 1) / 26);
-      const d = Math.pow(f, 2.6);
-      const y = vpy + d * 640, y2 = vpy - d * 420;
-      const hw = 40 + d * 1300;
-      const a = (0.1 + 0.75 * f) * (1 - ramp(6.15, 6.5, u));
-      c.strokeStyle = rgba(C.cyan, a * 0.5); c.lineWidth = 1 + d * 7;
-      c.beginPath(); c.moveTo(vpx - hw, y); c.lineTo(vpx + hw, y); c.stroke();
-      c.strokeStyle = rgba(C.amber, a * 0.35);
-      c.beginPath(); c.moveTo(vpx - hw * 0.8, y2); c.lineTo(vpx + hw * 0.8, y2); c.stroke();
-      if (cat > 0.05) {
-        c.strokeStyle = rgba(C.white, a * cat * 0.5); c.lineWidth = 2 + d * 4;
-        c.beginPath(); c.moveTo(vpx - hw, y); c.lineTo(vpx - hw - 200 * cat, y); c.stroke();
-        c.beginPath(); c.moveTo(vpx + hw, y); c.lineTo(vpx + hw + 200 * cat, y); c.stroke();
-      }
+    /* ---- camera: slow push-in with a live hand-held drift ---- */
+    const inch = ramp(0, 6.4, u);
+    const zoom = 1.02 + 0.15 * inch + 0.06 * cat;
+    const cdx = Math.sin(u * 0.44 + 1.1) * 15 + Math.sin(u * 1.9) * 2.5 - 34 * inch;
+    const cdy = Math.cos(u * 0.31) * 8 + 26 * ramp(3.4, 6.4, u);
+    function push(p) {
+      c.save();
+      const z = 1 + (zoom - 1) * p;
+      c.translate(FX3 + cdx * p, FY3 + cdy * p);
+      c.scale(z, z);
+      c.translate(-FX3, -FY3);
     }
-    /* the opening at the far end */
-    const ow = 90 + cat * 1500, oh = 60 + cat * 900;
-    const og = c.createRadialGradient(vpx, vpy, 0, vpx, vpy, Math.max(ow, oh));
-    og.addColorStop(0, rgba(C.ice, 0.9)); og.addColorStop(0.5, rgba(C.mag, 0.35));
-    og.addColorStop(1, 'rgba(0,0,0,0)');
-    c.fillStyle = og; c.fillRect(vpx - ow, vpy - oh, ow * 2, oh * 2);
+
+    /* ================= 1. the launch bay, far behind ============ */
+    c.fillStyle = '#02030a'; c.fillRect(0, 0, VW, VH);
+    push(0.40);
+    const bgG = c.createLinearGradient(0, 0, 260, VH);
+    bgG.addColorStop(0, '#04050e');
+    bgG.addColorStop(0.52, '#0a0a1c');
+    bgG.addColorStop(1, '#120823');
+    c.fillStyle = bgG; c.fillRect(-300, -300, VW + 600, VH + 600);
+
+    /* pools of haze that the pilot silhouettes against */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.30 * fade;
+    c.drawImage(glow(C.violet), 720, 30, 900, 760);
+    c.globalAlpha = 0.16 * fade;
+    c.drawImage(glow(C.mag), 380, 180, 760, 640);
+    c.globalAlpha = 0.20 * fade;
+    c.drawImage(glow(C.cyan), 960, 120, 620, 560);
+    c.globalAlpha = 1;
+
+    /* ceiling strip lights of the tunnel streaming past */
+    const VPX = 1215, VPY = 384;
+    const spd = 0.09 + cat * 2.4;
+    for (let i = 0; i < 17; i++) {
+      const f = (i + (t * spd) % 1) / 17;
+      const d = Math.pow(f, 2.25);
+      const lx = VPX - d * 2250, ly = VPY - d * 210;
+      const lw = 24 + d * 400 + cat * d * 1000;
+      const a = (0.08 + 0.85 * f) * fade;
+      c.fillStyle = rgba(C.ice, a * 0.42);
+      c.fillRect(lx - lw, ly, lw, 2.5 + d * 8);
+      c.fillStyle = rgba(C.cyan, a * 0.18);
+      c.fillRect(lx - lw * 0.72, ly + 7 + d * 9, lw * 0.72, 2 + d * 4);
+      if (f > 0.30) {
+        c.globalAlpha = a * 0.22;
+        c.drawImage(glow(C.ice), lx - lw, ly - 34 - d * 40, lw, 70 + d * 80);
+        c.globalAlpha = 1;
+      }
+      /* deck reflection under them */
+      c.fillStyle = rgba(C.amber, a * 0.10);
+      c.fillRect(lx - lw * 0.8, VPY + 210 + d * 460, lw * 0.8, 2 + d * 6);
+    }
     c.restore();
 
-    /* ---- cockpit furniture ---- */
-    if (A) A.cockpit(c, t, boot, sealed);
+    /* silhouetted bay structure so the depth has edges */
+    c.fillStyle = '#04050c';
+    c.fillRect(1360, 60, 74, 700);
+    c.fillRect(1300, 300, 180, 26);
+    c.fillRect(150, -40, 60, 520);
+    for (let i = 0; i < 5; i++) c.fillRect(120, 40 + i * 96, 130, 16);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.5 * fade;
+    c.drawImage(glow(C.amber), 1300, 500, 190, 190);
+    c.globalAlpha = 0.32 * fade;
+    c.drawImage(glow(C.red), 120, 420, 180, 180);
+    c.globalAlpha = 1;
+    c.restore();
+    c.restore();
 
-    /* ---- HUD boot readout (over the glass) ---- */
+    /* ================= 2. inside the canopy ===================== */
+    push(0.92);
+    /* rear canopy bow, arching up behind his shoulder */
+    c.beginPath();
+    c.moveTo(1104, VH + 40);
+    c.quadraticCurveTo(1216, 320, 934, -40);
+    c.strokeStyle = '#070a11'; c.lineWidth = 42; c.stroke();
+    c.strokeStyle = 'rgba(120,150,190,0.10)'; c.lineWidth = 5; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.beginPath();
+    c.moveTo(1084, VH + 40);
+    c.quadraticCurveTo(1196, 320, 914, -40);
+    c.strokeStyle = rgba(C.ice, 0.30 * fade); c.lineWidth = 3; c.stroke();
+    c.restore();
+    /* the far cockpit wall / rear deck */
+    c.fillStyle = 'rgba(4,6,12,0.85)';
+    c.beginPath();
+    c.moveTo(1120, VH); c.lineTo(1216, 330); c.lineTo(VW, 190);
+    c.lineTo(VW, VH); c.closePath(); c.fill();
+    c.restore();
+
+    /* ================= 3. the pilot ============================= */
+    /* choreography: head down on the panel -> lifts and turns to lens
+       -> visor snaps -> settles forward down the catapult */
+    const lift = ramp(0.75, 1.95, u);
+    const toLens = ramp(1.55, 2.30, u);
+    const away = ramp(3.85, 4.95, u);
+    const turn = 0.34 + 0.58 * toLens - 0.40 * away;
+    const pitch = 0.80 - 0.72 * lift - 0.16 * ramp(4.6, 5.6, u)
+      + 0.05 * Math.sin(u * 0.8);
+    const visor = snap * (1 + 0.10 * Math.sin(Math.min(1, (u - 2.30) * 26)) * (1 - snap));
+    /* he starts breathing on the mask once it is sealed */
+    const bcyc = Math.max(0, Math.sin((u - 2.9) * 2.5));
+    const breath = ramp(2.95, 3.25, u) * (0.35 + 0.65 * bcyc * bcyc) * (1 - 0.4 * cat);
+
+    push(1);
+    if (A) A.pilot(c, P3X, P3Y, P3S, {
+      turn: sat(turn), pitch: pitch, visor: sat(visor),
+      hud: sealed * (0.82 + 0.18 * pulse(u, 3.1)),
+      glow: 0.50 + 0.50 * boot,
+      rim: 0.45 + 0.55 * ramp(0.4, 3.0, u) + 0.3 * cat,
+      breath: sat(breath), tt: t, alpha: 1
+    });
+    c.restore();
+
+    once('helm', T2 + 2.38, function () {
+      sfx('helmetOn'); shake = Math.max(shake, 5); flash = Math.max(flash, 0.16);
+      flashCol = C.ice;
+      for (let i = 0; i < 16; i++)
+        part(FX3 + rnd(-70, 70), FY3 - 18 + rnd(-16, 16), rnd(-160, 160), rnd(-90, 60),
+          rnd(0.25, 0.55), rnd(2, 5), C.ice, { d: 0.9 });
+    });
+    once('brth', T2 + 3.0, function () { sfx('breath', 3); });
+
+    /* ================= 4. foreground: glass + panel ============== */
+    push(1.5);
+    /* the instrument coaming across the bottom-left — the key light */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = (0.20 + 0.34 * boot) * fade;
+    c.drawImage(glow(C.amber), -180, 470, 1000, 700);
+    c.globalAlpha = (0.14 + 0.24 * boot) * fade;
+    c.drawImage(glow(C.green), 60, 520, 620, 480);
+    c.globalAlpha = 1;
+    c.restore();
+
+    c.save();
+    c.translate(250, 742);
+    c.rotate(-0.115);
+    /* bezel */
+    c.fillStyle = '#080b12';
+    c.fillRect(-300, -128, 620, 300);
+    c.fillStyle = '#141a24';
+    c.fillRect(-286, -116, 592, 268);
+    c.fillStyle = '#04070a';
+    c.fillRect(-262, -100, 544, 214);
+    /* the MFD itself */
+    c.save();
+    c.beginPath(); c.rect(-262, -100, 544, 214); c.clip();
+    c.fillStyle = 'rgba(10,26,20,0.9)'; c.fillRect(-262, -100, 544, 214);
     for (let i = 0; i < BOOTLINES.length; i++) {
       const at = 0.5 + i * 0.24;
       if (u < at) continue;
       once('bt' + i, T2 + at, function () { sfx('beep', 0.2 + i * 0.13); });
       const flick = (u - at < 0.3 && Math.random() < 0.35) ? 0.3 : 1;
-      txt(BOOTLINES[i], 250, 168 + i * 34, 20,
-        rgba(C.green, 0.85 * flick * (1 - ramp(4.4, 5.0, u))), 3);
+      txt(BOOTLINES[i], -238, -62 + i * 32, 21,
+        rgba(C.green, 0.92 * flick * fade), 2);
     }
-    if (boot > 0.98 && pulse(u, 2.2) > 0.35 && u < 6.1)
-      txt('CLEARED FOR LAUNCH', 1360, 200, 26, rgba(C.cyan, 0.95), 6, 'right', 'bold');
+    if (boot > 0.98 && pulse(u, 2.2) > 0.35)
+      txt('CLEARED FOR LAUNCH', -238, 96, 22, rgba(C.cyan, 0.95 * fade), 4, 'left', 'bold');
+    /* screen scan + curvature */
+    c.fillStyle = 'rgba(120,255,190,0.05)';
+    c.fillRect(-262, -100 + ((t * 190) % 214), 544, 22);
+    const scG = c.createLinearGradient(-262, -100, 120, 114);
+    scG.addColorStop(0, 'rgba(190,255,225,0.10)');
+    scG.addColorStop(0.6, 'rgba(190,255,225,0)');
+    c.fillStyle = scG; c.fillRect(-262, -100, 544, 214);
+    c.restore();
+    /* a row of hard switches below the screen */
+    for (let i = 0; i < 8; i++) {
+      c.fillStyle = '#0a0e15';
+      c.fillRect(-250 + i * 68, 124, 44, 22);
+      c.fillStyle = i % 3 === 0 ? rgba(C.amber, 0.55 * boot) : 'rgba(150,180,210,0.14)';
+      c.fillRect(-244 + i * 68, 130, 14, 10);
+    }
+    c.restore();
 
-    /* ---- gloves + mask ---- */
-    const rise = ramp(0.9, 2.45, u);
-    const away = ramp(2.6, 3.3, u);
-    if (A && rise > 0 && away < 1) {
-      const ga = 1 - away;
-      /* the mask is carried up into the lens: it rises, swells as it nears the
-         face, then rushes past the camera as it seats */
-      const my = 1040 - rise * 400 - away * 130;
-      const ms = 0.9 + rise * 1.7 + away * 2.9;
-      const gx = 66 * ms + 46;               // gloves grip the cup, so they track its width
-      const gy = my + 26 * ms + away * 260;
-      A.glove(c, 800 - gx, gy, ms * 0.62, -0.5 + rise * 0.34, false, ga);
-      A.glove(c, 800 + gx, gy, ms * 0.62, 0.5 - rise * 0.34, true, ga);
-      A.mask(c, 800, my, ms, Math.sin(u * 1.6) * 0.05 * (1 - rise), ga);
+    /* the canopy rail crossing in front of him */
+    c.beginPath();
+    c.moveTo(-60, 880);
+    c.quadraticCurveTo(700, 646, VW + 60, 300);
+    c.strokeStyle = '#05070d'; c.lineWidth = 52; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.beginPath();
+    c.moveTo(-60, 856);
+    c.quadraticCurveTo(700, 622, VW + 60, 276);
+    c.strokeStyle = rgba(C.ice, 0.34 * fade); c.lineWidth = 3.5; c.stroke();
+    c.beginPath();
+    c.moveTo(-60, 852);
+    c.quadraticCurveTo(700, 618, VW + 60, 272);
+    c.strokeStyle = rgba(C.amber, 0.14 * fade); c.lineWidth = 8; c.stroke();
+    c.restore();
+    c.restore();
+
+    /* ---- reflections sliding over the canopy glass ---- */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 3; i++) {
+      const ph = (t * (0.10 + 0.55 * cat) + i * 0.37) % 1;
+      const gx = -520 + ph * 2600;
+      c.save();
+      c.translate(gx, 0);
+      c.rotate(0.34);
+      const rgG = c.createLinearGradient(-150, 0, 150, 0);
+      rgG.addColorStop(0, 'rgba(150,220,255,0)');
+      rgG.addColorStop(0.5, 'rgba(180,232,255,' + (0.055 + 0.05 * cat) * fade + ')');
+      rgG.addColorStop(1, 'rgba(150,220,255,0)');
+      c.fillStyle = rgG;
+      c.fillRect(-150, -700, 300, 2200);
+      c.restore();
     }
-    once('helm', T2 + 2.38, function () { sfx('helmetOn'); shake = Math.max(shake, 5); });
-    once('brth', T2 + 3.0, function () { sfx('breath', 3); });
+    c.restore();
+
+    /* dust and lint drifting through the light */
+    if (Math.random() < 0.10)
+      part(rnd(0, VW), rnd(0, VH), rnd(-26, 10), rnd(-16, 16),
+        rnd(1.4, 3.0), rnd(0.5, 1.1), Math.random() < 0.4 ? C.amber : C.ice,
+        { d: 0.99, a: 0.16 });
 
     /* ---- catapult ---- */
     once('cat', T2 + 4.75, function () { sfx('riser', 1.6); });
     if (cat > 0) shake = Math.max(shake, 3 + 22 * cat * (0.6 + 0.4 * Math.sin(t * 55)));
 
     stepParts(dt, 0); drawParts();
-    scanlines(0.14);
-    vignette(0.5 + 0.25 * sealed);
+    scanlines(0.13);
+    vignette(0.62 + 0.22 * sealed);
 
     /* fade from black in, white out at the end */
     const fi = 1 - ramp(0, 0.55, u);
@@ -5911,6 +6422,667 @@ try { if (typeof globalThis !== 'undefined' && !globalThis.CINE) globalThis.CINE
 
 </script>
 <script>
+/* ===== _gen/scenery.js ===== */
+/* SKYFALL INTERCEPTOR — desert scenery module.
+   Streaming ground: dunes, mesas, a meandering dry wash, and scattered ruins
+   that recycle on a fixed world period so the world runs forever.
+
+   Frame matches the rest of the game: +X right, +Y up, +Z forward.
+   Every mesh is non-indexed triangles, 9 floats/vertex (pos, normal, colour),
+   built to sit on y = 0 and translated down to GROUND_Y at draw time, so this
+   file needs NOTHING from game.js at parse time — only inside init()/draw().
+
+   Defines exactly one global: SCENERY. */
+const SCENERY = (function () {
+  "use strict";
+
+  var TAU = Math.PI * 2;
+  var abs = Math.abs, sin = Math.sin, cos = Math.cos, exp = Math.exp,
+      flr = Math.floor, pow = Math.pow, sqrt = Math.sqrt;
+
+  /* ---------------------------------------------------------------- tuning */
+  var L      = 16000;  // world period: terrain AND ruins repeat every L units
+  var BAND   = 800;    // z-length of one terrain band mesh
+  var NB     = L / BAND;
+  var ZSTEP  = 100;    // terrain z resolution
+  var BASE   = 40;     // nominal desert floor, above GROUND_Y
+  var FLOORY = 6;      // hard floor: never dip below GROUND_Y+6 (buries the old grid)
+  var ZNEAR  = -700;   // draw window
+  var ZFAR   = 3600;   // (FOG_FAR is 3300, so anything past here is pure fog)
+  var XMAX   = 4800;   // terrain half-width
+  var DP     = 1400;   // dust recycle period
+
+  function cl(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function lp(a, b, t) { return a + (b - a) * t; }
+  function ss(a, b, x) { var t = cl((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+  function sh(c, k) { return [c[0] * k, c[1] * k, c[2] * k]; }
+
+  /* -------------------------------------------------------- hash / noise */
+  function ih(a, b, s) {
+    var n = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(s | 0, 1442695041)) | 0;
+    n = (n ^ (n >> 13)) | 0;
+    n = Math.imul(n, 1274126177);
+    return ((n ^ (n >> 16)) >>> 0) / 4294967296;
+  }
+  /* value noise, exactly periodic in z with period L (cell must divide L) */
+  function vn(x, z, cell, s) {
+    var nz = L / cell;
+    var fx = x / cell, fz = z / cell;
+    var ix = flr(fx), iz = flr(fz);
+    var tx = fx - ix, tz = fz - iz;
+    tx = tx * tx * (3 - 2 * tx); tz = tz * tz * (3 - 2 * tz);
+    var z0 = ((iz % nz) + nz) % nz, z1 = ((iz + 1) % nz + nz) % nz;
+    return lp(lp(ih(ix, z0, s), ih(ix + 1, z0, s), tx),
+              lp(ih(ix, z1, s), ih(ix + 1, z1, s), tx), tz);
+  }
+  /* z frequencies must be integer multiples of TAU/L or the wrap pops */
+  function zk(approx) { return Math.round(L * approx / TAU) * TAU / L; }
+  var RIP_Z = zk(0.034);      // fine corrugation
+  var DUNE_Z = zk(0.0126);    // transverse dune crests, ~500u apart
+  var DUNE_Z2 = zk(0.0062);   // long swells, ~1000u apart
+
+  /* -------------------------------------------------------------- terrain */
+  /* height above GROUND_Y at a world (x, z). z is taken modulo L implicitly. */
+  function terr(x, z) {
+    /* the flight corridor stays low — the player owns |x| < 190 and can dive
+       to GROUND_Y+120, so relief ramps in fast just outside the lane */
+    var corr = ss(190, 520, abs(x));
+    var corr2 = ss(320, 1100, abs(x));
+
+    var big = vn(x, z, 2000, 11);
+    var mid = vn(x, z,  800, 23);
+    var fin = vn(x, z,  400, 37);
+    var mic = vn(x, z,  200, 53);
+    var dune = big * 0.50 + mid * 0.30 + fin * 0.14 + mic * 0.06;
+
+    /* rolling dunes */
+    var h = (dune - 0.30) * 340 * corr;
+
+    /* mesas: a hard terrace on the low band gives flat tops + steep risers */
+    var m = ss(0.52, 0.62, big * 0.70 + mid * 0.30);
+    h += m * (230 + 300 * vn(x + 930, z + 410, 2000, 5)) * corr2;
+
+    /* ridged erosion gullies cut into the flanks */
+    var rg = 1 - abs(2 * fin - 1);
+    h += rg * rg * 70 * corr2;
+
+    /* transverse dune crests. These run across the flight path and are the
+       single biggest speed cue: at FLOW they sweep under you ~2/sec. Kept
+       inside the player's dive envelope so the lane is always flyable. */
+    h += sin(z * DUNE_Z + x * 0.0016 + big * 5) * 20;
+    h += sin(z * DUNE_Z2 - x * 0.0009 + mid * 4) * (14 + 30 * corr);
+
+    /* wind ripple — the fine corrugation on top */
+    h += (sin(x * 0.031 + big * 13) + sin(x * 0.017 - mid * 9)) * 5.0 * (0.35 + 0.65 * corr);
+    h += sin(z * RIP_Z + mid * 9) * 4.0;
+
+    /* a dry wash meandering across the whole corridor */
+    var rx = 980 * sin(z / L * TAU * 3)
+           + 430 * sin(z / L * TAU * 7 + 1.3)
+           + 250 * sin(z / L * TAU * 11 + 2.7);
+    var d = (x - rx) / 230, ad = abs(d);
+    h -= 70 * exp(-d * d);
+    h += 30 * exp(-(ad - 1.5) * (ad - 1.5) * 2.6) * (0.35 + 0.65 * corr);
+
+    return h;
+  }
+  /* clamped surface height above GROUND_Y */
+  function gy(x, z) { var h = BASE + terr(x, z); return h < FLOORY ? FLOORY : h; }
+
+  /* non-uniform x columns: dense down the middle, coarse toward the horizon */
+  var XS = (function () {
+    var a = [], n = 12, i, t;
+    for (i = n; i > 0; i--) { t = i / n; a.push(-XMAX * pow(t, 1.9)); }
+    a.push(0);
+    for (i = 1; i <= n; i++) { t = i / n; a.push(XMAX * pow(t, 1.9)); }
+    return a;
+  })();
+
+  function sandCol(h, slope, x, z) {
+    var t = cl(h / 300, 0, 1);
+    var r = lp(0.62, 0.78, t), g = lp(0.34, 0.49, t), b = lp(0.20, 0.30, t);
+
+    /* patchy ground cover: gravel fields, blown sand, scorched rock. Without
+       this the whole desert reads as one flat mass no matter how it is lit. */
+    var p1 = vn(x, z, 1600, 71), p2 = vn(x, z, 400, 73);
+    var gv = ss(0.42, 0.72, p1 * 0.72 + p2 * 0.28);
+    r = lp(r, 0.35, gv * 0.7); g = lp(g, 0.21, gv * 0.7); b = lp(b, 0.17, gv * 0.7);
+    var pale = ss(0.40, 0.16, p1 * 0.55 + p2 * 0.45);
+    r = lp(r, 0.80, pale * 0.5); g = lp(g, 0.58, pale * 0.5); b = lp(b, 0.40, pale * 0.5);
+
+    /* steep faces: dark wind-scoured rock */
+    var s = cl(slope, 0, 1) * 0.85;
+    r = lp(r, 0.29, s); g = lp(g, 0.145, s); b = lp(b, 0.125, s);
+    /* sedimentary strata, only where there is a riser to show them on */
+    if (slope > 0.30) { var bd = (flr(h / 30) & 1) ? 0.84 : 1.12; r *= bd; g *= bd; b *= bd; }
+
+    /* bleached pan / dry wash floor — a pale ribbon snaking past */
+    var w = ss(30, 6, h);
+    r = lp(r, 0.80, w); g = lp(g, 0.66, w); b = lp(b, 0.55, w);
+
+    var j = 0.94 + 0.12 * ih(flr(x / 37), flr(z / 41), 91);
+    return [r * j, g * j, b * j];
+  }
+
+  /* --------------------------------------------------------- mesh builder */
+  function MB() {
+    var d = [], m = {};
+    m.d = d;
+    m.tri = function (a, b, c, col) {
+      var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+      var vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      var l = sqrt(nx * nx + ny * ny + nz * nz);
+      if (!(l > 1e-7)) return m;
+      nx /= l; ny /= l; nz /= l;
+      d.push(a[0], a[1], a[2], nx, ny, nz, col[0], col[1], col[2]);
+      d.push(b[0], b[1], b[2], nx, ny, nz, col[0], col[1], col[2]);
+      d.push(c[0], c[1], c[2], nx, ny, nz, col[0], col[1], col[2]);
+      return m;
+    };
+    m.quad = function (a, b, c, e, col) { m.tri(a, b, c, col); m.tri(a, c, e, col); return m; };
+    /* loft two closed loops, alternating value so facets read individually */
+    m.skin = function (A, B, col, k) {
+      var alt = sh(col, k === undefined ? 0.80 : k);
+      for (var i = 0; i < A.length; i++) {
+        var j = (i + 1) % A.length;
+        m.quad(A[i], A[j], B[j], B[i], (i & 1) ? alt : col);
+      }
+      return m;
+    };
+    m.cap = function (loop, col, lift) {
+      var cx = 0, cy = 0, cz = 0, n = loop.length, i;
+      for (i = 0; i < n; i++) { cx += loop[i][0]; cy += loop[i][1]; cz += loop[i][2]; }
+      var c = [cx / n, cy / n + (lift || 0), cz / n];
+      for (i = 0; i < n; i++) m.tri(loop[i], loop[(i + 1) % n], c, col);
+      return m;
+    };
+    /* box with yaw (ry) then roll (rz), centred at c */
+    m.box = function (cx, cy, cz, hx, hy, hz, ry, rz, col) {
+      var cy2 = cos(ry), sy2 = sin(ry), cz2 = cos(rz), sz2 = sin(rz);
+      var S = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+               [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]];
+      var P = [], i;
+      for (i = 0; i < 8; i++) {
+        var x = S[i][0] * hx, y = S[i][1] * hy, z = S[i][2] * hz;
+        var x1 = x * cz2 - y * sz2, y1 = x * sz2 + y * cz2;
+        P.push([cx + x1 * cy2 + z * sy2, cy + y1, cz - x1 * sy2 + z * cy2]);
+      }
+      var lo = sh(col, 0.52), sd = sh(col, 0.78), tp = sh(col, 1.16);
+      m.quad(P[4], P[5], P[6], P[7], sd);
+      m.quad(P[1], P[0], P[3], P[2], sd);
+      m.quad(P[5], P[1], P[2], P[6], col);
+      m.quad(P[0], P[4], P[7], P[3], col);
+      m.quad(P[7], P[6], P[2], P[3], tp);
+      m.quad(P[0], P[1], P[5], P[4], lo);
+      return m;
+    };
+    return m;
+  }
+  function ringN(n, r, y, jit, sd, sq) {
+    var o = [], i, a, rr;
+    for (i = 0; i < n; i++) {
+      a = i / n * TAU;
+      rr = r * (1 + (jit || 0) * (ih(i, 3, sd) - 0.5) / 50);
+      o.push([cos(a) * rr, y + (sq ? (ih(i, 7, sd) - 0.5) * jit * 2 : 0), sin(a) * rr]);
+    }
+    return o;
+  }
+
+  /* ------------------------------------------------------------- palettes */
+  var STONE = [0.47, 0.43, 0.39], STONE2 = [0.37, 0.33, 0.30], STONE3 = [0.57, 0.52, 0.46];
+  var DARKS = [0.17, 0.15, 0.15], RUST = [0.44, 0.22, 0.13];
+  var METAL = [0.30, 0.31, 0.36], METAL2 = [0.19, 0.20, 0.25];
+  var NEON = [0.10, 0.80, 0.98], NEONM = [0.82, 0.14, 0.60];
+  var ROCK = [0.44, 0.27, 0.18], ROCK2 = [0.33, 0.19, 0.14], ROCK3 = [0.55, 0.36, 0.24];
+
+  /* ------------------------------------------------------------ ruin protos
+     Each returns {d:floats, rad:footprint radius, h:height}. Base sits on y=0. */
+
+  function pTower() {                 /* broken masonry tower */
+    var M = MB(), n = 8, sd = 7, i, s;
+    var rings = [], y = 0, r = 54;
+    for (s = 0; s < 6; s++) { rings.push(ringN(n, r, y, s ? 9 : 0, sd * 13 + s)); y += 46 + 5 * s; r *= 0.905; }
+    for (s = 0; s < rings.length - 1; s++) M.skin(rings[s], rings[s + 1], s & 1 ? STONE : STONE2, 0.82);
+    var top = rings[rings.length - 1], jag = [];
+    for (i = 0; i < n; i++) {
+      var q = ih(i, 4, sd); q = q * q * 2.4;
+      jag.push([top[i][0] * 0.93, top[i][1] + 6 + 42 * q, top[i][2] * 0.93]);
+    }
+    M.skin(top, jag, STONE3, 0.75);
+    M.cap(jag, DARKS, -14);
+    /* collapsed slabs heaped round the foot */
+    for (i = 0; i < 5; i++) {
+      var a = ih(i, 21, sd) * TAU, rr = 58 + 44 * ih(i, 22, sd);
+      M.box(cos(a) * rr, 8 + 10 * ih(i, 23, sd), sin(a) * rr,
+            22 + 16 * ih(i, 24, sd), 9, 14 + 12 * ih(i, 25, sd),
+            a, (ih(i, 26, sd) - 0.5) * 0.9, i & 1 ? STONE2 : STONE);
+    }
+    /* one surviving light strip — the only neon on the thing */
+    M.box(0, 150, 50, 3, 96, 3, 0, 0, NEON);
+    return { d: M.d, rad: 104, h: 320 };
+  }
+
+  function pArch() {                  /* half-collapsed arch */
+    var M = MB(), i;
+    M.box(-76, 100, 0, 20, 100, 26, 0, 0.05, STONE);
+    M.box(76, 96, 0, 20, 96, 26, 0, -0.04, STONE2);
+    /* span, broken away on one side */
+    var seg = [[-64, 196, 0.28], [-34, 224, 0.5], [4, 234, 0.05], [40, 222, -0.42]];
+    for (i = 0; i < seg.length; i++)
+      M.box(seg[i][0], seg[i][1], 0, 24, 15, 24, 0, seg[i][2], i & 1 ? STONE3 : STONE);
+    /* the fallen keystone, half in the sand */
+    M.box(128, 12, 42, 30, 16, 22, 0.7, 0.3, STONE2);
+    M.box(-118, 9, -36, 24, 12, 20, -0.4, 0.18, STONE2);
+    return { d: M.d, rad: 150, h: 250 };
+  }
+
+  function pWall() {                  /* shattered curtain wall, runs along z */
+    var M = MB(), i;
+    var hgt = [120, 96, 0, 78, 132, 110, 0, 64, 88, 118];
+    for (i = 0; i < hgt.length; i++) {
+      if (!hgt[i]) continue;
+      var h = hgt[i] * (0.8 + 0.4 * ih(i, 5, 3));
+      M.box(0, h * 0.5, -270 + i * 60, 15, h * 0.5, 29,
+            0, (ih(i, 6, 3) - 0.5) * 0.10, i & 1 ? STONE : STONE2);
+      if (i % 3 === 0) M.box(26, 26, -270 + i * 60, 14, 26, 18, 0, 0.12, STONE2);
+    }
+    for (i = 0; i < 6; i++)
+      M.box(30 + 40 * ih(i, 8, 3), 7, -240 + 100 * i, 16, 7, 12,
+            ih(i, 9, 3) * 3, 0.2, STONE3);
+    return { d: M.d, rad: 320, h: 140 };
+  }
+
+  function pPylon() {                 /* alien lattice mast */
+    var M = MB(), i, j;
+    var b = 46, t = 13, H = 320;
+    var base = [[b, 0, b], [-b, 0, b], [-b, 0, -b], [b, 0, -b]];
+    var tip = [[t, H, t], [-t, H, t], [-t, H, -t], [t, H, -t]];
+    for (i = 0; i < 4; i++) {
+      var p0 = base[i], p1 = tip[i];
+      var w0 = 7, w1 = 4;
+      M.box((p0[0] + p1[0]) / 2, H / 2, (p0[2] + p1[2]) / 2, w0, H / 2, w0, 0, 0, METAL);
+      /* lean the leg outward at the foot */
+      M.box(p0[0] * 1.06, 12, p0[2] * 1.06, 12, 12, 12, 0, 0, METAL2);
+    }
+    for (j = 1; j <= 4; j++) {
+      var y = H * j / 5, k = lp(b, t, j / 5);
+      M.box(0, y, k, k, 4, 4, 0, 0, METAL2);
+      M.box(0, y, -k, k, 4, 4, 0, 0, METAL2);
+      M.box(k, y, 0, 4, 4, k, 0, 0, METAL2);
+      M.box(-k, y, 0, 4, 4, k, 0, 0, METAL2);
+    }
+    /* snapped cross-arm + a live beacon */
+    M.box(46, H - 22, 0, 52, 5, 7, 0, -0.22, RUST);
+    M.box(-24, H - 40, 0, 30, 5, 7, 0, 0.5, RUST);
+    M.box(0, H + 12, 0, 8, 12, 8, 0, 0, NEONM);
+    return { d: M.d, rad: 96, h: 340 };
+  }
+
+  function pHulk() {                  /* wrecked transport, nose buried in sand */
+    var M = MB(), i, sd = 19;
+    var secs = [[-190, 16, 12], [-120, 30, 22], [-40, 42, 32], [50, 40, 30], [130, 28, 20]];
+    var loops = [];
+    for (i = 0; i < secs.length; i++) {
+      var z = secs[i][0], w = secs[i][1], hh = secs[i][2];
+      var yy = 26 + i * 13;   /* tail rides up out of the sand */
+      loops.push([[w, yy - hh, z], [w * 0.62, yy + hh * 0.9, z], [-w * 0.62, yy + hh * 0.9, z],
+                  [-w, yy - hh, z], [-w * 0.55, yy - hh * 1.25, z], [w * 0.55, yy - hh * 1.25, z]]);
+    }
+    for (i = 0; i < loops.length - 1; i++) M.skin(loops[i], loops[i + 1], i & 1 ? METAL : RUST, 0.72);
+    M.cap(loops[0], METAL2, -8);
+    /* torn-open tail: exposed ribs sticking out of the break */
+    var last = loops[loops.length - 1];
+    for (i = 0; i < 3; i++) {
+      var s = 1 - i * 0.22, zz = 150 + i * 34;
+      M.box(0, 78 + i * 10, zz, 30 * s, 3, 4, 0, i * 0.16, METAL2);
+      M.box(26 * s, 66 + i * 8, zz, 4, 22 * s, 4, 0, -0.2 - i * 0.1, METAL2);
+      M.box(-26 * s, 66 + i * 8, zz, 4, 22 * s, 4, 0, 0.2 + i * 0.1, METAL2);
+    }
+    /* a strip of hull lights still burning */
+    M.box(0, 44, -70, 26, 3, 60, 0, 0, NEON);
+    /* sheared-off wing planted in the ground */
+    M.box(-96, 44, -30, 8, 62, 46, 0.3, 0.34, RUST);
+    return { d: M.d, rad: 230, h: 130 };
+  }
+
+  function pDish() {                  /* collapsed listening dish */
+    var M = MB(), i, n = 12;
+    M.box(0, 34, 0, 26, 34, 26, 0, 0, STONE2);
+    M.box(0, 76, 0, 12, 24, 12, 0, 0, METAL2);
+    /* annulus, tipped over onto its rim */
+    var tilt = 1.05, ct = cos(tilt), st = sin(tilt);
+    var outer = [], inner = [];
+    for (i = 0; i < n; i++) {
+      var a = i / n * TAU, ro = 108, ri = 34;
+      var x1 = cos(a) * ro, y1 = sin(a) * ro;
+      outer.push([x1, 106 + y1 * ct, y1 * st]);
+      x1 = cos(a) * ri; y1 = sin(a) * ri;
+      inner.push([x1, 106 + y1 * ct, y1 * st - 16]);
+    }
+    M.skin(outer, inner, METAL, 0.7);
+    for (i = 0; i < 4; i++) {
+      var a2 = i / 4 * TAU + 0.4;
+      M.box(cos(a2) * 60, 106 + sin(a2) * 60 * ct, sin(a2) * 60 * st, 52, 3, 3, 0, a2, METAL2);
+    }
+    /* a snapped section lying in the dirt */
+    M.box(120, 10, 60, 44, 8, 12, 0.9, 0.2, METAL2);
+    return { d: M.d, rad: 150, h: 210 };
+  }
+
+  function pMonolith() {              /* slabs stabbing out of the sand */
+    var M = MB(), i, sd = 31;
+    var cfg = [[0, 0, 150, 0.10, 0.0], [-58, 30, 96, -0.22, 0.7], [52, -34, 118, 0.30, -0.5],
+               [8, 66, 62, 0.12, 2.1]];
+    for (i = 0; i < cfg.length; i++)
+      M.box(cfg[i][0], cfg[i][2] * 0.46, cfg[i][1], 26 + 10 * ih(i, 1, sd), cfg[i][2] * 0.5, 11,
+            cfg[i][4], cfg[i][3], i & 1 ? STONE : STONE3);
+    for (i = 0; i < 4; i++)
+      M.box(-70 + 50 * i, 6, -60 + 40 * ih(i, 2, sd), 16, 6, 12, ih(i, 3, sd) * 3, 0.1, STONE2);
+    return { d: M.d, rad: 110, h: 160 };
+  }
+
+  function pRubble() {                /* low scatter of blocks */
+    var M = MB(), i, sd = 41;
+    for (i = 0; i < 8; i++) {
+      var a = ih(i, 1, sd) * TAU, r = 20 + 70 * ih(i, 2, sd);
+      M.box(cos(a) * r, 6 + 14 * ih(i, 3, sd), sin(a) * r,
+            12 + 16 * ih(i, 4, sd), 6 + 12 * ih(i, 5, sd), 10 + 14 * ih(i, 6, sd),
+            a * 1.7, (ih(i, 7, sd) - 0.5) * 0.8, i & 1 ? STONE2 : STONE);
+    }
+    return { d: M.d, rad: 96, h: 30 };
+  }
+
+  function blob(sd, r, h, n, col, col2, taper) {
+    var M = MB(), i, a, rr, o = [], t = [];
+    for (i = 0; i < n; i++) {
+      a = i / n * TAU;
+      rr = r * (0.66 + 0.60 * ih(i, 1, sd));
+      o.push([cos(a) * rr, 0, sin(a) * rr]);
+      var rt = rr * taper * (0.8 + 0.4 * ih(i, 2, sd));
+      t.push([cos(a) * rt, h * (0.72 + 0.5 * ih(i, 3, sd)), sin(a) * rt]);
+    }
+    M.skin(o, t, col, 0.74);
+    M.cap(t, col2, h * 0.1);
+    return M;
+  }
+  function pRockA() { var M = blob(51, 46, 40, 6, ROCK, ROCK3, 0.55); return { d: M.d, rad: 70, h: 46 }; }
+  function pRockB() { var M = blob(67, 70, 96, 7, ROCK2, ROCK, 0.42); return { d: M.d, rad: 106, h: 106 }; }
+
+  function pSpire() {                 /* wind-carved hoodoo — cheap silhouette */
+    var M = MB(), i, n = 6, sd = 73;
+    var ys = [0, 60, 130, 205, 280, 350], rs = [46, 30, 40, 22, 30, 12];
+    var rings = [];
+    for (i = 0; i < ys.length; i++) rings.push(ringN(n, rs[i], ys[i], 14, sd + i, true));
+    for (i = 0; i < rings.length - 1; i++) M.skin(rings[i], rings[i + 1], i & 1 ? ROCK : ROCK2, 0.72);
+    M.cap(rings[rings.length - 1], ROCK3, 22);
+    return { d: M.d, rad: 60, h: 380 };
+  }
+
+  function pButte() {                 /* big flat-topped mesa for the far field */
+    var M = MB(), i, n = 7, sd = 89;
+    var skirt = ringN(n, 330, 0, 40, sd, true);
+    var mid = ringN(n, 262, 62, 30, sd + 1, true);
+    var rimA = ringN(n, 250, 250, 24, sd + 2, true);
+    var rimB = ringN(n, 232, 292, 18, sd + 3, true);
+    M.skin(skirt, mid, ROCK2, 0.8);
+    M.skin(mid, rimA, ROCK, 0.7);
+    M.skin(rimA, rimB, ROCK3, 0.8);
+    M.cap(rimB, sh(ROCK3, 1.15), 14);
+    /* a detached butte-let alongside, for depth */
+    var s2 = ringN(6, 120, 0, 30, sd + 9, true), t2 = ringN(6, 96, 170, 20, sd + 10, true);
+    for (i = 0; i < 6; i++) { s2[i][0] += 430; s2[i][2] += 210; t2[i][0] += 430; t2[i][2] += 210; }
+    M.skin(s2, t2, ROCK2, 0.76);
+    M.cap(t2, ROCK, 10);
+    return { d: M.d, rad: 560, h: 300 };
+  }
+
+  var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
+                  pRubble, pRockA, pRockB, pSpire, pButte];
+  var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11;
+
+  /* ------------------------------------------------------------ placement */
+  function lcg(seed) {
+    var s = seed >>> 0;
+    return function () { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  }
+
+  var protos = null, bands = null, dust = null, spots = null, apron = null, ready = false;
+  var _m = new Float32Array(16), _mv = new Float32Array(16), _vis = [];
+  function ident(o) { o[0] = o[5] = o[10] = o[15] = 1; o[1] = o[2] = o[3] = o[4] = o[6] = o[7] = o[8] = o[9] = o[11] = o[12] = o[13] = o[14] = 0; return o; }
+
+  function makeSpots() {
+    var R = lcg(20260829), out = [], z = 0, lastBig = -9999;
+    /* small = filler, mid = structures, big = the ones you feel go past,
+       far = horizon silhouettes. Gaps are skewed so ruins clump then vanish. */
+    var MID = [0, 1, 2, 3, 4, 5, 6];
+    var BIG = [0, 3, 4, 10, 6, 1];
+    while (z < L - 200) {
+      var g = R();
+      z += 60 + g * g * 900;
+      if (z >= L - 200) break;
+      var u = R(), side = R() < 0.5 ? -1 : 1, p, s, x, rad;
+
+      if (u < 0.44) {                                  /* filler scatter */
+        p = [P_RUBBLE, P_ROCKA, P_ROCKB, P_ROCKA, P_SPIRE][(R() * 5) | 0];
+        s = 0.55 + R() * 1.05;
+        x = side * (200 + pow(R(), 1.6) * 2500);
+      } else if (u < 0.70) {                           /* mid-field structure */
+        p = MID[(R() * MID.length) | 0];
+        s = 0.8 + R() * 0.9;
+        rad = protos ? protos[p].rad : 200;
+        x = side * (430 + rad * s * 0.5 + R() * 1000);
+      } else if (u < 0.82 && z - lastBig > 2300) {     /* close pass */
+        lastBig = z;
+        p = BIG[(R() * BIG.length) | 0];
+        s = 1.35 + R() * 1.25;
+        rad = protos ? protos[p].rad : 200;
+        x = side * (300 + rad * s + R() * 230);
+      } else {                                          /* horizon silhouette */
+        p = R() < 0.62 ? P_BUTTE : P_SPIRE;
+        s = (p === P_BUTTE ? 1.9 : 2.6) + R() * 2.2;
+        x = side * (1250 + R() * 2600);
+      }
+      /* hard guarantee: nothing tall may reach into the flight envelope
+         (|x| <= BX 238 plus the jet's span). Low rubble may sit anywhere. */
+      var pp = protos[p];
+      var need = (pp.h * s > 110) ? 300 + pp.rad * s : 150;
+      if (abs(x) < need) x = side * need;
+      out.push({ p: p, x: x, z: z, s: s, y: 0,
+                 ry: R() * TAU, rx: (R() - 0.5) * 0.05, rz: (R() - 0.5) * 0.05 });
+    }
+    return out;
+  }
+
+  /* ------------------------------------------------------------------ init */
+  /* small angular rock, welded straight into the terrain band so the pebble
+     field costs no extra draw calls */
+  function pebble(M, x, y, z, rr, hh, sd, col) {
+    var n = 5, i, a, o = [], t = [];
+    var ph = ih(0, 9, sd) * TAU;
+    for (i = 0; i < n; i++) {
+      a = ph + i / n * TAU;
+      var r1 = rr * (0.6 + 0.7 * ih(i, 1, sd));
+      o.push([x + cos(a) * r1, y - hh * 0.25, z + sin(a) * r1]);
+      var r2 = r1 * (0.35 + 0.4 * ih(i, 2, sd));
+      t.push([x + cos(a) * r2, y + hh * (0.6 + 0.6 * ih(i, 3, sd)), z + sin(a) * r2]);
+    }
+    M.skin(o, t, col, 0.7);
+    M.cap(t, sh(col, 1.2), hh * 0.2);
+  }
+
+  function buildBand(bi) {
+    var M = MB(), r, c, z0 = bi * BAND, rows = BAND / ZSTEP;
+    var prev = null, cur;
+    for (r = 0; r <= rows; r++) {
+      var za = z0 + r * ZSTEP;
+      cur = [];
+      for (c = 0; c < XS.length; c++) cur.push(gy(XS[c], za));
+      if (prev) {
+        var zl0 = (r - 1) * ZSTEP, zl1 = r * ZSTEP;
+        for (c = 0; c < XS.length - 1; c++) {
+          var xa = XS[c], xb = XS[c + 1];
+          var ha = prev[c], hb = prev[c + 1], hc = cur[c + 1], hd = cur[c];
+          var hm = (ha + hb + hc + hd) * 0.25;
+          var gx = (hb - ha) / (xb - xa), gz = (hd - ha) / ZSTEP;
+          var slope = sqrt(gx * gx + gz * gz) / 1.5;
+          M.quad([xa, ha, zl0], [xb, hb, zl0], [xb, hc, zl1], [xa, hd, zl1],
+                 sandCol(hm, slope, xa, z0 + zl0));
+        }
+      }
+      prev = cur;
+    }
+    /* pebble / boulder field: near-field clutter is what makes the speed read */
+    for (r = 0; r < 12; r++) {
+      var sd = bi * 977 + r * 31;
+      var side = ih(r, 11, sd) < 0.5 ? -1 : 1;
+      var px = side * (200 + pow(ih(r, 12, sd), 1.7) * 1900);
+      var pz = ih(r, 13, sd) * BAND;
+      var big = ih(r, 14, sd) < 0.22;
+      var rr = big ? 46 + 60 * ih(r, 15, sd) : 9 + 26 * ih(r, 15, sd);
+      pebble(M, px, gy(px, z0 + pz) - rr * 0.2, pz, rr, rr * (0.8 + 0.9 * ih(r, 16, sd)), sd,
+             ih(r, 17, sd) < 0.5 ? ROCK : ROCK2);
+    }
+    return M.d;
+  }
+
+  function buildDust(gyBase) {
+    var v = [], i, k;
+    var R = lcg(778811);
+    var mot = [];
+    for (i = 0; i < 110; i++)
+      mot.push([(R() - 0.5) * 1500, gyBase + 14 + pow(R(), 1.7) * 230, R() * DP,
+                3 + R() * 9, R() < 0.22 ? 1 : 0, 0.07 + R() * 0.15]);
+    for (k = -1; k < 3; k++) {
+      for (i = 0; i < mot.length; i++) {
+        var mo = mot[i], x = mo[0], y = mo[1], z = mo[2] + k * DP, sz = mo[3];
+        var c = mo[4] ? [0.35, 0.85, 1.0] : [1.0, 0.66, 0.36], a = mo[5];
+        v.push(x - sz, y - sz, z, 0, 0, c[0], c[1], c[2], a, 0);
+        v.push(x + sz, y - sz, z, 1, 0, c[0], c[1], c[2], a, 0);
+        v.push(x + sz, y + sz, z, 1, 1, c[0], c[1], c[2], a, 0);
+        v.push(x - sz, y - sz, z, 0, 0, c[0], c[1], c[2], a, 0);
+        v.push(x + sz, y + sz, z, 1, 1, c[0], c[1], c[2], a, 0);
+        v.push(x - sz, y + sz, z, 0, 1, c[0], c[1], c[2], a, 0);
+      }
+    }
+    var arr = new Float32Array(v);
+    return { buf: upload(arr), n: arr.length / 10 };
+  }
+
+  function init() {
+    if (ready) return;
+    var i;
+    protos = [];
+    for (i = 0; i < PROTO_FN.length; i++) {
+      var p = PROTO_FN[i]();
+      protos.push({ m: mesh(new Float32Array(p.d)), rad: p.rad, h: p.h, tris: p.d.length / 27 });
+    }
+    spots = makeSpots();
+    /* bake each ruin onto the terrain once; sunk a little so none ever floats */
+    for (i = 0; i < spots.length; i++)
+      spots[i].y = gy(spots[i].x, spots[i].z) - 7 * spots[i].s;
+    bands = [];
+    for (i = 0; i < NB; i++) bands.push(mesh(new Float32Array(buildBand(i))));
+
+    /* far apron: one dark quad sitting just beyond the last terrain band, to
+       close the sliver between the terrain edge and the horizon. Everything it
+       covers is past FOG_FAR so it renders as pure haze. Deliberately kept to
+       that strip — a full-size ground quad would double the fill rate for
+       pixels the terrain overdraws anyway. */
+    var A = MB();
+    A.quad([-8000, -34, 3150], [8000, -34, 3150], [8000, -34, 6400], [-8000, -34, 6400],
+           [0.10, 0.05, 0.12]);
+    apron = mesh(new Float32Array(A.d));
+
+    dust = buildDust(0);
+    ready = true;
+  }
+
+  /* ------------------------------------------------------------------ draw */
+  function draw(d) {
+    if (!ready) init();
+    if (d === undefined) d = (typeof dist === 'number' && isFinite(dist)) ? dist : 0;
+    var GY = GROUND_Y, i, wz;
+
+    /* ---- opaque: terrain bands, then ruins ----
+       The lit shader's fresnel rim is tuned for ship silhouettes; on a ground
+       plane seen at a grazing angle it saturates to white, so damp it. uMatte
+       defaults to 0 (= untouched behaviour) and we always put it back. */
+    litBegin();
+    gl.uniform1f(Plit.u.uMatte, 1.0);
+
+    /* near bands first: the depth buffer then rejects most of the far ones */
+    _vis.length = 0;
+    for (i = 0; i < NB; i++) {
+      wz = (i * BAND - d) % L; if (wz < 0) wz += L;
+      if (wz > ZFAR) wz -= L;
+      if (wz + BAND < ZNEAR || wz > ZFAR) continue;
+      _vis.push(wz, i);
+    }
+    for (i = 0; i < _vis.length; i += 2) {
+      for (var j = i + 2; j < _vis.length; j += 2)
+        if (_vis[j] < _vis[i]) {
+          wz = _vis[i]; _vis[i] = _vis[j]; _vis[j] = wz;
+          wz = _vis[i + 1]; _vis[i + 1] = _vis[j + 1]; _vis[j + 1] = wz;
+        }
+      ident(_m); _m[13] = GY; _m[14] = _vis[i];
+      litDraw(bands[_vis[i + 1]], _m, null, 1);
+    }
+
+    ident(_m); _m[13] = GY;
+    litDraw(apron, _m, null, 1);
+
+    /* ruins keep more of the neon edge — that is what reads as silhouette */
+    gl.uniform1f(Plit.u.uMatte, 0.42);
+    for (i = 0; i < spots.length; i++) {
+      var sp = spots[i];
+      wz = (sp.z - d) % L; if (wz < 0) wz += L;
+      if (wz > ZFAR) wz -= L;
+      /* a big butte is wide enough to still be on screen with its origin well
+         behind the camera, so the near cull has to account for its footprint */
+      if (wz < ZNEAR - protos[sp.p].rad * sp.s || wz > ZFAR) continue;
+      compose(_m, sp.x, GY + sp.y, wz, sp.rx, sp.ry, sp.rz, sp.s);
+      litDraw(protos[sp.p].m, _m, null, 1);
+    }
+
+    gl.uniform1f(Plit.u.uMatte, 0.0);
+
+    /* ---- additive: low dust hanging over the desert ---- */
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); gl.depthMask(false);
+    gl.useProgram(Pspr.p); attribs(4);
+    gl.uniform1f(Pspr.u.uFogNear, FOG_NEAR);
+    gl.uniform1f(Pspr.u.uFogFar, FOG_FAR);
+    ident(_m); _m[13] = GY; _m[14] = -(d % DP);
+    M4.mul(_mv, vp, _m);
+    gl.uniformMatrix4fv(Pspr.u.uVP, false, _mv);
+    gl.bindBuffer(gl.ARRAY_BUFFER, dust.buf);
+    sprPointers();
+    gl.drawArrays(gl.TRIANGLES, 0, dust.n);
+
+    /* ---- restore what we changed ---- */
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(Plit.p); attribs(3);
+  }
+
+  /* world-space ground height under a point, for anything that wants it */
+  function groundAt(x, z, d) {
+    if (d === undefined) d = (typeof dist === 'number') ? dist : 0;
+    var wz = (z + d) % L; if (wz < 0) wz += L;
+    return GROUND_Y + gy(x, wz);
+  }
+
+  function stats() {
+    if (!ready) return null;
+    var t = 0, i;
+    for (i = 0; i < protos.length; i++) t += protos[i].tris;
+    return { bands: NB, bandTris: bands[0].n / 3, protoTris: t, spots: spots.length, period: L };
+  }
+
+  return { init: init, draw: draw, groundAt: groundAt, stats: stats, PERIOD: L };
+})();
+
+</script>
+<script>
 /* ===== _gen/game.js ===== */
 "use strict";
 /* SKYFALL INTERCEPTOR — engine spine.
@@ -6123,7 +7295,7 @@ addEventListener('blur', ()=>{ for(const k in keys) keys[k]=false; mouse.fire=mo
 addEventListener('focus', ()=>AUDIO.resume());
 
 /* ------------------------------------------------------------------ state */
-let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss;
+let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss, debris, rings, evq;
 let dist, score, kills, combo, comboT, shake, flash, flashC, speed, flow;
 let gameOn=false, T=0, spawnT, waveN, nextBoss, alarmT, tipT, hitT, bossWarn, bossFx, hintT=0;
 
@@ -6132,6 +7304,7 @@ function reset(){
      fireCd:0,misCd:0,weapon:'std',wepT:0,rollT:0,rollDir:1,inv:0,thr:.4};
   stars=[]; for(let i=0;i<300;i++) stars.push({x:rnd(-3000,3000),y:rnd(-900,1500),z:rnd(200,SPAWN_Z+900)});
   enemies=[]; shots=[]; foes=[]; rockets=[]; parts=[]; crates=[]; pops=[]; boss=null;
+  debris=[]; rings=[]; evq=[];
   dist=0; score=0; kills=0; combo=1; comboT=0; shake=0; flash=0; flashC=COL.white;
   speed=1; flow=FLOW; spawnT=.25; waveN=0; nextBoss=2800; alarmT=0; tipT=4.5; hitT=0;
   bossWarn=0; bossFx=0;
@@ -6145,7 +7318,33 @@ function barrelRoll(dir){
   for(let i=0;i<22;i++)
     parts.push(mk(P.x,P.y,0, rnd(-190,190),rnd(-190,190),rnd(-420,140), COL.cyan, .45, 5));
 }
-function mk(x,y,z,vx,vy,vz,c,life,size){ return {x,y,z,vx,vy,vz,c,life,max:life,size}; }
+/* st: streak factor (drawn as a beam trailing v*st). dg: drag base/sec.
+   gw: grow factor, for fireball puffs that swell as they fade. */
+function mk(x,y,z,vx,vy,vz,c,life,size,st,dg,gw){
+  return {x,y,z,vx,vy,vz,c,life,max:life,size,st:st||0,dg:dg||0,gw:gw||0};
+}
+function shock(x,y,z,r0,r1,life,w,c,a){
+  if(rings.length>26) rings.shift();
+  rings.push({x,y,z,r:r0,r0,r1,w,c,a,life,max:life});
+}
+/* flat plates, not cubes: sy is squashed so a shard reads as torn hull */
+function shard(x,y,z,vx,vy,vz,s,c,life){
+  if(debris.length>72) debris.shift();
+  debris.push({x,y,z,vx,vy,vz,c,life,max:life,s,
+    rx:rnd(0,6.28),ry:rnd(0,6.28),rz:rnd(0,6.28),
+    ax:rnd(-13,13),ay:rnd(-13,13),az:rnd(-13,13),
+    sx:s*rnd(.4,1.25),sy:s*rnd(.10,.30),sz:s*rnd(.6,1.9),tr:0});
+}
+/* staged explosions: the payload fires later but keeps drifting with the world */
+function later(t,x,y,z,f){ evq.push({t,x,y,z,f}); }
+function sparks(x,y,z,n,sp,wid,c,dx,dy,dz,bias){
+  for(let i=0;i<n;i++){
+    const a=rnd(0,6.2832), b=rnd(-1,1), r=Math.sqrt(1-b*b), v=sp*rnd(.4,1);
+    const w=bias?rnd(.25,1):0;
+    parts.push(mk(x,y,z, (Math.cos(a)*r+dx*w)*v, (Math.sin(a)*r+dy*w)*v, (b+dz*w)*v,
+      i&3?COL.white:c, rnd(.16,.42), rnd(9,20)*wid, rnd(.045,.075), .09));
+  }
+}
 function burst(x,y,z,c,n,pow){
   for(let i=0;i<n;i++){
     const a=rnd(0,6.2832), b=rnd(-1,1), r=Math.sqrt(1-b*b), sp=rnd(70,520)*pow;
@@ -6163,7 +7362,8 @@ function aimAt(depth){
   const ndx = (sx/W)*2-1, ndy = 1-(sy/H)*2;
   const tanY = Math.tan(FOVY/2), tanX = tanY*(W/H);
   const d = depth - camP[2];
-  return { x: camP[0] + ndx*tanX*d, y: camP[1] + ndy*tanY*d };
+  /* the camera's right vector is -X here, so screen-right is world -X */
+  return { x: camP[0] - ndx*tanX*d, y: camP[1] + ndy*tanY*d };
 }
 function fireGuns(){
   const aim = aimAt(1500);
@@ -6200,7 +7400,7 @@ function lockOn(){
 function spawnDrone(){
   /* early drones fly nearly straight — a hard jink is unleadable at a 0.4s
      bullet flight time, so the evasion ramps in with distance */
-  const ev=.34+.66*Math.min(1,dist/34000);
+  const ev=.55+.45*Math.min(1,dist/30000);
   enemies.push({k:'drone',x:rnd(-250,250),y:rnd(-140,150),z:SPAWN_Z,hp:2,r:32,rz:46,
     ph:rnd(0,6.28),amp:rnd(90,240)*ev,spd:(rnd(1180,1480)+waveN*12)*(.78+.22*ev),c:COL.mag,roll:0,yaw:0});
 }
@@ -6216,7 +7416,7 @@ function spawnCrate(){
 function spawnBoss(){
   const hp = 300+waveN*70;
   boss={k:'boss',x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r:210,rz:150,c:COL.purple,
-        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0};
+        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0};
   bossWarn=2.4; AUDIO.siren();
 }
 
@@ -6284,6 +7484,22 @@ function update(dt){
     e.x+=sx*dt; e.y+=sy*dt;
     e.roll = lerp(e.roll, clamp(-sx/380,-1.2,1.2), Math.min(1,dt*6));
     e.yaw  = lerp(e.yaw,  clamp(sx/900,-.5,.5)+Math.PI, Math.min(1,dt*6));
+    if(e.hit>0) e.hit=Math.max(0,e.hit-dt*7);
+    if(e.max){
+      const w=e.hp/e.max;
+      /* a wounded hull lists and trails fire — the only way a single mesh
+         can read as "coming apart" */
+      e.list = w<.72 ? (1-w)*(.5+.4*Math.sin(T*3.1+e.ph)) : 0;
+      if(w<.72 && (e.smk=(e.smk||0)-dt)<=0){
+        e.smk = w<.34?.038:.09;
+        const ex=e.x+rnd(-e.r*.6,e.r*.6), ey=e.y+rnd(-12,12), ez=e.z-e.rz*.5;
+        parts.push(mk(ex,ey,ez, rnd(-45,45),rnd(20,95),-rnd(220,480),
+          w<.34?COL.red:COL.amber, rnd(.55,1.2), rnd(26,48), 0, .35, 1.5));
+        if(Math.random()<.6)
+          parts.push(mk(ex,ey,ez, rnd(-500,500),rnd(-260,520),-rnd(200,700),
+            COL.white, rnd(.12,.3), rnd(9,17), .05, .1));
+      }
+    }
     if(e.k==='cruiser' && (e.cd-=dt)<=0 && e.z>420 && e.z<2900){
       e.cd=rnd(.95,1.7);
       const g=ATT.cruiserGuns, V=2000, t=(e.z)/V;
@@ -6310,12 +7526,22 @@ function update(dt){
       b.z = 1500+Math.sin(b.t*.6)*300;
       b.phase = b.hp/b.max>.66?1 : b.hp/b.max>.33?2:3;
       b.yaw = Math.PI + Math.sin(b.t*.5)*.18;
-      b.roll = Math.sin(b.t*.7)*.10;
+      b.roll = Math.sin(b.t*.7)*.10 + rage*.20*Math.sin(b.t*3.4);
+      b.list = rage*.26*Math.sin(b.t*2.1);
+      if(rage>.25 && (b.smk-=dt)<=0){
+        b.smk = .07-rage*.045;
+        const hx=b.x+rnd(-250,250), hy=b.y+rnd(-40,60), hz=b.z+rnd(-130,150);
+        parts.push(mk(hx,hy,hz, rnd(-70,70),rnd(30,150),-rnd(260,620),
+          rage>.66?COL.red:COL.amber, rnd(.7,1.5), rnd(56,100), 0, .35, 1.6));
+        sparks(hx,hy,hz, 4, 900, 1.1, COL.amber, 0,0,0, 0);
+        if(rage>.6 && Math.random()<.22) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.8,1.4), COL.purple, rnd(.9,1.6));
+      }
       if((b.cd-=dt*(b.phase===3?1.8:b.phase===2?1.35:1))<=0){
         b.cd = b.phase===1?1.15 : b.phase===2?.85 : .62;
         volley(b);
       }
     }
+    if(b.hit>0) b.hit=Math.max(0,b.hit-dt*7);
   }
 
   /* crates */
@@ -6355,10 +7581,37 @@ function update(dt){
     }
   }
   /* particles */
+  if(parts.length>1100) parts.splice(0, parts.length-1100);
   for(let i=parts.length-1;i>=0;i--){
     const p=parts[i]; p.life-=dt;
+    if(p.dg){ const d=Math.pow(p.dg,dt); p.vx*=d; p.vy*=d; p.vz*=d; }
     p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt-flow*dt;
     if(p.life<=0||p.z<DESPAWN_Z) parts.splice(i,1);
+  }
+  /* shockwave rings */
+  for(let i=rings.length-1;i>=0;i--){
+    const g=rings[i]; g.life-=dt; g.z-=flow*dt;
+    const t=1-clamp(g.life/g.max,0,1);
+    g.r = g.r0+(g.r1-g.r0)*(1-(1-t)*(1-t)*(1-t));
+    if(g.life<=0) rings.splice(i,1);
+  }
+  /* debris shards */
+  for(let i=debris.length-1;i>=0;i--){
+    const d=debris[i]; d.life-=dt;
+    const dp=Math.pow(.42,dt); d.vx*=dp; d.vy*=dp; d.vz*=dp;
+    d.vy-=340*dt;
+    d.x+=d.vx*dt; d.y+=d.vy*dt; d.z+=d.vz*dt-flow*dt;
+    d.rx+=d.ax*dt; d.ry+=d.ay*dt; d.rz+=d.az*dt;
+    if((d.tr-=dt)<=0){
+      d.tr=.05;
+      parts.push(mk(d.x,d.y,d.z, rnd(-30,30),rnd(-10,60),rnd(-60,60),
+        Math.random()<.4?COL.white:d.c, rnd(.26,.62), rnd(5,10)*(.6+d.s*.8), 0, .25, 1.5));
+    }
+    if(d.life<=0||d.z<DESPAWN_Z) debris.splice(i,1);
+  }
+  for(let i=evq.length-1;i>=0;i--){
+    const v=evq[i]; v.z-=flow*dt;
+    if((v.t-=dt)<=0){ evq.splice(i,1); v.f(v.x,v.y,v.z); }
   }
   for(let i=pops.length-1;i>=0;i--){
     const f=pops[i]; f.life-=dt; f.y+=110*dt; f.z-=flow*dt;
@@ -6366,7 +7619,8 @@ function update(dt){
   }
 
   if((comboT-=dt)<=0 && combo>1){ combo=Math.max(1,combo-1); comboT=1.1; }
-  shake*=Math.pow(.03,dt); flash=Math.max(0,flash-dt*2.4);
+  /* superlinear decay: a big flash strobes and clears instead of washing the frame */
+  shake*=Math.pow(.03,dt); flash=Math.max(0,flash-dt*(2.4+flash*14));
   hitT=Math.max(0,hitT-dt); tipT=Math.max(0,tipT-dt);
   if(bossWarn>0) bossWarn-=dt;
   if(P.hp<35 && (alarmT-=dt)<=0){ AUDIO.alarm(); alarmT = P.hp<18?.4:.8; }
@@ -6405,26 +7659,100 @@ function hitScan(s,dmg,big){
        using the end-of-frame x/y throws the aim off by a whole frame of drift */
     const f = dz? clamp((e.z-s.pz)/dz,0,1) : 1;
     const hx = s.px+(s.x-s.px)*f, hy = s.py+(s.y-s.py)*f;
-    if(Math.hypot(e.x-hx,e.y-hy) > e.r+(big?46:40)) continue;
-    damage(e,dmg,hx,hy,e.z,big); return true;
+    if(Math.hypot(e.x-hx,e.y-hy) > e.r+(big?40:24)) continue;
+    damage(e,dmg,hx,hy,e.z,big,s); return true;
   }
   return false;
 }
-function damage(e,dmg,x,y,z,big){
+/* --------------------------------------------------------------- violence */
+function impact(e,dmg,x,y,z,big,s){
+  const heavy = e===boss || e.k==='cruiser';
+  const pw = clamp(dmg*.4,.3,1.4);
+  let dx=0,dy=0,dz=-1;
+  if(s){ const l=Math.hypot(s.vx,s.vy,s.vz)||1; dx=-s.vx/l; dy=-s.vy/l; dz=-s.vz/l; }
+  /* spray back down the shot line so the spark cone opens toward the camera */
+  sparks(x,y,z, big?30:Math.min(20,9+(dmg*3|0)), (big?2100:1500)*(.65+pw*.45),
+    big?1.5:1.25, e===boss?COL.purple:COL.cyan, dx,dy,dz, 1);
+  shock(x,y,z, heavy?16:9, (heavy?170:100)*(.55+pw*.6), big?.34:.25,
+    heavy?9:6.5, COL.white, big?1.5:1.35);
+  parts.push(mk(x,y,z, dx*120,dy*120,dz*120, COL.white, big?.14:.10,
+    (big?42:26)*(.8+pw*.4), 0, .2, big?1.9:1.8));
+  parts.push(mk(x,y,z, 0,0,0, e.c, big?.20:.15, (big?30:18)*(.8+pw*.4), 0, 0, 2.4));
+  if(heavy) for(let i=0;i<(big?3:1);i++)
+    if(big||Math.random()<.5)
+      shard(x,y,z, rnd(-300,300)+dx*320, rnd(20,320), rnd(-300,300)+dz*320,
+        e===boss?rnd(.8,1.5):rnd(.45,.8), e.c, rnd(.5,1.1));
+  e.hit = Math.min(1, (e.hit||0) + (big?1:.62));
+  shake = Math.min(30, shake + (big?9:2.6)*(.6+pw));
+  /* deliberately no fullscreen flash on ordinary hits — it washes the frame out */
+  if(big){ flash=Math.min(.15,flash+.055); flashC=e.c; }
+  AUDIO.boom(big?.8:.24);
+}
+function explode(e,x,y,z){
+  const k = e===boss?'boss' : e.k;
+  const c = e.c, R = e.r;
+  if(k==='boss'){
+    shock(x,y,z, 40,1600, .95, 26, COL.white, 1);
+    shock(x,y,z, 20, 820, .55, 34, COL.purple, 1);
+    parts.push(mk(x,y,z, 0,0,0, COL.white, .26, 190, 0, 0, 1.5));
+    sparks(x,y,z, 70, 2600, 1.9, COL.purple, 0,0,0, 0);
+    for(let i=0;i<34;i++)
+      shard(x+rnd(-R,R), y+rnd(-70,70), z+rnd(-140,140),
+        rnd(-1100,1100), rnd(-300,820), rnd(-1100,1100), rnd(1,2.2), i&1?c:COL.mag, rnd(1,1.9));
+    shake=38; flash=Math.min(.38,flash+.34); flashC=COL.white;
+    AUDIO.boom(2);
+    /* four staggered secondaries walking across the hull */
+    for(let i=0;i<4;i++){
+      const ox=rnd(-R*.9,R*.9), oy=rnd(-50,60), oz=rnd(-130,130);
+      later(.12+i*.17, x+ox,y+oy,z+oz, (fx,fy,fz)=>{
+        shock(fx,fy,fz, 24, 560, .5, 14, COL.white, .95);
+        for(let j=0;j<6;j++)
+          parts.push(mk(fx,fy,fz, rnd(-190,190),rnd(-120,190),rnd(-190,190),
+            j&1?COL.amber:COL.red, rnd(.4,.75), rnd(66,112), 0, .3, 1.9));
+        sparks(fx,fy,fz, 26, 1700, 1.4, COL.amber, 0,0,0, 0);
+        for(let j=0;j<4;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.9,1.8), COL.purple, rnd(.9,1.7));
+        shake=Math.min(38,shake+15); flash=Math.min(.22,flash+.08); flashC=i&1?COL.amber:COL.purple;
+        AUDIO.boom(1.5);
+      });
+    }
+    return;
+  }
+  const big = k==='cruiser';
+  shock(x,y,z, big?22:12, big?520:265, big?.5:.36, big?13:8, COL.white, 1.15);
+  shock(x,y,z, big?12:7, big?320:160, big?.32:.24, big?18:12, c, 1.0);
+  parts.push(mk(x,y,z, 0,0,0, COL.white, big?.19:.13, big?86:44, 0, 0, 1.5));
+  for(let i=0;i<(big?7:4);i++)
+    parts.push(mk(x+rnd(-R*.5,R*.5),y+rnd(-R*.3,R*.3),z+rnd(-R*.4,R*.4),
+      rnd(-130,130),rnd(-70,150),rnd(-130,130),
+      i&1?COL.amber:c, rnd(.3,.6)*(big?1.4:1), big?rnd(52,80):rnd(26,40), 0, .3, 1.8));
+  sparks(x,y,z, big?46:28, big?2100:1500, big?1.35:1, c, 0,0,0, 0);
+  for(let i=0;i<(big?16:8);i++)
+    shard(x,y,z, rnd(-760,760),rnd(-200,600),rnd(-760,760),
+      big?rnd(.7,1.5):rnd(.35,.7), i%3?c:COL.white, rnd(.8,1.6));
+  shake=Math.min(34, shake+(big?22:11));
+  flash=Math.min(.30, flash+(big?.19:.11)); flashC=c;
+  AUDIO.boom(big?1.1:.6);
+  if(big) later(.11,x,y,z,(fx,fy,fz)=>{
+    shock(fx,fy,fz, 30, 380, .38, 11, COL.amber, .85);
+    for(let i=0;i<5;i++)
+      parts.push(mk(fx,fy,fz, rnd(-210,210),rnd(-90,210),rnd(-210,210),
+        COL.amber, rnd(.35,.65), rnd(56,92), 0, .3, 1.8));
+    sparks(fx,fy,fz, 18, 1500, 1.1, COL.amber, 0,0,0, 0);
+    shake=Math.min(34,shake+9); AUDIO.boom(.8);
+  });
+}
+function damage(e,dmg,x,y,z,big,s){
   e.hp-=dmg;
-  burst(x,y,z, e===boss?COL.purple:COL.cyan, big?26:6, big?1.0:.34);
-  AUDIO.boom(big?.85:.26);
-  if(e.hp>0){ e.hit=.12; return; }
+  impact(e,dmg,x,y,z,big,s);
+  if(e.hp>0) return;
   e.dead=true; kills++;
+  explode(e,e.x,e.y,e.z);
   if(e===boss){
-    burst(e.x,e.y,e.z,COL.purple,110,2.4); AUDIO.boom(2);
     const pts=5000*combo; score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
     boss=null; combo=Math.min(9,combo+2); comboT=4;
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=enemies.indexOf(e); if(i>=0) enemies.splice(i,1);
-    burst(e.x,e.y,e.z,e.c, e.k==='cruiser'?40:20, e.k==='cruiser'?1.15:.6);
-    AUDIO.boom(e.k==='cruiser'?1:.55);
     const pts=(e.k==='cruiser'?250:100)*combo; score+=pts;
     pop(e.x,e.y,e.z,'+'+pts,e.c);
     combo=Math.min(9,combo+1); comboT=2.6;
@@ -6433,7 +7761,7 @@ function damage(e,dmg,x,y,z,big){
 }
 function hurt(dmg,src){
   if(P.inv>0) return;
-  if(src){ burst(src.x,src.y,src.z,COL.red,28,1.1); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
+  if(src){ explode(src,src.x,src.y,src.z); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
   if(P.shield>0){ const a=Math.min(P.shield,dmg); P.shield-=a; dmg-=a; }
   P.hp-=dmg; combo=1; P.inv=.55; hitT=.42;
   shake=Math.min(34,shake+16); flash=Math.min(.55,flash+.28); flashC=COL.red;
@@ -6503,7 +7831,13 @@ function xform(mat, p, out){
   out[2]=mat[2]*p[0]+mat[6]*p[1]+mat[10]*p[2]+mat[14];
   return out;
 }
-const _p3=[0,0,0];
+const _p3=[0,0,0], _tint=[0,0,0];
+function hitTint(e,li){
+  if(e.hit>0){ const f=e.hit*2.6; _tint[0]=f; _tint[1]=f*.94; _tint[2]=f; return _tint; }
+  /* badly hurt hulls flicker as their lighting fails */
+  if(li>.34 && Math.floor(T*23+e.ph*9)%6===0){ _tint[0]=.55; _tint[1]=.10; _tint[2]=.02; return _tint; }
+  return null;
+}
 
 function render(){
   setCamera();
@@ -6536,20 +7870,30 @@ function render(){
     litDraw(MESH.jet, model, hitT>0?[hitT*1.6,0,0]:null, 1);
   }
   for(const e of enemies){
-    compose(model, e.x,e.y,e.z, 0, e.yaw, e.roll, 1);
-    litDraw(e.k==='drone'?MESH.drone:MESH.cruiser, model, e.hit>0?[.9,.9,.9]:null, 1);
-    if(e.hit>0) e.hit-=0.02;
+    const li=e.list||0;
+    compose(model, e.x,e.y,e.z, li*.42, e.yaw, e.roll+li*.8, 1);
+    litDraw(e.k==='drone'?MESH.drone:MESH.cruiser, model, hitTint(e,li), 1);
   }
   if(boss){
-    compose(model, boss.x,boss.y,boss.z, 0, boss.yaw, boss.roll, 1);
+    compose(model, boss.x,boss.y,boss.z, boss.list||0, boss.yaw, boss.roll, 1);
     const ph=boss.phase===3?[.45,0,0]:boss.phase===2?[.16,0,.16]:null;
-    litDraw(MESH.mothership, model, ph, 1);
+    litDraw(MESH.mothership, model, hitTint(boss,0)||ph, 1);
+  }
+  for(const d of debris){
+    const a=clamp(d.life/d.max,0,1);
+    compose(model, d.x,d.y,d.z, d.rx,d.ry,d.rz, 1);
+    for(let i=0;i<3;i++){ model[i]*=d.sx; model[4+i]*=d.sy; model[8+i]*=d.sz; }
+    /* fresh shards read as hot metal, cooling to dead grey as they fade */
+    const g=a*a;
+    litDraw(MESH.crate, model, [.10+g*.85, g*.20-.26, -.42], 1);
   }
   for(const k of crates){
     compose(model, k.x,k.y,k.z, k.spin*.7, k.spin, 0, 1);
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;
     litDraw(MESH.crate, model, [c[0]*.55,c[1]*.55,c[2]*.55], 1);
   }
+
+  SCENERY.draw();
 
   /* additive */
   sprN=0;
@@ -6618,7 +7962,23 @@ function buildFX(){
   }
   for(const p of parts){
     const a=clamp(p.life/p.max,0,1);
-    sprite(p.x,p.y,p.z, p.size*(.5+a), p.c, a*1.3);
+    if(p.st) beam(p.x,p.y,p.z, p.x-p.vx*p.st,p.y-p.vy*p.st,p.z-p.vz*p.st, p.size*.42, p.c, a*a*2.0);
+    else if(p.gw) sprite(p.x,p.y,p.z, p.size*(1+(1-a)*p.gw), p.c, a*a*1.15);
+    else sprite(p.x,p.y,p.z, p.size*(.5+a), p.c, a*1.3);
+  }
+  for(const g of rings){
+    const a=clamp(g.life/g.max,0,1), al=g.a*a*a, n=18;
+    let px=g.x+camR[0]*g.r, py=g.y+camR[1]*g.r, pz=g.z+camR[2]*g.r;
+    for(let i=1;i<=n;i++){
+      const th=i/n*6.2832, cs=Math.cos(th)*g.r, sn=Math.sin(th)*g.r;
+      const nx=g.x+camR[0]*cs+camU[0]*sn, ny=g.y+camR[1]*cs+camU[1]*sn, nz=g.z+camR[2]*cs+camU[2]*sn;
+      beam(px,py,pz, nx,ny,nz, g.w*(.3+a*.7), g.c, al);
+      px=nx; py=ny; pz=nz;
+    }
+  }
+  for(const d of debris){
+    const a=clamp(d.life/d.max,0,1);
+    sprite(d.x,d.y,d.z, (4+9*d.s)*(.35+a*.65), COL.amber, a*a*.8);
   }
   for(const e of enemies){
     if(e.k==='drone'){ const c=ATT.droneCore;
@@ -6793,6 +8153,10 @@ function start(){
 function gameOver(){
   gameOn=false;
   burst(P.x,P.y,0,COL.red,90,2.2); AUDIO.boom(1.8); AUDIO.setIntensity(.15);
+  shock(P.x,P.y,0, 20,520,.6, 16, COL.white, 1);
+  sparks(P.x,P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);
+  for(let i=0;i<12;i++)
+    shard(P.x,P.y,0, rnd(-620,620),rnd(-160,520),rnd(-620,620), rnd(.35,.7), COL.cyan, rnd(.9,1.7));
   document.getElementById('fScore').textContent=score;
   document.getElementById('fDist').textContent=(dist/1000).toFixed(1);
   document.getElementById('fKills').textContent=kills;

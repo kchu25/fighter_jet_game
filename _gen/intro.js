@@ -449,94 +449,264 @@ const CINE = (function () {
   }
 
   /* ================================================================
-     SCENE 3 — the pilot, first person
+     SCENE 3 — THE PILOT.  Camera is outside the canopy looking in at
+     him: helmet, visor, mask, harness, seat, lit warm from the panel
+     below and cold from the bay lights streaming past behind.
      ================================================================ */
   const BOOTLINES = [
     'APU .............. ONLINE', 'FLT CTRL ......... NOMINAL',
     'INS ALIGN ........ LOCKED', 'WEAPONS .......... ARMED',
     'O2 SUPPLY ........ 100%', 'CATAPULT ......... CHARGED'
   ];
+
+  /* the pilot sits here in the 1600x900 frame */
+  const P3X = 662, P3Y = 434, P3S = 1.18;
+  const FX3 = 644, FY3 = 286;              /* focal point: his head */
+
   function scene3(u, dt) {
     const A = art();
     const cat = ramp(4.75, 6.5, u);          // catapult wind-up
     const boot = ramp(0.45, 3.2, u);
-    const sealed = ramp(2.5, 3.05, u);
+    const snap = ramp(2.30, 2.46, u);        // the visor coming down
+    const sealed = ramp(2.46, 3.10, u);      // HUD blooming across it
+    const fade = 1 - ramp(6.1, 6.5, u);
 
     once('c3rumble', T2 + 0.15, function () {
       rumbleH = sfx('rumble', 0.12); sfx('setIntensity', 0.45);
     });
     if (rumbleH && rumbleH.set) rumbleH.set(0.12 + 0.88 * cat);
 
-    /* ---- outside: the launch tunnel ---- */
-    const vpx = 800, vpy = 330;
-    c.fillStyle = '#02030a'; c.fillRect(0, 0, VW, VH);
-    const speed = 0.6 + cat * 14;
-    /* receding floor + ceiling strip lights */
-    c.save(); c.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 26; i++) {
-      const f = ((i + (t * speed) % 1) / 26);
-      const d = Math.pow(f, 2.6);
-      const y = vpy + d * 640, y2 = vpy - d * 420;
-      const hw = 40 + d * 1300;
-      const a = (0.1 + 0.75 * f) * (1 - ramp(6.15, 6.5, u));
-      c.strokeStyle = rgba(C.cyan, a * 0.5); c.lineWidth = 1 + d * 7;
-      c.beginPath(); c.moveTo(vpx - hw, y); c.lineTo(vpx + hw, y); c.stroke();
-      c.strokeStyle = rgba(C.amber, a * 0.35);
-      c.beginPath(); c.moveTo(vpx - hw * 0.8, y2); c.lineTo(vpx + hw * 0.8, y2); c.stroke();
-      if (cat > 0.05) {
-        c.strokeStyle = rgba(C.white, a * cat * 0.5); c.lineWidth = 2 + d * 4;
-        c.beginPath(); c.moveTo(vpx - hw, y); c.lineTo(vpx - hw - 200 * cat, y); c.stroke();
-        c.beginPath(); c.moveTo(vpx + hw, y); c.lineTo(vpx + hw + 200 * cat, y); c.stroke();
-      }
+    /* ---- camera: slow push-in with a live hand-held drift ---- */
+    const inch = ramp(0, 6.4, u);
+    const zoom = 1.02 + 0.15 * inch + 0.06 * cat;
+    const cdx = Math.sin(u * 0.44 + 1.1) * 15 + Math.sin(u * 1.9) * 2.5 - 34 * inch;
+    const cdy = Math.cos(u * 0.31) * 8 + 26 * ramp(3.4, 6.4, u);
+    function push(p) {
+      c.save();
+      const z = 1 + (zoom - 1) * p;
+      c.translate(FX3 + cdx * p, FY3 + cdy * p);
+      c.scale(z, z);
+      c.translate(-FX3, -FY3);
     }
-    /* the opening at the far end */
-    const ow = 90 + cat * 1500, oh = 60 + cat * 900;
-    const og = c.createRadialGradient(vpx, vpy, 0, vpx, vpy, Math.max(ow, oh));
-    og.addColorStop(0, rgba(C.ice, 0.9)); og.addColorStop(0.5, rgba(C.mag, 0.35));
-    og.addColorStop(1, 'rgba(0,0,0,0)');
-    c.fillStyle = og; c.fillRect(vpx - ow, vpy - oh, ow * 2, oh * 2);
+
+    /* ================= 1. the launch bay, far behind ============ */
+    c.fillStyle = '#02030a'; c.fillRect(0, 0, VW, VH);
+    push(0.40);
+    const bgG = c.createLinearGradient(0, 0, 260, VH);
+    bgG.addColorStop(0, '#04050e');
+    bgG.addColorStop(0.52, '#0a0a1c');
+    bgG.addColorStop(1, '#120823');
+    c.fillStyle = bgG; c.fillRect(-300, -300, VW + 600, VH + 600);
+
+    /* pools of haze that the pilot silhouettes against */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.30 * fade;
+    c.drawImage(glow(C.violet), 720, 30, 900, 760);
+    c.globalAlpha = 0.16 * fade;
+    c.drawImage(glow(C.mag), 380, 180, 760, 640);
+    c.globalAlpha = 0.20 * fade;
+    c.drawImage(glow(C.cyan), 960, 120, 620, 560);
+    c.globalAlpha = 1;
+
+    /* ceiling strip lights of the tunnel streaming past */
+    const VPX = 1215, VPY = 384;
+    const spd = 0.09 + cat * 2.4;
+    for (let i = 0; i < 17; i++) {
+      const f = (i + (t * spd) % 1) / 17;
+      const d = Math.pow(f, 2.25);
+      const lx = VPX - d * 2250, ly = VPY - d * 210;
+      const lw = 24 + d * 400 + cat * d * 1000;
+      const a = (0.08 + 0.85 * f) * fade;
+      c.fillStyle = rgba(C.ice, a * 0.42);
+      c.fillRect(lx - lw, ly, lw, 2.5 + d * 8);
+      c.fillStyle = rgba(C.cyan, a * 0.18);
+      c.fillRect(lx - lw * 0.72, ly + 7 + d * 9, lw * 0.72, 2 + d * 4);
+      if (f > 0.30) {
+        c.globalAlpha = a * 0.22;
+        c.drawImage(glow(C.ice), lx - lw, ly - 34 - d * 40, lw, 70 + d * 80);
+        c.globalAlpha = 1;
+      }
+      /* deck reflection under them */
+      c.fillStyle = rgba(C.amber, a * 0.10);
+      c.fillRect(lx - lw * 0.8, VPY + 210 + d * 460, lw * 0.8, 2 + d * 6);
+    }
     c.restore();
 
-    /* ---- cockpit furniture ---- */
-    if (A) A.cockpit(c, t, boot, sealed);
+    /* silhouetted bay structure so the depth has edges */
+    c.fillStyle = '#04050c';
+    c.fillRect(1360, 60, 74, 700);
+    c.fillRect(1300, 300, 180, 26);
+    c.fillRect(150, -40, 60, 520);
+    for (let i = 0; i < 5; i++) c.fillRect(120, 40 + i * 96, 130, 16);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = 0.5 * fade;
+    c.drawImage(glow(C.amber), 1300, 500, 190, 190);
+    c.globalAlpha = 0.32 * fade;
+    c.drawImage(glow(C.red), 120, 420, 180, 180);
+    c.globalAlpha = 1;
+    c.restore();
+    c.restore();
 
-    /* ---- HUD boot readout (over the glass) ---- */
+    /* ================= 2. inside the canopy ===================== */
+    push(0.92);
+    /* rear canopy bow, arching up behind his shoulder */
+    c.beginPath();
+    c.moveTo(1104, VH + 40);
+    c.quadraticCurveTo(1216, 320, 934, -40);
+    c.strokeStyle = '#070a11'; c.lineWidth = 42; c.stroke();
+    c.strokeStyle = 'rgba(120,150,190,0.10)'; c.lineWidth = 5; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.beginPath();
+    c.moveTo(1084, VH + 40);
+    c.quadraticCurveTo(1196, 320, 914, -40);
+    c.strokeStyle = rgba(C.ice, 0.30 * fade); c.lineWidth = 3; c.stroke();
+    c.restore();
+    /* the far cockpit wall / rear deck */
+    c.fillStyle = 'rgba(4,6,12,0.85)';
+    c.beginPath();
+    c.moveTo(1120, VH); c.lineTo(1216, 330); c.lineTo(VW, 190);
+    c.lineTo(VW, VH); c.closePath(); c.fill();
+    c.restore();
+
+    /* ================= 3. the pilot ============================= */
+    /* choreography: head down on the panel -> lifts and turns to lens
+       -> visor snaps -> settles forward down the catapult */
+    const lift = ramp(0.75, 1.95, u);
+    const toLens = ramp(1.55, 2.30, u);
+    const away = ramp(3.85, 4.95, u);
+    const turn = 0.34 + 0.58 * toLens - 0.40 * away;
+    const pitch = 0.80 - 0.72 * lift - 0.16 * ramp(4.6, 5.6, u)
+      + 0.05 * Math.sin(u * 0.8);
+    const visor = snap * (1 + 0.10 * Math.sin(Math.min(1, (u - 2.30) * 26)) * (1 - snap));
+    /* he starts breathing on the mask once it is sealed */
+    const bcyc = Math.max(0, Math.sin((u - 2.9) * 2.5));
+    const breath = ramp(2.95, 3.25, u) * (0.35 + 0.65 * bcyc * bcyc) * (1 - 0.4 * cat);
+
+    push(1);
+    if (A) A.pilot(c, P3X, P3Y, P3S, {
+      turn: sat(turn), pitch: pitch, visor: sat(visor),
+      hud: sealed * (0.82 + 0.18 * pulse(u, 3.1)),
+      glow: 0.50 + 0.50 * boot,
+      rim: 0.45 + 0.55 * ramp(0.4, 3.0, u) + 0.3 * cat,
+      breath: sat(breath), tt: t, alpha: 1
+    });
+    c.restore();
+
+    once('helm', T2 + 2.38, function () {
+      sfx('helmetOn'); shake = Math.max(shake, 5); flash = Math.max(flash, 0.16);
+      flashCol = C.ice;
+      for (let i = 0; i < 16; i++)
+        part(FX3 + rnd(-70, 70), FY3 - 18 + rnd(-16, 16), rnd(-160, 160), rnd(-90, 60),
+          rnd(0.25, 0.55), rnd(2, 5), C.ice, { d: 0.9 });
+    });
+    once('brth', T2 + 3.0, function () { sfx('breath', 3); });
+
+    /* ================= 4. foreground: glass + panel ============== */
+    push(1.5);
+    /* the instrument coaming across the bottom-left — the key light */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = (0.20 + 0.34 * boot) * fade;
+    c.drawImage(glow(C.amber), -180, 470, 1000, 700);
+    c.globalAlpha = (0.14 + 0.24 * boot) * fade;
+    c.drawImage(glow(C.green), 60, 520, 620, 480);
+    c.globalAlpha = 1;
+    c.restore();
+
+    c.save();
+    c.translate(250, 742);
+    c.rotate(-0.115);
+    /* bezel */
+    c.fillStyle = '#080b12';
+    c.fillRect(-300, -128, 620, 300);
+    c.fillStyle = '#141a24';
+    c.fillRect(-286, -116, 592, 268);
+    c.fillStyle = '#04070a';
+    c.fillRect(-262, -100, 544, 214);
+    /* the MFD itself */
+    c.save();
+    c.beginPath(); c.rect(-262, -100, 544, 214); c.clip();
+    c.fillStyle = 'rgba(10,26,20,0.9)'; c.fillRect(-262, -100, 544, 214);
     for (let i = 0; i < BOOTLINES.length; i++) {
       const at = 0.5 + i * 0.24;
       if (u < at) continue;
       once('bt' + i, T2 + at, function () { sfx('beep', 0.2 + i * 0.13); });
       const flick = (u - at < 0.3 && Math.random() < 0.35) ? 0.3 : 1;
-      txt(BOOTLINES[i], 250, 168 + i * 34, 20,
-        rgba(C.green, 0.85 * flick * (1 - ramp(4.4, 5.0, u))), 3);
+      txt(BOOTLINES[i], -238, -62 + i * 32, 21,
+        rgba(C.green, 0.92 * flick * fade), 2);
     }
-    if (boot > 0.98 && pulse(u, 2.2) > 0.35 && u < 6.1)
-      txt('CLEARED FOR LAUNCH', 1360, 200, 26, rgba(C.cyan, 0.95), 6, 'right', 'bold');
+    if (boot > 0.98 && pulse(u, 2.2) > 0.35)
+      txt('CLEARED FOR LAUNCH', -238, 96, 22, rgba(C.cyan, 0.95 * fade), 4, 'left', 'bold');
+    /* screen scan + curvature */
+    c.fillStyle = 'rgba(120,255,190,0.05)';
+    c.fillRect(-262, -100 + ((t * 190) % 214), 544, 22);
+    const scG = c.createLinearGradient(-262, -100, 120, 114);
+    scG.addColorStop(0, 'rgba(190,255,225,0.10)');
+    scG.addColorStop(0.6, 'rgba(190,255,225,0)');
+    c.fillStyle = scG; c.fillRect(-262, -100, 544, 214);
+    c.restore();
+    /* a row of hard switches below the screen */
+    for (let i = 0; i < 8; i++) {
+      c.fillStyle = '#0a0e15';
+      c.fillRect(-250 + i * 68, 124, 44, 22);
+      c.fillStyle = i % 3 === 0 ? rgba(C.amber, 0.55 * boot) : 'rgba(150,180,210,0.14)';
+      c.fillRect(-244 + i * 68, 130, 14, 10);
+    }
+    c.restore();
 
-    /* ---- gloves + mask ---- */
-    const rise = ramp(0.9, 2.45, u);
-    const away = ramp(2.6, 3.3, u);
-    if (A && rise > 0 && away < 1) {
-      const ga = 1 - away;
-      /* the mask is carried up into the lens: it rises, swells as it nears the
-         face, then rushes past the camera as it seats */
-      const my = 1040 - rise * 400 - away * 130;
-      const ms = 0.9 + rise * 1.7 + away * 2.9;
-      const gx = 66 * ms + 46;               // gloves grip the cup, so they track its width
-      const gy = my + 26 * ms + away * 260;
-      A.glove(c, 800 - gx, gy, ms * 0.62, -0.5 + rise * 0.34, false, ga);
-      A.glove(c, 800 + gx, gy, ms * 0.62, 0.5 - rise * 0.34, true, ga);
-      A.mask(c, 800, my, ms, Math.sin(u * 1.6) * 0.05 * (1 - rise), ga);
+    /* the canopy rail crossing in front of him */
+    c.beginPath();
+    c.moveTo(-60, 880);
+    c.quadraticCurveTo(700, 646, VW + 60, 300);
+    c.strokeStyle = '#05070d'; c.lineWidth = 52; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.beginPath();
+    c.moveTo(-60, 856);
+    c.quadraticCurveTo(700, 622, VW + 60, 276);
+    c.strokeStyle = rgba(C.ice, 0.34 * fade); c.lineWidth = 3.5; c.stroke();
+    c.beginPath();
+    c.moveTo(-60, 852);
+    c.quadraticCurveTo(700, 618, VW + 60, 272);
+    c.strokeStyle = rgba(C.amber, 0.14 * fade); c.lineWidth = 8; c.stroke();
+    c.restore();
+    c.restore();
+
+    /* ---- reflections sliding over the canopy glass ---- */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 3; i++) {
+      const ph = (t * (0.10 + 0.55 * cat) + i * 0.37) % 1;
+      const gx = -520 + ph * 2600;
+      c.save();
+      c.translate(gx, 0);
+      c.rotate(0.34);
+      const rgG = c.createLinearGradient(-150, 0, 150, 0);
+      rgG.addColorStop(0, 'rgba(150,220,255,0)');
+      rgG.addColorStop(0.5, 'rgba(180,232,255,' + (0.055 + 0.05 * cat) * fade + ')');
+      rgG.addColorStop(1, 'rgba(150,220,255,0)');
+      c.fillStyle = rgG;
+      c.fillRect(-150, -700, 300, 2200);
+      c.restore();
     }
-    once('helm', T2 + 2.38, function () { sfx('helmetOn'); shake = Math.max(shake, 5); });
-    once('brth', T2 + 3.0, function () { sfx('breath', 3); });
+    c.restore();
+
+    /* dust and lint drifting through the light */
+    if (Math.random() < 0.10)
+      part(rnd(0, VW), rnd(0, VH), rnd(-26, 10), rnd(-16, 16),
+        rnd(1.4, 3.0), rnd(0.5, 1.1), Math.random() < 0.4 ? C.amber : C.ice,
+        { d: 0.99, a: 0.16 });
 
     /* ---- catapult ---- */
     once('cat', T2 + 4.75, function () { sfx('riser', 1.6); });
     if (cat > 0) shake = Math.max(shake, 3 + 22 * cat * (0.6 + 0.4 * Math.sin(t * 55)));
 
     stepParts(dt, 0); drawParts();
-    scanlines(0.14);
-    vignette(0.5 + 0.25 * sealed);
+    scanlines(0.13);
+    vignette(0.62 + 0.22 * sealed);
 
     /* fade from black in, white out at the end */
     const fi = 1 - ramp(0, 0.55, u);

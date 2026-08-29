@@ -8,8 +8,7 @@
      rocket   (c, x, y, s, rot, thrust, tt)
      warship  (c, x, y, s, alpha, charge, tt)  -> { tips:[[x,y],[x,y]] }
      jet      (c, x, y, s, rot, thrust, tint)
-     glove    (c, x, y, s, rot, mirror, alpha)
-     mask     (c, x, y, s, rot, alpha)
+     pilot    (c, x, y, s, opts)               seated aircrew, 3rd person
      cockpit  (c, tt, boot, sealed)            absolute 1600x900
      silo     (c, x, y, w, open, glowCol)
      cloudBank(c, y, h, tt, tint, alpha)
@@ -990,217 +989,75 @@ const CINE_ART = (function () {
   }
 
   /* ==================================================================
-     4. GLOVE — pilot's gloved hand + forearm, first person,
-     reaching UP from the bottom of frame. ~120 long.
-     y +50 (cuff) .. y -70 (fingertips)
-     ================================================================== */
-
-  /* one tapered, creased finger segment chain */
-  function finger(c, bx, by, segs) {
-    /* segs: [ [len, ang, w0, w1], ... ] applied cumulatively */
-    c.save();
-    c.translate(bx, by);
-    for (let i = 0; i < segs.length; i++) {
-      const L = segs[i][0], A = segs[i][1], w0 = segs[i][2], w1 = segs[i][3];
-      c.rotate(A);
-      const g = lg(c, 'gl.fs' + i, -w0, 0, w0, 0, [
-        [0, '#3d465c'], [0.28, '#5b6880'], [0.6, '#252c3b'], [1, '#111621']
-      ]);
-      c.beginPath();
-      c.moveTo(-w0, 0);
-      c.lineTo(-w1, -L + w1);
-      c.quadraticCurveTo(-w1, -L, 0, -L);
-      c.quadraticCurveTo(w1, -L, w1, -L + w1);
-      c.lineTo(w0, 0);
-      c.closePath();
-      c.fillStyle = g; c.fill();
-      c.strokeStyle = 'rgba(5,8,14,0.75)'; c.lineWidth = 0.8; c.stroke();
-      /* knuckle crease at the base of each segment */
-      c.beginPath();
-      c.moveTo(-w0 * 0.92, -1.6);
-      c.quadraticCurveTo(0, -4.2, w0 * 0.92, -1.6);
-      c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1.0; c.stroke();
-      c.beginPath();
-      c.moveTo(-w0 * 0.9, -0.2);
-      c.quadraticCurveTo(0, -2.6, w0 * 0.9, -0.2);
-      c.strokeStyle = 'rgba(180,205,235,0.14)'; c.lineWidth = 0.7; c.stroke();
-      /* cyan rim down the left edge of the segment */
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      seg(c, -w0 + 0.4, -1, -w1 + 0.3, -L + w1, rgba(CY, 0.28), 1.0);
-      c.restore();
-      c.translate(0, -L);
-    }
-    c.restore();
-  }
-
-  function glove(c, x, y, s, rot, mirror, alpha) {
-    alpha = alpha == null ? 1 : sat(alpha);
-    if (alpha <= 0.002) return;
-
-    c.save();
-    c.translate(x, y);
-    c.rotate(rot || 0);
-    c.scale(s, s);
-    if (mirror) c.scale(-1, 1);
-    c.globalAlpha = alpha;
-    c.lineJoin = 'round';
-
-    /* ---------- forearm gauntlet -------------------------------- */
-    const armG = lg(c, 'gl.arm', -18, 0, 18, 0, [
-      [0.00, '#0c1018'], [0.14, '#252d3e'], [0.36, '#48546c'],
-      [0.58, '#2b3344'], [0.84, '#151a25'], [1.00, '#090c13']
-    ]);
-    c.beginPath();
-    c.moveTo(-17, 52);
-    c.lineTo(-16, 18);
-    c.quadraticCurveTo(-15, 6, -14, 2);
-    c.lineTo(14, 2);
-    c.quadraticCurveTo(15, 6, 16, 18);
-    c.lineTo(17, 52);
-    c.closePath();
-    c.fillStyle = armG; c.fill();
-
-    /* segmented armour plates on the gauntlet */
-    const plG = lg(c, 'gl.pl', -15, 0, 15, 0, [
-      [0, '#161c29'], [0.3, '#3a4459'], [0.62, '#232a39'], [1, '#0d1119']
-    ]);
-    fillP(c, [-15.4, 30, 15.4, 30, 15.0, 20, -15.0, 20], plG);
-    fillP(c, [-14.6, 17, 14.6, 17, 14.2, 8, -14.2, 8], plG);
-    strokeP(c, [-15.4, 30, 15.4, 30, 15.0, 20, -15.0, 20], 'rgba(4,6,11,0.8)', 0.9);
-    strokeP(c, [-14.6, 17, 14.6, 17, 14.2, 8, -14.2, 8], 'rgba(4,6,11,0.8)', 0.9);
-    seg(c, -14.8, 21.2, 14.8, 21.2, 'rgba(190,215,245,0.14)', 0.7);
-    seg(c, -14.0, 9.2, 14.0, 9.2, 'rgba(190,215,245,0.12)', 0.7);
-
-    /* ribbed cuff */
-    for (let i = 0; i < 6; i++) {
-      const yy = 52 - i * 3.4;
-      seg(c, -16.8 + i * 0.12, yy, 16.8 - i * 0.12, yy, 'rgba(0,0,0,0.5)', 1.3);
-      seg(c, -16.6 + i * 0.12, yy + 1.3, 16.6 - i * 0.12, yy + 1.3, 'rgba(160,190,220,0.13)', 0.8);
-    }
-    /* cyan status LED + label block */
-    fillP(c, [4, 24, 13, 24, 13, 29, 4, 29], '#080b12');
-    c.save();
-    c.globalCompositeOperation = 'lighter';
-    disc(c, 8.5, 26.5, 1.7, rgba(CY, 0.95));
-    blob(c, 8.5, 26.5, 10, CY, 0.45);
-    c.restore();
-    fillP(c, [-13, 23, -5, 23, -5, 27, -13, 27], '#1b2130');
-    seg(c, -12, 25, -6, 25, 'rgba(140,170,200,0.35)', 0.7);
-
-    /* ---------- padded palm / back-of-hand ---------------------- */
-    const palmG = lg(c, 'gl.palm', -19, 0, 19, 0, [
-      [0.00, '#0d111a'], [0.16, '#2b3446'], [0.38, '#586880'],
-      [0.60, '#333c4e'], [0.86, '#171d29'], [1.00, '#0a0d14']
-    ]);
-    c.beginPath();
-    c.moveTo(-14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.closePath();
-    c.fillStyle = palmG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.7)'; c.lineWidth = 1.0; c.stroke();
-
-    /* quilted padding on the back of the hand */
-    c.save();
-    c.beginPath();
-    c.moveTo(-14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.closePath();
-    c.clip();
-    c.strokeStyle = 'rgba(0,0,0,0.42)'; c.lineWidth = 0.9;
-    for (let i = -2; i <= 2; i++) seg(c, i * 7.4, -32, i * 7.4 + 2, 6, 'rgba(0,0,0,0.42)', 0.9);
-    for (let i = 0; i < 3; i++) seg(c, -20, -24 + i * 10, 20, -26 + i * 10, 'rgba(0,0,0,0.34)', 0.9);
-    /* knuckle bumps */
-    for (let i = 0; i < 4; i++) {
-      ell(c, -11 + i * 8.6, -26, 4.2, 3.0, 'rgba(120,150,185,0.16)');
-    }
-    c.restore();
-
-    /* ---------- thumb (distinct, off the near side) ------------- */
-    c.save();
-    c.translate(-12.5, -9);
-    c.rotate(-0.34);
-    const thG = lg(c, 'gl.th', -7, 0, 7, 0, [
-      [0, '#39435a'], [0.3, '#5a6880'], [0.65, '#232b3a'], [1, '#0e131c']
-    ]);
-    c.beginPath();
-    c.moveTo(-7, 4); c.lineTo(-6.4, -13);
-    c.quadraticCurveTo(-6.0, -18, -1.5, -18.5);
-    c.quadraticCurveTo(3.0, -19, 3.6, -13);
-    c.lineTo(4.4, 4);
-    c.closePath();
-    c.fillStyle = thG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.75)'; c.lineWidth = 0.9; c.stroke();
-    seg(c, -6.4, -12, 3.6, -12.6, 'rgba(0,0,0,0.5)', 1.0);
-    /* thumb tip pad */
-    c.translate(-1.2, -18.5);
-    c.rotate(-0.5);
-    c.beginPath();
-    c.moveTo(-5.4, 1); c.lineTo(-4.6, -11);
-    c.quadraticCurveTo(-4.2, -15, 0, -15);
-    c.quadraticCurveTo(4.0, -15, 4.0, -11);
-    c.lineTo(4.6, 1);
-    c.closePath();
-    c.fillStyle = thG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.75)'; c.lineWidth = 0.9; c.stroke();
-    c.restore();
-
-    /* ---------- four fingers, curled as if gripping ------------- */
-    /* base x, base y, then [len, angle, w0, w1] per segment */
-    const F = [
-      [-9.5, -28, [[17, -0.10, 5.4, 4.7], [13, 0.52, 4.6, 4.0], [9, 0.60, 3.9, 3.2]]],
-      [-0.6, -30, [[19, -0.02, 5.6, 4.9], [14, 0.55, 4.8, 4.1], [9.5, 0.62, 4.0, 3.2]]],
-      [7.8, -29, [[17.5, 0.08, 5.4, 4.6], [13, 0.58, 4.5, 3.9], [9, 0.64, 3.8, 3.0]]],
-      [15.4, -25, [[13.5, 0.20, 4.6, 3.9], [10.5, 0.60, 3.8, 3.3], [7.5, 0.66, 3.2, 2.6]]]
-    ];
-    for (let i = 0; i < F.length; i++) finger(c, F[i][0], F[i][1], F[i][2]);
-
-    /* ---------- lighting: cyan rim one edge, warm bounce other ---
-       Clipped to the arm+palm silhouette so no light spills onto the
-       background — a rectangle of glow here would betray the vector. */
-    c.save();
-    c.globalCompositeOperation = 'lighter';
-    c.beginPath();
-    c.moveTo(-17, 52);
-    c.lineTo(-16, 18);
-    c.quadraticCurveTo(-15, 6, -14, 4);
-    c.quadraticCurveTo(-19, -6, -17.5, -18);
-    c.quadraticCurveTo(-16, -28, -8, -30);
-    c.lineTo(12, -28);
-    c.quadraticCurveTo(18, -25, 18, -14);
-    c.quadraticCurveTo(18, -4, 14, 4);
-    c.quadraticCurveTo(15, 6, 16, 18);
-    c.lineTo(17, 52);
-    c.closePath();
-    c.clip();
-    const rimG = lg(c, 'gl.rim', -19, 0, -11, 0, [
-      [0, 'rgba(58,224,255,0.5)'], [1, 'rgba(58,224,255,0)']
-    ]);
-    c.fillStyle = rimG;
-    c.fillRect(-19, -34, 9, 90);
-    const wrmG = lg(c, 'gl.wrm', 19, 0, 7, 0, [
-      [0, 'rgba(255,168,88,0.34)'], [1, 'rgba(255,168,88,0)']
-    ]);
-    c.fillStyle = wrmG;
-    c.fillRect(7, -32, 12, 88);
-    c.restore();
-
-    c.restore();
-  }
-
   /* ==================================================================
-     5. MASK — pilot's oxygen mask, face on. ~130 wide (x +/-65).
-     NOTE: the breathing hose trails well past the nominal bounds,
-     down to roughly (-125, +125) in local units.
+     4. PILOT — helmeted aircrew strapped into an ejection seat, seen
+     from OUTSIDE the canopy (three-quarter / profile).  This is a
+     character, not a first-person prop: shell, visor, mask, harness,
+     seat, lit warm from the instruments below and cold from the
+     canopy behind.
+
+       pilot(c, x, y, s, o)
+         (x,y) is the notch of the throat.  The crown of the helmet
+         sits at y-220*s, the shoulders at y+90*s and the torso runs
+         off to y+440*s — put the origin high enough in the frame that
+         the chest leaves the bottom edge.
+         o.turn   0 = head in profile facing frame-LEFT (down the nose),
+                  1 = head turned toward the lens.
+         o.pitch  head tilt: -1 chin up .. +1 chin down onto the panel.
+         o.visor  0 = visor stowed on the brow, 1 = visor snapped down.
+         o.hud    0..1 HUD symbology reflected across the visor glass.
+         o.glow   0..1 warm instrument key light from below-left.
+         o.rim    0..1 cold canopy rim light from above-right.
+         o.breath 0..1 exhale — mask fog + valve puff.
+         o.tt     seconds; drives the idle breathing + airframe buzz.
+         o.alpha
      ================================================================== */
+
+  /* Closed smooth curve through a flat control-point list (quadratics
+     joined at the midpoints).  Two lists of equal length can therefore
+     be lerped freely, which is how the head turns. */
+  function smoothP(c, p) {
+    const n = p.length >> 1;
+    if (n < 3) return;
+    c.beginPath();
+    c.moveTo((p[0] + p[(n - 1) * 2]) * 0.5, (p[1] + p[(n - 1) * 2 + 1]) * 0.5);
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      c.quadraticCurveTo(p[i * 2], p[i * 2 + 1],
+        (p[i * 2] + p[j * 2]) * 0.5, (p[i * 2 + 1] + p[j * 2 + 1]) * 0.5);
+    }
+    c.closePath();
+  }
+  function lerpP(a, b, t, out) {
+    for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+    out.length = a.length;
+    return out;
+  }
+  function mixv(a, b, t) { return a + (b - a) * t; }
+
+  /* Helmet shell.  12 control points, same roles in both poses, so the
+     head can be turned by lerping between them:
+       0 brow front   1 front upper  2 crown front  3 crown
+       4 crown back   5 occiput      6 back lower   7 behind the ear
+       8 ear-flap     9 cheek edge  10 front cheek 11 brow lower      */
+  const SH_A = [
+    -96, -24, -86, -64, -42, -94, 16, -98, 66, -76, 94, -34,
+    90, 16, 66, 50, 22, 60, -26, 44, -62, 16, -92, -4
+  ];
+  const SH_B = [
+    -70, -30, -78, -66, -40, -94, 10, -98, 56, -78, 82, -38,
+    78, 8, 58, 46, 26, 30, -6, 18, -38, 28, -64, 42
+  ];
+  /* The jaw / lower face that hangs out of the front of the shell. */
+  const JW_A = [
+    -90, -10, -104, 26, -94, 58, -62, 84, -14, 80, 32, 56, -30, 30
+  ];
+  const JW_B = [
+    -58, 0, -64, 34, -48, 64, -12, 82, 26, 74, 54, 40, 0, 8
+  ];
+  const SH_T = [], JW_T = [];
+
+  /* the oxygen-mask cup, half-width 65 at scale 1 */
   function maskCup(c) {
     c.beginPath();
     c.moveTo(-65, -30);
@@ -1215,185 +1072,659 @@ const CINE_ART = (function () {
     c.closePath();
   }
 
-  function mask(c, x, y, s, rot, alpha) {
-    alpha = alpha == null ? 1 : sat(alpha);
-    if (alpha <= 0.002) return;
+  /* the drop visor, in visor space: pivot (0,0) sits on the brow bar */
+  function visorShape(c) {
+    c.beginPath();
+    c.moveTo(-58, -6);
+    c.quadraticCurveTo(-68, 18, -52, 40);
+    c.quadraticCurveTo(-16, 56, 30, 42);
+    c.quadraticCurveTo(52, 30, 50, -8);
+    c.closePath();
+  }
+
+  function pilot(c, x, y, s, o) {
+    o = o || {};
+    const alpha = o.alpha == null ? 1 : sat(o.alpha);
+    if (alpha <= 0.003) return;
+    const turn = sat(o.turn == null ? 0.5 : o.turn);
+    const pitch = o.pitch == null ? 0 : o.pitch;
+    const vis = sat(o.visor == null ? 1 : o.visor);
+    const hud = sat(o.hud || 0);
+    const key = o.glow == null ? 1 : sat(o.glow);
+    const rim = o.rim == null ? 1 : sat(o.rim);
+    const breath = sat(o.breath || 0);
+    const tt = o.tt || 0;
+
+    const brt = Math.sin(tt * 1.25);                       // slow breathing
+    const buzz = (noise(tt * 13.0) - 0.5) * 2;             // airframe buzz
+
+    /* head frame */
+    const hcx = mixv(-16, 6, turn) - pitch * 8;
+    const hcy = -112 + brt * 1.4 + buzz * 0.8 + pitch * 12;
+    const hrot = pitch * 0.30 + mixv(-0.05, 0.03, turn);
+    const hcs = Math.cos(hrot), hsn = Math.sin(hrot);
+    function h2b(px, py) {           // head local -> body local
+      return [hcx + px * hcs - py * hsn, hcy + px * hsn + py * hcs];
+    }
 
     c.save();
     c.translate(x, y);
-    c.rotate(rot || 0);
     c.scale(s, s);
     c.globalAlpha = alpha;
     c.lineJoin = 'round';
 
-    /* ---------- corrugated breathing hose (behind the cup) ------ */
-    /* chain of overlapping ribbed segments, tapering as it recedes */
-    const HN = 14;
+    /* ==================================================================
+       EJECTION SEAT — the mass behind him
+       ================================================================== */
     c.save();
-    for (let i = HN - 1; i >= 0; i--) {
-      const t = i / (HN - 1);
-      /* quadratic path from under the cup out to the lower left */
-      const px = mix(mix(-22, -74, t), mix(-74, -122, t), t);
-      const py = mix(mix(40, 66, t), mix(66, 124, t), t);
-      /* tangent for segment orientation */
-      const tx = mix(-74 - -22, -122 - -74, t);
-      const ty = mix(66 - 40, 124 - 66, t);
-      const a = Math.atan2(ty, tx);
-      const r = mix(16.5, 8.5, t);
-      c.save();
-      c.translate(px, py);
-      c.rotate(a);
-      const hgG = lg(c, 'mk.hose', 0, -18, 0, 18, [
-        [0.00, '#0b0e15'], [0.20, '#39445a'], [0.42, '#5c6b86'],
-        [0.62, '#2b3443'], [1.00, '#070a10']
-      ]);
-      c.save();
-      c.scale(1, r / 16.5);
-      c.beginPath();
-      c.moveTo(-7, -16.5);
-      c.quadraticCurveTo(0, -19.5, 7, -16.5);
-      c.lineTo(7, 16.5);
-      c.quadraticCurveTo(0, 19.5, -7, 16.5);
-      c.closePath();
-      c.fillStyle = hgG; c.fill();
-      c.strokeStyle = 'rgba(3,5,9,0.75)'; c.lineWidth = 1.2; c.stroke();
-      /* rib highlight */
-      c.beginPath();
-      c.moveTo(-2.4, -16.0);
-      c.quadraticCurveTo(-2.4, 0, -2.4, 16.0);
-      c.strokeStyle = 'rgba(175,205,240,0.16)'; c.lineWidth = 2.0; c.stroke();
-      c.restore();
-      c.restore();
-    }
-    c.restore();
-    /* hose collar where it enters the cup */
-    ell(c, -22, 38, 15, 13, '#0d1119');
-
-    /* ---------- strap tabs + buckles ---------------------------- */
-    for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      c.save();
-      c.scale(sg, 1);
-      const tbG = lg(c, 'mk.tab', 58, 0, 84, 0, [
-        [0, '#39424f'], [0.4, '#5e6a7c'], [1, '#161b24']
-      ]);
-      fillP(c, [56, -36, 82, -30, 82, -12, 56, -14], tbG);
-      strokeP(c, [56, -36, 82, -30, 82, -12, 56, -14], 'rgba(4,6,11,0.8)', 1.1);
-      /* buckle */
-      fillP(c, [68, -30, 80, -27, 80, -16, 68, -17], '#0a0d13');
-      strokeP(c, [70, -28, 78, -26, 78, -19, 70, -20], 'rgba(180,200,225,0.55)', 1.6);
-      seg(c, 74, -27, 74, -19, 'rgba(180,200,225,0.4)', 1.2);
-      c.restore();
-    }
-
-    /* ---------- mic boom stub (right side) ---------------------- */
-    c.save();
-    c.translate(52, 6);
-    c.rotate(0.55);
-    const mbG = lg(c, 'mk.mb', 0, -6, 0, 6, [
-      [0, '#4d5768'], [0.45, '#6e7c92'], [1, '#12161e']
+    c.translate(-152, -30);
+    c.translate(178, 0); c.scale(1.34, 1.04); c.translate(-178, 0);
+    const stG = lg(c, 'pl.seat', 30, -260, 320, 320, [
+      [0.00, '#19222e'], [0.22, '#101720'], [0.60, '#0a0e15'], [1.00, '#04060a']
     ]);
     c.beginPath();
-    c.moveTo(0, -6); c.lineTo(26, -4.6);
-    c.quadraticCurveTo(31, -4.6, 31, 0);
-    c.quadraticCurveTo(31, 4.6, 26, 4.6);
-    c.lineTo(0, 6);
+    c.moveTo(58, 460);
+    c.lineTo(34, -60);
+    c.quadraticCurveTo(30, -204, 104, -222);
+    c.lineTo(232, -244);
+    c.quadraticCurveTo(288, -246, 292, -170);
+    c.lineTo(322, 460);
     c.closePath();
-    c.fillStyle = mbG; c.fill();
-    c.strokeStyle = 'rgba(4,6,11,0.8)'; c.lineWidth = 1.0; c.stroke();
-    for (let i = 0; i < 4; i++) seg(c, 8 + i * 5, -5.4, 8 + i * 5, 5.4, 'rgba(0,0,0,0.4)', 0.8);
-    disc(c, 27, 0, 3.0, '#080b11');
+    c.fillStyle = stG; c.fill();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 3; c.stroke();
+
+    /* quilted headrest pad — the helmet is silhouetted against it */
+    const hrG = lg(c, 'pl.hrest', 40, -220, 240, -60, [
+      [0.00, '#33404f'], [0.40, '#1f2833'], [1.00, '#0c1118']
+    ]);
+    c.beginPath();
+    c.moveTo(46, -56);
+    c.lineTo(42, -172);
+    c.quadraticCurveTo(44, -206, 106, -212);
+    c.lineTo(218, -224);
+    c.quadraticCurveTo(258, -224, 260, -178);
+    c.lineTo(264, -64);
+    c.quadraticCurveTo(154, -40, 46, -56);
+    c.closePath();
+    c.fillStyle = hrG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 2.4; c.stroke();
+    for (let i = 0; i < 3; i++) {
+      const px = 92 + i * 58;
+      seg(c, px, -210 + i * 3, px + 4, -52 - i * 2, 'rgba(0,0,0,0.45)', 2.4);
+      seg(c, px + 4, -210 + i * 3, px + 8, -52 - i * 2, 'rgba(160,195,230,0.08)', 1.2);
+    }
+    /* head-box wings that bracket the headrest */
+    fillP(c, [40, -196, 62, -212, 66, -70, 44, -60], '#0a0f16');
+    fillP(c, [258, -206, 292, -196, 296, -60, 262, -66], '#0a0f16');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, 44, -196, 48, -62, rgba(CY, 0.16 * rim), 2);
+    seg(c, 292, -194, 296, -64, rgba(CY, 0.34 * rim), 2.6);
     c.restore();
 
-    /* ---------- main rubber cup --------------------------------- */
-    const cupG = lg(c, 'mk.cup', -66, -46, 40, 56, [
-      [0.00, '#2b3240'], [0.22, '#3b4454'], [0.48, '#242b38'],
-      [0.74, '#161b25'], [1.00, '#0a0d13']
+    /* seat rails + inertia-reel housing */
+    fillP(c, [284, -150, 322, -140, 336, 460, 292, 460], '#080b11');
+    for (let i = 0; i < 7; i++) {
+      const py = -90 + i * 84;
+      disc(c, 300 + i * 1.6, py, 3.6, 'rgba(6,9,14,0.9)');
+      disc(c, 299 + i * 1.6, py - 1, 1.6, 'rgba(170,200,230,0.16)');
+    }
+
+    /* ejection handle — the striped loop over the head box */
+    c.save();
+    c.translate(190, -250);
+    c.rotate(-0.08);
+    c.beginPath();
+    c.moveTo(-72, 8);
+    c.quadraticCurveTo(-76, -14, -42, -16);
+    c.lineTo(46, -20);
+    c.quadraticCurveTo(76, -20, 74, 2);
+    c.lineTo(62, 4);
+    c.quadraticCurveTo(62, -8, 42, -8);
+    c.lineTo(-40, -4);
+    c.quadraticCurveTo(-60, -4, -60, 10);
+    c.closePath();
+    c.fillStyle = '#141821'; c.fill();
+    c.save();
+    c.clip();
+    for (let i = -6; i < 12; i++) {
+      c.save();
+      c.translate(i * 15, 0); c.rotate(0.5);
+      c.fillStyle = i % 2 ? 'rgba(226,172,52,0.75)' : 'rgba(16,14,10,0.9)';
+      c.fillRect(-7.5, -30, 15, 60);
+      c.restore();
+    }
+    c.restore();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 1.6; c.stroke();
+    c.restore();
+    c.restore();                       /* end seat transform */
+
+    /* ==================================================================
+       TORSO — flight suit, survival vest, harness
+       ================================================================== */
+    const shrug = breath * 4 + brt * 2.2;
+    function bodyPath() {
+      c.beginPath();
+      c.moveTo(-268, 460);
+      c.lineTo(-230, 206);
+      c.quadraticCurveTo(-200, 96 - shrug, -128, 44 - shrug);
+      c.quadraticCurveTo(-62, 10, 42, 6);
+      c.quadraticCurveTo(144, 20, 206, 96 - shrug * 0.6);
+      c.quadraticCurveTo(240, 138, 250, 244);
+      c.lineTo(268, 460);
+      c.closePath();
+    }
+    const bdG = lg(c, 'pl.body', -250, 40, 230, 380, [
+      [0.00, '#242c35'], [0.20, '#191f27'], [0.52, '#11161d'], [1.00, '#080b10']
+    ]);
+    bodyPath();
+    c.fillStyle = bdG; c.fill();
+
+    c.save();
+    bodyPath();
+    c.clip();
+
+    /* survival vest sitting proud of the suit */
+    const vsG = lg(c, 'pl.vest', -170, 60, 180, 400, [
+      [0.00, '#2d3742'], [0.40, '#1c232b'], [1.00, '#0c1016']
+    ]);
+    c.beginPath();
+    c.moveTo(-196, 460);
+    c.lineTo(-178, 156);
+    c.quadraticCurveTo(-156, 88, -88, 62);
+    c.lineTo(-30, 86);
+    c.lineTo(50, 82);
+    c.quadraticCurveTo(130, 96, 166, 152);
+    c.lineTo(190, 460);
+    c.closePath();
+    c.fillStyle = vsG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.7)'; c.lineWidth = 2.6; c.stroke();
+    seg(c, -18, 92, -6, 460, 'rgba(0,0,0,0.5)', 3);
+    seg(c, -13, 92, -1, 460, 'rgba(165,195,225,0.08)', 1.2);
+    fillP(c, [-168, 250, -56, 266, -60, 336, -172, 320], 'rgba(255,255,255,0.03)');
+    strokeP(c, [-168, 250, -56, 266, -60, 336, -172, 320], 'rgba(0,0,0,0.45)', 2);
+    fillP(c, [48, 262, 158, 250, 166, 322, 52, 334], 'rgba(0,0,0,0.22)');
+    strokeP(c, [48, 262, 158, 250, 166, 322, 52, 334], 'rgba(0,0,0,0.45)', 2);
+    /* survival radio on the near chest */
+    fillP(c, [84, 136, 164, 162, 148, 232, 70, 206], '#10151d');
+    strokeP(c, [84, 136, 164, 162, 148, 232, 70, 206], 'rgba(2,4,8,0.85)', 2);
+    seg(c, 102, 156, 146, 170, 'rgba(150,180,210,0.12)', 2);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    disc(c, 134, 202, 3.2, rgba([70, 255, 158], 0.9));
+    blob(c, 134, 202, 16, [70, 255, 158], 0.35);
+    c.restore();
+
+    /* harness webbing */
+    const wbG = lg(c, 'pl.web', -60, 60, 40, 320, [
+      [0.00, '#4c5139'], [0.42, '#353b2a'], [1.00, '#1a1e15']
+    ]);
+    function strap(x0, y0, x1, y1, w0, w1) {
+      const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1;
+      const nx = -dy / L, ny = dx / L;
+      const q = [
+        x0 + nx * w0, y0 + ny * w0, x1 + nx * w1, y1 + ny * w1,
+        x1 - nx * w1, y1 - ny * w1, x0 - nx * w0, y0 - ny * w0
+      ];
+      fillP(c, q, wbG);
+      strokeP(c, q, 'rgba(2,4,8,0.7)', 1.8);
+      seg(c, x0 + nx * w0 * 0.45, y0 + ny * w0 * 0.45,
+        x1 + nx * w1 * 0.45, y1 + ny * w1 * 0.45, 'rgba(210,230,255,0.10)', 1.4);
+    }
+    strap(-132, 58 - shrug, -36, 216, 22, 17);
+    strap(120, 76 - shrug * 0.6, 18, 214, 20, 16);
+    strap(-196, 336, -24, 294, 20, 18);
+    strap(186, 342, 26, 298, 20, 18);
+    /* quick-release rotary buckle */
+    const bkG = rg(c, 'pl.buck', -14, 240, 2, -6, 250, 40, [
+      [0.00, '#c9d6e6'], [0.28, '#7c8b9f'], [0.62, '#3a4451'], [1.00, '#10141b']
+    ]);
+    disc(c, -4, 254, 33, 'rgba(0,0,0,0.5)');
+    disc(c, -6, 251, 30, bkG);
+    ring(c, -6, 251, 30, 'rgba(3,5,9,0.85)', 2.4);
+    ring(c, -6, 251, 19, 'rgba(12,16,22,0.8)', 3);
+    disc(c, -6, 251, 10, '#0b0f15');
+    for (let i = 0; i < 4; i++) {
+      const a = i * TAU / 4 + 0.7;
+      seg(c, -6 + Math.cos(a) * 12, 251 + Math.sin(a) * 12,
+        -6 + Math.cos(a) * 26, 251 + Math.sin(a) * 26, 'rgba(6,9,14,0.75)', 3);
+    }
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    ell(c, -18, 241, 9, 5, 'rgba(255,236,205,0.30)');
+    c.restore();
+
+    /* --- lighting on the body --------------------------------- */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const kyG = lg(c, 'pl.key', -270, 440, 60, 50, [
+      [0.00, 'rgba(255,170,78,0.58)'], [0.42, 'rgba(255,134,56,0.22)'],
+      [1.00, 'rgba(255,120,40,0)']
+    ]);
+    c.globalAlpha = alpha * key;
+    c.fillStyle = kyG; c.fillRect(-270, 10, 540, 470);
+    const rmG = lg(c, 'pl.rim', 268, 30, 40, 270, [
+      [0.00, 'rgba(130,228,255,0.36)'], [1.00, 'rgba(80,200,255,0)']
+    ]);
+    c.globalAlpha = alpha * rim;
+    c.fillStyle = rmG; c.fillRect(-60, -30, 340, 510);
+    c.globalAlpha = alpha;
+    c.restore();
+    /* deep shadow in the chest hollow under the chin */
+    const shG = lg(c, 'pl.bshade', 0, -6, 0, 190, [
+      [0.00, 'rgba(0,0,0,0.62)'], [1.00, 'rgba(0,0,0,0)']
+    ]);
+    c.fillStyle = shG; c.fillRect(-320, -30, 640, 240);
+    c.restore();
+
+    /* body rim strokes: warm on the panel side, cold from the canopy */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    bodyPath();
+    const bsG = lg(c, 'pl.bstroke', -240, 0, 260, 0, [
+      [0.00, 'rgba(255,152,62,0.52)'], [0.34, 'rgba(255,150,60,0.07)'],
+      [0.70, 'rgba(120,225,255,0.12)'], [1.00, 'rgba(160,240,255,0.70)']
+    ]);
+    c.strokeStyle = bsG; c.lineWidth = 4.2; c.stroke();
+    c.restore();
+
+    /* ==================================================================
+       NECK + COLLAR
+       ================================================================== */
+    const nkx = mixv(-24, -2, turn);
+    fillP(c, [nkx - 38, -80, nkx + 34, -80, nkx + 42, 40, nkx - 46, 40], '#070a0f');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, nkx + 34, -70, nkx + 40, 30, rgba(CY, 0.20 * rim), 4);
+    c.restore();
+    const clG = lg(c, 'pl.collar', -110, 6, 110, 78, [
+      [0.00, '#2e3641'], [0.38, '#1b212a'], [1.00, '#0a0e14']
+    ]);
+    c.beginPath();
+    c.moveTo(nkx - 106, 74);
+    c.quadraticCurveTo(nkx - 98, 16, nkx - 44, 4);
+    c.quadraticCurveTo(nkx, -4, nkx + 48, 6);
+    c.quadraticCurveTo(nkx + 98, 20, nkx + 106, 76);
+    c.quadraticCurveTo(nkx, 104, nkx - 106, 74);
+    c.closePath();
+    c.fillStyle = clG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 2.4; c.stroke();
+    seg(c, nkx - 94, 58, nkx + 94, 60, 'rgba(0,0,0,0.4)', 2);
+    seg(c, nkx - 92, 63, nkx + 92, 65, 'rgba(170,200,230,0.09)', 1.2);
+
+    /* ==================================================================
+       MASK HOSE — from the mask down into the chest connector
+       ================================================================== */
+    const mkx = mixv(-74, -14, turn), mky = 42;
+    const mkw = mixv(0.82, 1.06, turn);
+    const hoseTop = h2b(mkx - 22 * mkw, mky + 30);
+    const cnx = -150, cny = 250;
+    (function () {
+      const HN = 12;
+      const flex = breath * 6 + brt * 3;
+      const mx = hoseTop[0] - 54 - flex, my = hoseTop[1] + 104;
+      for (let i = HN - 1; i >= 0; i--) {
+        const q = i / (HN - 1);
+        const ax = mixv(hoseTop[0], mx, q), ay = mixv(hoseTop[1], my, q);
+        const bx = mixv(mx, cnx, q), by = mixv(my, cny, q);
+        const px = mixv(ax, bx, q), py = mixv(ay, by, q);
+        const r = mixv(11.5, 9, q);
+        c.save();
+        c.translate(px, py);
+        c.rotate(Math.atan2(by - ay, bx - ax));
+        const hgG = lg(c, 'pl.hose', 0, -12, 0, 12, [
+          [0.00, '#070a11'], [0.24, '#2c3546'], [0.46, '#4c586d'],
+          [0.68, '#222933'], [1.00, '#05080e']
+        ]);
+        c.scale(1, r / 11.5);
+        c.beginPath();
+        c.moveTo(-6, -11.5);
+        c.quadraticCurveTo(0, -14, 6, -11.5);
+        c.lineTo(6, 11.5);
+        c.quadraticCurveTo(0, 14, -6, 11.5);
+        c.closePath();
+        c.fillStyle = hgG; c.fill();
+        c.strokeStyle = 'rgba(3,5,9,0.8)'; c.lineWidth = 1.1; c.stroke();
+        c.restore();
+      }
+      fillP(c, [cnx - 24, cny - 20, cnx + 20, cny - 24, cnx + 24, cny + 18, cnx - 20, cny + 22], '#131922');
+      strokeP(c, [cnx - 24, cny - 20, cnx + 20, cny - 24, cnx + 24, cny + 18, cnx - 20, cny + 22],
+        'rgba(2,4,8,0.9)', 2);
+      seg(c, cnx - 14, cny - 8, cnx + 12, cny - 11, 'rgba(160,190,220,0.14)', 2);
+    })();
+
+    /* ==================================================================
+       HEAD
+       ================================================================== */
+    c.save();
+    c.translate(hcx, hcy);
+    c.rotate(hrot);
+
+    const shell = lerpP(SH_A, SH_B, turn, SH_T);
+    const jaw = lerpP(JW_A, JW_B, turn, JW_T);
+
+    /* contact shadow thrown back onto the headrest */
+    c.save();
+    c.globalAlpha = alpha * 0.5;
+    c.translate(20, 14);
+    smoothP(c, shell);
+    c.fillStyle = 'rgba(0,0,0,0.62)'; c.fill();
+    c.restore();
+    c.globalAlpha = alpha;
+
+    /* --- jaw / lower face (drawn under the shell) --------------- */
+    smoothP(c, jaw);
+    const skG = lg(c, 'pl.skin', -104, 30, 20, -10, [
+      [0.00, '#6d4634'], [0.34, '#3a251c'], [0.72, '#1a1310'], [1.00, '#0a0808']
+    ]);
+    c.fillStyle = skG; c.fill();
+    c.save();
+    smoothP(c, jaw);
+    c.clip();
+    const jsG = lg(c, 'pl.jshade', 0, 10, 0, 84, [
+      [0.00, 'rgba(0,0,0,0.7)'], [0.5, 'rgba(0,0,0,0.15)'], [1.00, 'rgba(0,0,0,0.65)']
+    ]);
+    c.fillStyle = jsG; c.fillRect(-120, -20, 240, 120);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = alpha * key;
+    const jkG = lg(c, 'pl.jkey', -110, 70, -10, 10, [
+      [0.00, 'rgba(255,170,96,0.5)'], [1.00, 'rgba(255,150,70,0)']
+    ]);
+    c.fillStyle = jkG; c.fillRect(-120, -20, 240, 120);
+    c.globalAlpha = alpha;
+    c.restore();
+    c.restore();
+
+    /* --- ear cup, bulging out of the shell's side --------------- */
+    c.save();
+    c.translate(mixv(26, 58, turn), mixv(16, 10, turn));
+    c.scale(mixv(1, 0.30, turn), 1);
+    ell(c, 0, 1, 25, 29, '#080c12');
+    ell(c, -1, -1, 21, 25, '#161d26');
+    ring(c, -1, -1, 21, 'rgba(3,5,9,0.9)', 2);
+    /* the comms box screwed onto the cup */
+    fillP(c, [-9, -9, 9, -11, 11, 8, -7, 10], '#0b1017');
+    strokeP(c, [-9, -9, 9, -11, 11, 8, -7, 10], 'rgba(3,5,9,0.9)', 1.4);
+    seg(c, -5, -4, 6, -5, 'rgba(170,200,230,0.16)', 1.6);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    ell(c, -11, -14, 5, 3, 'rgba(190,225,255,0.14)');
+    c.restore();
+    c.restore();
+    /* comms lead dropping behind the shoulder */
+    c.beginPath();
+    c.moveTo(mixv(34, 66, turn), 48);
+    c.quadraticCurveTo(mixv(76, 96, turn), 100, mixv(58, 82, turn), 176);
+    c.strokeStyle = 'rgba(5,8,13,0.9)'; c.lineWidth = 7; c.stroke();
+    c.strokeStyle = 'rgba(150,180,215,0.10)'; c.lineWidth = 2.2; c.stroke();
+
+    /* --- shell -------------------------------------------------- */
+    const hsG = lg(c, 'pl.shell', -92, -96, 80, 60, [
+      [0.00, '#3c4653'], [0.15, '#2a333e'], [0.42, '#1a212a'],
+      [0.72, '#10151c'], [1.00, '#070a0f']
+    ]);
+    smoothP(c, shell);
+    c.fillStyle = hsG; c.fill();
+
+    c.save();
+    smoothP(c, shell);
+    c.clip();
+    /* crown sheen */
+    const cwG = lg(c, 'pl.crown', -34, -106, 4, -12, [
+      [0.00, 'rgba(200,226,255,0.18)'], [1.00, 'rgba(200,226,255,0)']
+    ]);
+    c.fillStyle = cwG; c.fillRect(-110, -110, 220, 110);
+    /* the back of the shell falls away into the dark */
+    const ocG = lg(c, 'pl.occ', 24, 0, 104, 0, [
+      [0.00, 'rgba(0,0,0,0)'], [1.00, 'rgba(0,0,0,0.55)']
+    ]);
+    c.fillStyle = ocG; c.fillRect(16, -110, 96, 200);
+    /* moulded seam over the crown */
+    c.beginPath();
+    c.moveTo(mixv(-88, -66, turn), mixv(-14, -26, turn));
+    c.quadraticCurveTo(mixv(-34, -12, turn), -102, mixv(58, 44, turn), mixv(-64, -70, turn));
+    c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 4; c.stroke();
+    c.strokeStyle = 'rgba(180,210,240,0.09)'; c.lineWidth = 1.4; c.stroke();
+    /* squadron flash, low on the back of the shell */
+    c.save();
+    c.globalAlpha = alpha * (0.45 + 0.35 * key);
+    c.translate(mixv(52, 66, turn), -12);
+    c.scale(mixv(0.85, 0.34, turn), 1);
+    fillP(c, [-22, -18, 4, -26, 14, -14, -12, -6], 'rgba(236,64,84,0.6)');
+    fillP(c, [-22, -2, 4, -10, 14, 2, -12, 10], 'rgba(232,242,255,0.28)');
+    c.restore();
+    c.globalAlpha = alpha;
+    /* warm bounce from the panel under the front edge */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = alpha * key;
+    const hkG = lg(c, 'pl.hkey', -104, 70, -14, -30, [
+      [0.00, 'rgba(255,176,84,0.44)'], [0.55, 'rgba(255,140,56,0.12)'],
+      [1.00, 'rgba(255,130,50,0)']
+    ]);
+    c.fillStyle = hkG; c.fillRect(-110, -110, 220, 220);
+    c.globalAlpha = alpha;
+    c.restore();
+    c.restore();
+
+    /* front / lower trim band of the shell */
+    c.save();
+    smoothP(c, shell);
+    c.clip();
+    c.beginPath();
+    c.moveTo(mixv(-100, -76, turn), mixv(-22, -30, turn));
+    c.quadraticCurveTo(mixv(-58, -12, turn), mixv(34, 30, turn),
+      mixv(24, 58, turn), mixv(58, 46, turn));
+    c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 9; c.stroke();
+    c.strokeStyle = 'rgba(178,206,238,0.13)'; c.lineWidth = 2.2; c.stroke();
+    c.restore();
+
+    /* shell rim: warm along the front, cold along the back */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    smoothP(c, shell);
+    const hrimG = lg(c, 'pl.hrim', -98, -60, 94, 56, [
+      [0.00, 'rgba(255,170,80,0.5)'], [0.26, 'rgba(255,150,60,0.05)'],
+      [0.60, 'rgba(120,220,255,0.10)'], [1.00, 'rgba(180,244,255,0.8)']
+    ]);
+    c.strokeStyle = hrimG; c.lineWidth = 3.2; c.stroke();
+    c.restore();
+
+    /* --- the eye, while the visor is still up ------------------- */
+    if (vis < 0.75) {
+      const ea = alpha * (1 - vis / 0.75);
+      const ex = mixv(-72, -26, turn), ey = -6;
+      const ew = mixv(0.42, 1, turn);
+      c.save();
+      c.globalAlpha = ea;
+      c.translate(ex, ey);
+      c.scale(ew, 1);
+      ell(c, 0, 0, 15, 8, 'rgba(14,9,9,0.9)');
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      ell(c, -4, -2, 4.0, 2.8, 'rgba(196,228,255,0.85)');
+      blob(c, -4, -2, 13, [150, 210, 255], 0.28);
+      c.restore();
+      c.restore();
+      if (turn > 0.4) {
+        c.save();
+        c.globalAlpha = ea * sat((turn - 0.4) * 3);
+        ell(c, 22, -6, 12, 7, 'rgba(14,9,9,0.85)');
+        c.globalCompositeOperation = 'lighter';
+        ell(c, 19, -8, 3.2, 2.2, 'rgba(196,228,255,0.6)');
+        c.restore();
+      }
+      c.globalAlpha = alpha;
+    }
+
+    /* --- oxygen mask -------------------------------------------- */
+    c.save();
+    c.translate(mkx, mky);
+    c.scale(0.60 * mkw, 0.60);
+    const mcG = lg(c, 'pl.mask', -66, -46, 44, 56, [
+      [0.00, '#333d4a'], [0.20, '#3f4a5a'], [0.5, '#212832'],
+      [0.78, '#141920'], [1.00, '#080b10']
     ]);
     maskCup(c);
-    c.fillStyle = cupG; c.fill();
-    c.strokeStyle = 'rgba(3,5,9,0.8)'; c.lineWidth = 1.6; c.stroke();
-
+    c.fillStyle = mcG; c.fill();
+    c.strokeStyle = 'rgba(3,5,9,0.85)'; c.lineWidth = 3; c.stroke();
     c.save();
     maskCup(c);
     c.clip();
-
-    /* upper cheek facets so the form turns */
-    fillP(c, [-65, -30, -44, -46, -6, -40, -18, -6, -56, -4], 'rgba(88,102,124,0.22)');
-    fillP(c, [65, -30, 44, -46, 6, -40, 18, -6, 56, -4], 'rgba(10,13,19,0.30)');
-    /* lower jaw shadow */
-    fillP(c, [-52, 16, 52, 16, 30, 46, -30, 46], 'rgba(6,8,13,0.45)');
-    /* seam between the moulded halves */
-    seg(c, -60, -4, 60, -4, 'rgba(0,0,0,0.55)', 1.6);
-    seg(c, -60, -2.2, 60, -2.2, 'rgba(190,215,245,0.12)', 0.9);
-    /* stitched edge following the rim */
-    c.beginPath();
-    c.moveTo(-58, -28);
-    c.quadraticCurveTo(-59, -8, -46, 14);
-    c.quadraticCurveTo(-33, 37, 0, 46);
-    c.quadraticCurveTo(33, 37, 46, 14);
-    c.quadraticCurveTo(59, -8, 58, -28);
-    c.strokeStyle = 'rgba(0,0,0,0.4)'; c.lineWidth = 1.0;
-    c.setLineDash([3, 3]); c.stroke(); c.setLineDash([]);
-
-    /* specular sheen along the top of the cup */
-    const shG = lg(c, 'mk.sheen', 0, -48, 0, -10, [
-      [0, 'rgba(215,238,255,0.34)'], [1, 'rgba(215,238,255,0)']
-    ]);
-    c.beginPath();
-    c.moveTo(-58, -30);
-    c.quadraticCurveTo(-46, -45, -8, -44);
-    c.quadraticCurveTo(34, -43, 56, -30);
-    c.quadraticCurveTo(30, -22, -6, -23);
-    c.quadraticCurveTo(-40, -24, -58, -30);
-    c.closePath();
-    c.fillStyle = shG; c.fill();
-
-    /* cyan rim light down the left */
+    fillP(c, [-65, -30, -44, -46, -6, -40, -18, -6, -56, -4], 'rgba(102,120,146,0.20)');
+    fillP(c, [65, -30, 44, -46, 6, -40, 18, -6, 56, -4], 'rgba(8,11,17,0.4)');
+    seg(c, -60, -4, 60, -4, 'rgba(0,0,0,0.5)', 2.4);
+    seg(c, -60, -1, 60, -1, 'rgba(190,215,245,0.10)', 1.2);
+    fillP(c, [-52, 16, 52, 16, 30, 46, -30, 46], 'rgba(5,7,12,0.45)');
     c.save();
     c.globalCompositeOperation = 'lighter';
-    const rimG = lg(c, 'mk.rim', -66, 0, -48, 0, [
-      [0, 'rgba(58,224,255,0.34)'], [1, 'rgba(58,224,255,0)']
+    c.globalAlpha = alpha * key;
+    const mkG = lg(c, 'pl.mkey', -74, 34, 6, -30, [
+      [0.00, 'rgba(255,176,92,0.30)'], [1.00, 'rgba(255,150,60,0)']
     ]);
-    c.fillStyle = rimG;
-    c.fillRect(-66, -48, 20, 106);
+    c.fillStyle = mkG; c.fillRect(-70, -50, 140, 112);
+    c.globalAlpha = alpha;
     c.restore();
     c.restore();
-
-    /* ---------- chromed exhalation valve ------------------------ */
-    const vx = 0, vy = 26;
-    /* housing shadow so it sits proud of the rubber */
-    ell(c, vx, vy + 2.5, 19, 18, 'rgba(0,0,0,0.55)');
-    const vG = rg(c, 'mk.valve', vx - 6, vy - 7, 1, vx, vy, 18, [
-      [0.00, '#e7eef8'], [0.22, '#a9b6c8'], [0.50, '#4f5b6d'],
-      [0.74, '#8998ad'], [1.00, '#1a2029']
+    /* exhalation valve */
+    const vG = rg(c, 'pl.valve', -6, 19, 1, 0, 26, 18, [
+      [0.00, '#dde6f2'], [0.24, '#9fadc0'], [0.52, '#4a5668'],
+      [0.76, '#7f8ea3'], [1.00, '#171d25']
     ]);
-    disc(c, vx, vy, 17.5, vG);
-    ring(c, vx, vy, 17.5, 'rgba(4,6,11,0.8)', 1.4);
-    ring(c, vx, vy, 14.0, 'rgba(20,26,34,0.85)', 1.6);
-    ring(c, vx, vy, 11.0, 'rgba(210,228,248,0.35)', 1.0);
-    ring(c, vx, vy, 8.0, 'rgba(20,26,34,0.7)', 1.4);
-    disc(c, vx, vy, 5.4, '#0b0e15');
-    /* radial valve slots */
-    for (let i = 0; i < 10; i++) {
-      const a = i * TAU / 10 + 0.15;
-      seg(c, vx + Math.cos(a) * 8.6, vy + Math.sin(a) * 8.6,
-        vx + Math.cos(a) * 13.4, vy + Math.sin(a) * 13.4, 'rgba(6,9,14,0.7)', 1.4);
+    disc(c, 0, 29, 12.5, vG);
+    ring(c, 0, 29, 12.5, 'rgba(4,6,11,0.85)', 2);
+    ring(c, 0, 29, 7.5, 'rgba(20,26,34,0.8)', 2);
+    disc(c, 0, 29, 3.6, '#0a0d13');
+    /* bayonet clips reaching back to the shell */
+    for (let i = 0; i < 2; i++) {
+      const sg = i ? 1 : -1;
+      c.save(); c.scale(sg, 1);
+      fillP(c, [54, -28, 86, -22, 86, -6, 54, -10], '#212934');
+      strokeP(c, [54, -28, 86, -22, 86, -6, 54, -10], 'rgba(3,5,9,0.85)', 1.8);
+      seg(c, 62, -22, 82, -17, 'rgba(180,205,235,0.14)', 2.2);
+      c.restore();
     }
-    /* chrome specular hotspot */
     c.save();
     c.globalCompositeOperation = 'lighter';
-    ell(c, vx - 6, vy - 8, 5.5, 3.4, 'rgba(255,255,255,0.5)');
-    blob(c, vx - 6, vy - 8, 12, WH, 0.22);
+    maskCup(c);
+    const mrG = lg(c, 'pl.mrim', -66, 0, 66, 0, [
+      [0.00, 'rgba(255,190,104,0.8)'], [0.34, 'rgba(255,170,80,0.05)'],
+      [1.00, 'rgba(150,232,255,0.3)']
+    ]);
+    c.strokeStyle = mrG; c.lineWidth = 3; c.stroke();
+    c.restore();
     c.restore();
 
-    /* ---------- two small hardware greebles --------------------- */
-    disc(c, -34, 30, 2.6, '#0a0d13');
-    disc(c, -34, 30, 1.2, 'rgba(170,195,225,0.5)');
-    fillP(c, [24, 34, 36, 31, 37, 38, 25, 41], '#12171f');
+    /* --- exhale: fog off the valve ------------------------------ */
+    if (breath > 0.01) {
+      const bp = h2b(mkx, mky + 22);
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      blob(c, bp[0] - 18, bp[1] + 6, 30 + 24 * breath, [200, 226, 255], 0.09 * breath);
+      blob(c, bp[0] - 42, bp[1] + 18, 22 + 36 * breath, [190, 215, 250], 0.06 * breath);
+      c.restore();
+    }
 
+    /* --- visor --------------------------------------------------- */
+    const vx = mixv(-64, -12, turn), vy = -34;
+    const vw = mixv(0.56, 0.94, turn) * 0.94;
+    /* reflections only read when the glass faces the lens */
+    const vfx = 0.24 + 0.76 * turn;
+    c.save();
+    c.translate(vx, vy);
+    c.scale(vw, 0.94);
+
+    /* the glass, pivoting up onto the brow when stowed */
+    c.save();
+    c.rotate(mixv(-0.42, 0, vis));
+    c.translate(0, mixv(-16, 6, vis));
+    c.scale(1, mixv(0.22, 1, vis));
+    visorShape(c);
+    const gl = c.createLinearGradient(-58, -8, 40, 50);
+    gl.addColorStop(0.00, 'rgba(' + (36 + 58 * vis) + ',' + (26 + 38 * vis) + ',12,0.9)');
+    gl.addColorStop(0.34, 'rgba(' + (24 + 26 * vis) + ',' + (18 + 18 * vis) + ',10,0.93)');
+    gl.addColorStop(0.72, 'rgba(14,12,10,0.95)');
+    gl.addColorStop(1.00, 'rgba(' + (26 + 38 * vis) + ',' + (20 + 26 * vis) + ',10,0.92)');
+    c.fillStyle = gl; c.fill();
+
+    c.save();
+    visorShape(c);
+    c.clip();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const gg = c.createLinearGradient(-62, 48, 26, -14);
+    gg.addColorStop(0.00, 'rgba(255,176,72,' + (0.22 * vfx).toFixed(3) + ')');
+    gg.addColorStop(0.45, 'rgba(255,132,54,' + (0.06 * vfx).toFixed(3) + ')');
+    gg.addColorStop(1.00, 'rgba(150,215,255,' + (0.16 * vfx).toFixed(3) + ')');
+    c.fillStyle = gg; c.fillRect(-72, -18, 144, 82);
+    if (hud * vfx > 0.02) {
+      c.globalAlpha = alpha * hud * vfx;
+      const gc = 'rgba(120,255,196,0.85)';
+      c.strokeStyle = gc; c.lineWidth = 2;
+      c.beginPath(); c.arc(-4, 20, 15, 0, TAU); c.stroke();
+      seg(c, -46, 20, -22, 20, gc, 2);
+      seg(c, 13, 20, 37, 20, gc, 2);
+      seg(c, -4, 2, -4, 9, gc, 2);
+      for (let i = -1; i <= 1; i += 2) {
+        const ly = 20 + i * 17 + Math.sin(tt * 0.8 + i) * 2;
+        seg(c, -42, ly, -20, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
+        seg(c, 12, ly, 34, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
+      }
+      blob(c, -4, 20, 52, [96, 255, 182], 0.15 * hud * vfx);
+      c.globalAlpha = alpha;
+    }
+    /* the canopy reflected as a hard streak across the glass */
+    const sp = c.createLinearGradient(-58, -6, 16, 46);
+    sp.addColorStop(0.00, 'rgba(255,255,255,0)');
+    sp.addColorStop(0.44, 'rgba(226,244,255,' + (0.28 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.53, 'rgba(255,255,255,' + (0.46 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.63, 'rgba(226,244,255,' + (0.15 * vfx).toFixed(3) + ')');
+    sp.addColorStop(1.00, 'rgba(255,255,255,0)');
+    c.fillStyle = sp; c.fillRect(-72, -18, 144, 82);
     c.restore();
+    if (breath > 0.02) {
+      const fg = c.createLinearGradient(0, 48, 0, 12);
+      fg.addColorStop(0, 'rgba(210,232,255,' + (0.18 * breath).toFixed(3) + ')');
+      fg.addColorStop(1, 'rgba(210,232,255,0)');
+      c.fillStyle = fg; c.fillRect(-72, 6, 144, 48);
+    }
+    c.restore();
+    visorShape(c);
+    c.strokeStyle = 'rgba(4,6,11,0.85)'; c.lineWidth = 2.6; c.stroke();
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    visorShape(c);
+    const veG = lg(c, 'pl.vedge', -58, 0, 52, 0, [
+      [0.00, 'rgba(255,200,116,0.8)'], [0.42, 'rgba(255,180,90,0.08)'],
+      [1.00, 'rgba(180,244,255,0.5)']
+    ]);
+    c.strokeStyle = veG; c.lineWidth = 2.2; c.stroke();
+    c.restore();
+    c.restore();
+
+    /* housing / track across the brow — the glass slides under it */
+    c.beginPath();
+    c.moveTo(-72, -18);
+    c.quadraticCurveTo(-8, -38, 64, -20);
+    c.lineTo(64, 4);
+    c.quadraticCurveTo(-8, -14, -72, 6);
+    c.closePath();
+    c.fillStyle = '#1d242e'; c.fill();
+    c.strokeStyle = 'rgba(2,4,8,0.9)'; c.lineWidth = 2.2; c.stroke();
+    seg(c, -66, -14, 58, -18, 'rgba(184,212,242,0.16)', 2.4);
+    disc(c, -64, -2, 7, '#0c1017'); disc(c, -64, -2, 3, 'rgba(170,200,230,0.34)');
+    disc(c, 56, -6, 7, '#0c1017'); disc(c, 56, -6, 3, 'rgba(170,200,230,0.34)');
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    seg(c, -66, -16, 58, -20, rgba(AM, 0.20 * key), 2);
+    c.restore();
+    c.restore();
+
+    c.restore();  /* end head */
+    c.restore();  /* end pilot */
   }
+
 
   /* ==================================================================
      7. SILO — underground hangar launch door in the ground plane.
@@ -2127,8 +2458,8 @@ const CINE_ART = (function () {
   }
 
   return {
-    rocket: rocket, warship: warship, jet: jet, glove: glove,
-    mask: mask, cockpit: cockpit, silo: silo, cloudBank: cloudBank
+    rocket: rocket, warship: warship, jet: jet, pilot: pilot,
+    cockpit: cockpit, silo: silo, cloudBank: cloudBank
   };
 })();
 try { if (typeof globalThis !== 'undefined' && !globalThis.CINE_ART) globalThis.CINE_ART = CINE_ART; } catch (e) { }

@@ -209,7 +209,7 @@ addEventListener('blur', ()=>{ for(const k in keys) keys[k]=false; mouse.fire=mo
 addEventListener('focus', ()=>AUDIO.resume());
 
 /* ------------------------------------------------------------------ state */
-let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss;
+let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss, debris, rings, evq;
 let dist, score, kills, combo, comboT, shake, flash, flashC, speed, flow;
 let gameOn=false, T=0, spawnT, waveN, nextBoss, alarmT, tipT, hitT, bossWarn, bossFx, hintT=0;
 
@@ -218,6 +218,7 @@ function reset(){
      fireCd:0,misCd:0,weapon:'std',wepT:0,rollT:0,rollDir:1,inv:0,thr:.4};
   stars=[]; for(let i=0;i<300;i++) stars.push({x:rnd(-3000,3000),y:rnd(-900,1500),z:rnd(200,SPAWN_Z+900)});
   enemies=[]; shots=[]; foes=[]; rockets=[]; parts=[]; crates=[]; pops=[]; boss=null;
+  debris=[]; rings=[]; evq=[];
   dist=0; score=0; kills=0; combo=1; comboT=0; shake=0; flash=0; flashC=COL.white;
   speed=1; flow=FLOW; spawnT=.25; waveN=0; nextBoss=2800; alarmT=0; tipT=4.5; hitT=0;
   bossWarn=0; bossFx=0;
@@ -231,7 +232,33 @@ function barrelRoll(dir){
   for(let i=0;i<22;i++)
     parts.push(mk(P.x,P.y,0, rnd(-190,190),rnd(-190,190),rnd(-420,140), COL.cyan, .45, 5));
 }
-function mk(x,y,z,vx,vy,vz,c,life,size){ return {x,y,z,vx,vy,vz,c,life,max:life,size}; }
+/* st: streak factor (drawn as a beam trailing v*st). dg: drag base/sec.
+   gw: grow factor, for fireball puffs that swell as they fade. */
+function mk(x,y,z,vx,vy,vz,c,life,size,st,dg,gw){
+  return {x,y,z,vx,vy,vz,c,life,max:life,size,st:st||0,dg:dg||0,gw:gw||0};
+}
+function shock(x,y,z,r0,r1,life,w,c,a){
+  if(rings.length>26) rings.shift();
+  rings.push({x,y,z,r:r0,r0,r1,w,c,a,life,max:life});
+}
+/* flat plates, not cubes: sy is squashed so a shard reads as torn hull */
+function shard(x,y,z,vx,vy,vz,s,c,life){
+  if(debris.length>72) debris.shift();
+  debris.push({x,y,z,vx,vy,vz,c,life,max:life,s,
+    rx:rnd(0,6.28),ry:rnd(0,6.28),rz:rnd(0,6.28),
+    ax:rnd(-13,13),ay:rnd(-13,13),az:rnd(-13,13),
+    sx:s*rnd(.4,1.25),sy:s*rnd(.10,.30),sz:s*rnd(.6,1.9),tr:0});
+}
+/* staged explosions: the payload fires later but keeps drifting with the world */
+function later(t,x,y,z,f){ evq.push({t,x,y,z,f}); }
+function sparks(x,y,z,n,sp,wid,c,dx,dy,dz,bias){
+  for(let i=0;i<n;i++){
+    const a=rnd(0,6.2832), b=rnd(-1,1), r=Math.sqrt(1-b*b), v=sp*rnd(.4,1);
+    const w=bias?rnd(.25,1):0;
+    parts.push(mk(x,y,z, (Math.cos(a)*r+dx*w)*v, (Math.sin(a)*r+dy*w)*v, (b+dz*w)*v,
+      i&3?COL.white:c, rnd(.16,.42), rnd(9,20)*wid, rnd(.045,.075), .09));
+  }
+}
 function burst(x,y,z,c,n,pow){
   for(let i=0;i<n;i++){
     const a=rnd(0,6.2832), b=rnd(-1,1), r=Math.sqrt(1-b*b), sp=rnd(70,520)*pow;
@@ -249,7 +276,8 @@ function aimAt(depth){
   const ndx = (sx/W)*2-1, ndy = 1-(sy/H)*2;
   const tanY = Math.tan(FOVY/2), tanX = tanY*(W/H);
   const d = depth - camP[2];
-  return { x: camP[0] + ndx*tanX*d, y: camP[1] + ndy*tanY*d };
+  /* the camera's right vector is -X here, so screen-right is world -X */
+  return { x: camP[0] - ndx*tanX*d, y: camP[1] + ndy*tanY*d };
 }
 function fireGuns(){
   const aim = aimAt(1500);
@@ -286,7 +314,7 @@ function lockOn(){
 function spawnDrone(){
   /* early drones fly nearly straight — a hard jink is unleadable at a 0.4s
      bullet flight time, so the evasion ramps in with distance */
-  const ev=.34+.66*Math.min(1,dist/34000);
+  const ev=.55+.45*Math.min(1,dist/30000);
   enemies.push({k:'drone',x:rnd(-250,250),y:rnd(-140,150),z:SPAWN_Z,hp:2,r:32,rz:46,
     ph:rnd(0,6.28),amp:rnd(90,240)*ev,spd:(rnd(1180,1480)+waveN*12)*(.78+.22*ev),c:COL.mag,roll:0,yaw:0});
 }
@@ -302,7 +330,7 @@ function spawnCrate(){
 function spawnBoss(){
   const hp = 300+waveN*70;
   boss={k:'boss',x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r:210,rz:150,c:COL.purple,
-        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0};
+        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0};
   bossWarn=2.4; AUDIO.siren();
 }
 
@@ -370,6 +398,22 @@ function update(dt){
     e.x+=sx*dt; e.y+=sy*dt;
     e.roll = lerp(e.roll, clamp(-sx/380,-1.2,1.2), Math.min(1,dt*6));
     e.yaw  = lerp(e.yaw,  clamp(sx/900,-.5,.5)+Math.PI, Math.min(1,dt*6));
+    if(e.hit>0) e.hit=Math.max(0,e.hit-dt*7);
+    if(e.max){
+      const w=e.hp/e.max;
+      /* a wounded hull lists and trails fire — the only way a single mesh
+         can read as "coming apart" */
+      e.list = w<.72 ? (1-w)*(.5+.4*Math.sin(T*3.1+e.ph)) : 0;
+      if(w<.72 && (e.smk=(e.smk||0)-dt)<=0){
+        e.smk = w<.34?.038:.09;
+        const ex=e.x+rnd(-e.r*.6,e.r*.6), ey=e.y+rnd(-12,12), ez=e.z-e.rz*.5;
+        parts.push(mk(ex,ey,ez, rnd(-45,45),rnd(20,95),-rnd(220,480),
+          w<.34?COL.red:COL.amber, rnd(.55,1.2), rnd(26,48), 0, .35, 1.5));
+        if(Math.random()<.6)
+          parts.push(mk(ex,ey,ez, rnd(-500,500),rnd(-260,520),-rnd(200,700),
+            COL.white, rnd(.12,.3), rnd(9,17), .05, .1));
+      }
+    }
     if(e.k==='cruiser' && (e.cd-=dt)<=0 && e.z>420 && e.z<2900){
       e.cd=rnd(.95,1.7);
       const g=ATT.cruiserGuns, V=2000, t=(e.z)/V;
@@ -396,12 +440,22 @@ function update(dt){
       b.z = 1500+Math.sin(b.t*.6)*300;
       b.phase = b.hp/b.max>.66?1 : b.hp/b.max>.33?2:3;
       b.yaw = Math.PI + Math.sin(b.t*.5)*.18;
-      b.roll = Math.sin(b.t*.7)*.10;
+      b.roll = Math.sin(b.t*.7)*.10 + rage*.20*Math.sin(b.t*3.4);
+      b.list = rage*.26*Math.sin(b.t*2.1);
+      if(rage>.25 && (b.smk-=dt)<=0){
+        b.smk = .07-rage*.045;
+        const hx=b.x+rnd(-250,250), hy=b.y+rnd(-40,60), hz=b.z+rnd(-130,150);
+        parts.push(mk(hx,hy,hz, rnd(-70,70),rnd(30,150),-rnd(260,620),
+          rage>.66?COL.red:COL.amber, rnd(.7,1.5), rnd(56,100), 0, .35, 1.6));
+        sparks(hx,hy,hz, 4, 900, 1.1, COL.amber, 0,0,0, 0);
+        if(rage>.6 && Math.random()<.22) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.8,1.4), COL.purple, rnd(.9,1.6));
+      }
       if((b.cd-=dt*(b.phase===3?1.8:b.phase===2?1.35:1))<=0){
         b.cd = b.phase===1?1.15 : b.phase===2?.85 : .62;
         volley(b);
       }
     }
+    if(b.hit>0) b.hit=Math.max(0,b.hit-dt*7);
   }
 
   /* crates */
@@ -441,10 +495,37 @@ function update(dt){
     }
   }
   /* particles */
+  if(parts.length>1100) parts.splice(0, parts.length-1100);
   for(let i=parts.length-1;i>=0;i--){
     const p=parts[i]; p.life-=dt;
+    if(p.dg){ const d=Math.pow(p.dg,dt); p.vx*=d; p.vy*=d; p.vz*=d; }
     p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt-flow*dt;
     if(p.life<=0||p.z<DESPAWN_Z) parts.splice(i,1);
+  }
+  /* shockwave rings */
+  for(let i=rings.length-1;i>=0;i--){
+    const g=rings[i]; g.life-=dt; g.z-=flow*dt;
+    const t=1-clamp(g.life/g.max,0,1);
+    g.r = g.r0+(g.r1-g.r0)*(1-(1-t)*(1-t)*(1-t));
+    if(g.life<=0) rings.splice(i,1);
+  }
+  /* debris shards */
+  for(let i=debris.length-1;i>=0;i--){
+    const d=debris[i]; d.life-=dt;
+    const dp=Math.pow(.42,dt); d.vx*=dp; d.vy*=dp; d.vz*=dp;
+    d.vy-=340*dt;
+    d.x+=d.vx*dt; d.y+=d.vy*dt; d.z+=d.vz*dt-flow*dt;
+    d.rx+=d.ax*dt; d.ry+=d.ay*dt; d.rz+=d.az*dt;
+    if((d.tr-=dt)<=0){
+      d.tr=.05;
+      parts.push(mk(d.x,d.y,d.z, rnd(-30,30),rnd(-10,60),rnd(-60,60),
+        Math.random()<.4?COL.white:d.c, rnd(.26,.62), rnd(5,10)*(.6+d.s*.8), 0, .25, 1.5));
+    }
+    if(d.life<=0||d.z<DESPAWN_Z) debris.splice(i,1);
+  }
+  for(let i=evq.length-1;i>=0;i--){
+    const v=evq[i]; v.z-=flow*dt;
+    if((v.t-=dt)<=0){ evq.splice(i,1); v.f(v.x,v.y,v.z); }
   }
   for(let i=pops.length-1;i>=0;i--){
     const f=pops[i]; f.life-=dt; f.y+=110*dt; f.z-=flow*dt;
@@ -452,7 +533,8 @@ function update(dt){
   }
 
   if((comboT-=dt)<=0 && combo>1){ combo=Math.max(1,combo-1); comboT=1.1; }
-  shake*=Math.pow(.03,dt); flash=Math.max(0,flash-dt*2.4);
+  /* superlinear decay: a big flash strobes and clears instead of washing the frame */
+  shake*=Math.pow(.03,dt); flash=Math.max(0,flash-dt*(2.4+flash*14));
   hitT=Math.max(0,hitT-dt); tipT=Math.max(0,tipT-dt);
   if(bossWarn>0) bossWarn-=dt;
   if(P.hp<35 && (alarmT-=dt)<=0){ AUDIO.alarm(); alarmT = P.hp<18?.4:.8; }
@@ -491,26 +573,100 @@ function hitScan(s,dmg,big){
        using the end-of-frame x/y throws the aim off by a whole frame of drift */
     const f = dz? clamp((e.z-s.pz)/dz,0,1) : 1;
     const hx = s.px+(s.x-s.px)*f, hy = s.py+(s.y-s.py)*f;
-    if(Math.hypot(e.x-hx,e.y-hy) > e.r+(big?46:40)) continue;
-    damage(e,dmg,hx,hy,e.z,big); return true;
+    if(Math.hypot(e.x-hx,e.y-hy) > e.r+(big?40:24)) continue;
+    damage(e,dmg,hx,hy,e.z,big,s); return true;
   }
   return false;
 }
-function damage(e,dmg,x,y,z,big){
+/* --------------------------------------------------------------- violence */
+function impact(e,dmg,x,y,z,big,s){
+  const heavy = e===boss || e.k==='cruiser';
+  const pw = clamp(dmg*.4,.3,1.4);
+  let dx=0,dy=0,dz=-1;
+  if(s){ const l=Math.hypot(s.vx,s.vy,s.vz)||1; dx=-s.vx/l; dy=-s.vy/l; dz=-s.vz/l; }
+  /* spray back down the shot line so the spark cone opens toward the camera */
+  sparks(x,y,z, big?30:Math.min(20,9+(dmg*3|0)), (big?2100:1500)*(.65+pw*.45),
+    big?1.5:1.25, e===boss?COL.purple:COL.cyan, dx,dy,dz, 1);
+  shock(x,y,z, heavy?16:9, (heavy?170:100)*(.55+pw*.6), big?.34:.25,
+    heavy?9:6.5, COL.white, big?1.5:1.35);
+  parts.push(mk(x,y,z, dx*120,dy*120,dz*120, COL.white, big?.14:.10,
+    (big?42:26)*(.8+pw*.4), 0, .2, big?1.9:1.8));
+  parts.push(mk(x,y,z, 0,0,0, e.c, big?.20:.15, (big?30:18)*(.8+pw*.4), 0, 0, 2.4));
+  if(heavy) for(let i=0;i<(big?3:1);i++)
+    if(big||Math.random()<.5)
+      shard(x,y,z, rnd(-300,300)+dx*320, rnd(20,320), rnd(-300,300)+dz*320,
+        e===boss?rnd(.8,1.5):rnd(.45,.8), e.c, rnd(.5,1.1));
+  e.hit = Math.min(1, (e.hit||0) + (big?1:.62));
+  shake = Math.min(30, shake + (big?9:2.6)*(.6+pw));
+  /* deliberately no fullscreen flash on ordinary hits — it washes the frame out */
+  if(big){ flash=Math.min(.15,flash+.055); flashC=e.c; }
+  AUDIO.boom(big?.8:.24);
+}
+function explode(e,x,y,z){
+  const k = e===boss?'boss' : e.k;
+  const c = e.c, R = e.r;
+  if(k==='boss'){
+    shock(x,y,z, 40,1600, .95, 26, COL.white, 1);
+    shock(x,y,z, 20, 820, .55, 34, COL.purple, 1);
+    parts.push(mk(x,y,z, 0,0,0, COL.white, .26, 190, 0, 0, 1.5));
+    sparks(x,y,z, 70, 2600, 1.9, COL.purple, 0,0,0, 0);
+    for(let i=0;i<34;i++)
+      shard(x+rnd(-R,R), y+rnd(-70,70), z+rnd(-140,140),
+        rnd(-1100,1100), rnd(-300,820), rnd(-1100,1100), rnd(1,2.2), i&1?c:COL.mag, rnd(1,1.9));
+    shake=38; flash=Math.min(.38,flash+.34); flashC=COL.white;
+    AUDIO.boom(2);
+    /* four staggered secondaries walking across the hull */
+    for(let i=0;i<4;i++){
+      const ox=rnd(-R*.9,R*.9), oy=rnd(-50,60), oz=rnd(-130,130);
+      later(.12+i*.17, x+ox,y+oy,z+oz, (fx,fy,fz)=>{
+        shock(fx,fy,fz, 24, 560, .5, 14, COL.white, .95);
+        for(let j=0;j<6;j++)
+          parts.push(mk(fx,fy,fz, rnd(-190,190),rnd(-120,190),rnd(-190,190),
+            j&1?COL.amber:COL.red, rnd(.4,.75), rnd(66,112), 0, .3, 1.9));
+        sparks(fx,fy,fz, 26, 1700, 1.4, COL.amber, 0,0,0, 0);
+        for(let j=0;j<4;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.9,1.8), COL.purple, rnd(.9,1.7));
+        shake=Math.min(38,shake+15); flash=Math.min(.22,flash+.08); flashC=i&1?COL.amber:COL.purple;
+        AUDIO.boom(1.5);
+      });
+    }
+    return;
+  }
+  const big = k==='cruiser';
+  shock(x,y,z, big?22:12, big?520:265, big?.5:.36, big?13:8, COL.white, 1.15);
+  shock(x,y,z, big?12:7, big?320:160, big?.32:.24, big?18:12, c, 1.0);
+  parts.push(mk(x,y,z, 0,0,0, COL.white, big?.19:.13, big?86:44, 0, 0, 1.5));
+  for(let i=0;i<(big?7:4);i++)
+    parts.push(mk(x+rnd(-R*.5,R*.5),y+rnd(-R*.3,R*.3),z+rnd(-R*.4,R*.4),
+      rnd(-130,130),rnd(-70,150),rnd(-130,130),
+      i&1?COL.amber:c, rnd(.3,.6)*(big?1.4:1), big?rnd(52,80):rnd(26,40), 0, .3, 1.8));
+  sparks(x,y,z, big?46:28, big?2100:1500, big?1.35:1, c, 0,0,0, 0);
+  for(let i=0;i<(big?16:8);i++)
+    shard(x,y,z, rnd(-760,760),rnd(-200,600),rnd(-760,760),
+      big?rnd(.7,1.5):rnd(.35,.7), i%3?c:COL.white, rnd(.8,1.6));
+  shake=Math.min(34, shake+(big?22:11));
+  flash=Math.min(.30, flash+(big?.19:.11)); flashC=c;
+  AUDIO.boom(big?1.1:.6);
+  if(big) later(.11,x,y,z,(fx,fy,fz)=>{
+    shock(fx,fy,fz, 30, 380, .38, 11, COL.amber, .85);
+    for(let i=0;i<5;i++)
+      parts.push(mk(fx,fy,fz, rnd(-210,210),rnd(-90,210),rnd(-210,210),
+        COL.amber, rnd(.35,.65), rnd(56,92), 0, .3, 1.8));
+    sparks(fx,fy,fz, 18, 1500, 1.1, COL.amber, 0,0,0, 0);
+    shake=Math.min(34,shake+9); AUDIO.boom(.8);
+  });
+}
+function damage(e,dmg,x,y,z,big,s){
   e.hp-=dmg;
-  burst(x,y,z, e===boss?COL.purple:COL.cyan, big?26:6, big?1.0:.34);
-  AUDIO.boom(big?.85:.26);
-  if(e.hp>0){ e.hit=.12; return; }
+  impact(e,dmg,x,y,z,big,s);
+  if(e.hp>0) return;
   e.dead=true; kills++;
+  explode(e,e.x,e.y,e.z);
   if(e===boss){
-    burst(e.x,e.y,e.z,COL.purple,110,2.4); AUDIO.boom(2);
     const pts=5000*combo; score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
     boss=null; combo=Math.min(9,combo+2); comboT=4;
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=enemies.indexOf(e); if(i>=0) enemies.splice(i,1);
-    burst(e.x,e.y,e.z,e.c, e.k==='cruiser'?40:20, e.k==='cruiser'?1.15:.6);
-    AUDIO.boom(e.k==='cruiser'?1:.55);
     const pts=(e.k==='cruiser'?250:100)*combo; score+=pts;
     pop(e.x,e.y,e.z,'+'+pts,e.c);
     combo=Math.min(9,combo+1); comboT=2.6;
@@ -519,7 +675,7 @@ function damage(e,dmg,x,y,z,big){
 }
 function hurt(dmg,src){
   if(P.inv>0) return;
-  if(src){ burst(src.x,src.y,src.z,COL.red,28,1.1); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
+  if(src){ explode(src,src.x,src.y,src.z); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
   if(P.shield>0){ const a=Math.min(P.shield,dmg); P.shield-=a; dmg-=a; }
   P.hp-=dmg; combo=1; P.inv=.55; hitT=.42;
   shake=Math.min(34,shake+16); flash=Math.min(.55,flash+.28); flashC=COL.red;
@@ -589,7 +745,13 @@ function xform(mat, p, out){
   out[2]=mat[2]*p[0]+mat[6]*p[1]+mat[10]*p[2]+mat[14];
   return out;
 }
-const _p3=[0,0,0];
+const _p3=[0,0,0], _tint=[0,0,0];
+function hitTint(e,li){
+  if(e.hit>0){ const f=e.hit*2.6; _tint[0]=f; _tint[1]=f*.94; _tint[2]=f; return _tint; }
+  /* badly hurt hulls flicker as their lighting fails */
+  if(li>.34 && Math.floor(T*23+e.ph*9)%6===0){ _tint[0]=.55; _tint[1]=.10; _tint[2]=.02; return _tint; }
+  return null;
+}
 
 function render(){
   setCamera();
@@ -622,20 +784,30 @@ function render(){
     litDraw(MESH.jet, model, hitT>0?[hitT*1.6,0,0]:null, 1);
   }
   for(const e of enemies){
-    compose(model, e.x,e.y,e.z, 0, e.yaw, e.roll, 1);
-    litDraw(e.k==='drone'?MESH.drone:MESH.cruiser, model, e.hit>0?[.9,.9,.9]:null, 1);
-    if(e.hit>0) e.hit-=0.02;
+    const li=e.list||0;
+    compose(model, e.x,e.y,e.z, li*.42, e.yaw, e.roll+li*.8, 1);
+    litDraw(e.k==='drone'?MESH.drone:MESH.cruiser, model, hitTint(e,li), 1);
   }
   if(boss){
-    compose(model, boss.x,boss.y,boss.z, 0, boss.yaw, boss.roll, 1);
+    compose(model, boss.x,boss.y,boss.z, boss.list||0, boss.yaw, boss.roll, 1);
     const ph=boss.phase===3?[.45,0,0]:boss.phase===2?[.16,0,.16]:null;
-    litDraw(MESH.mothership, model, ph, 1);
+    litDraw(MESH.mothership, model, hitTint(boss,0)||ph, 1);
+  }
+  for(const d of debris){
+    const a=clamp(d.life/d.max,0,1);
+    compose(model, d.x,d.y,d.z, d.rx,d.ry,d.rz, 1);
+    for(let i=0;i<3;i++){ model[i]*=d.sx; model[4+i]*=d.sy; model[8+i]*=d.sz; }
+    /* fresh shards read as hot metal, cooling to dead grey as they fade */
+    const g=a*a;
+    litDraw(MESH.crate, model, [.10+g*.85, g*.20-.26, -.42], 1);
   }
   for(const k of crates){
     compose(model, k.x,k.y,k.z, k.spin*.7, k.spin, 0, 1);
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;
     litDraw(MESH.crate, model, [c[0]*.55,c[1]*.55,c[2]*.55], 1);
   }
+
+  SCENERY.draw();
 
   /* additive */
   sprN=0;
@@ -704,7 +876,23 @@ function buildFX(){
   }
   for(const p of parts){
     const a=clamp(p.life/p.max,0,1);
-    sprite(p.x,p.y,p.z, p.size*(.5+a), p.c, a*1.3);
+    if(p.st) beam(p.x,p.y,p.z, p.x-p.vx*p.st,p.y-p.vy*p.st,p.z-p.vz*p.st, p.size*.42, p.c, a*a*2.0);
+    else if(p.gw) sprite(p.x,p.y,p.z, p.size*(1+(1-a)*p.gw), p.c, a*a*1.15);
+    else sprite(p.x,p.y,p.z, p.size*(.5+a), p.c, a*1.3);
+  }
+  for(const g of rings){
+    const a=clamp(g.life/g.max,0,1), al=g.a*a*a, n=18;
+    let px=g.x+camR[0]*g.r, py=g.y+camR[1]*g.r, pz=g.z+camR[2]*g.r;
+    for(let i=1;i<=n;i++){
+      const th=i/n*6.2832, cs=Math.cos(th)*g.r, sn=Math.sin(th)*g.r;
+      const nx=g.x+camR[0]*cs+camU[0]*sn, ny=g.y+camR[1]*cs+camU[1]*sn, nz=g.z+camR[2]*cs+camU[2]*sn;
+      beam(px,py,pz, nx,ny,nz, g.w*(.3+a*.7), g.c, al);
+      px=nx; py=ny; pz=nz;
+    }
+  }
+  for(const d of debris){
+    const a=clamp(d.life/d.max,0,1);
+    sprite(d.x,d.y,d.z, (4+9*d.s)*(.35+a*.65), COL.amber, a*a*.8);
   }
   for(const e of enemies){
     if(e.k==='drone'){ const c=ATT.droneCore;
@@ -879,6 +1067,10 @@ function start(){
 function gameOver(){
   gameOn=false;
   burst(P.x,P.y,0,COL.red,90,2.2); AUDIO.boom(1.8); AUDIO.setIntensity(.15);
+  shock(P.x,P.y,0, 20,520,.6, 16, COL.white, 1);
+  sparks(P.x,P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);
+  for(let i=0;i<12;i++)
+    shard(P.x,P.y,0, rnd(-620,620),rnd(-160,520),rnd(-620,620), rnd(.35,.7), COL.cyan, rnd(.9,1.7));
   document.getElementById('fScore').textContent=score;
   document.getElementById('fDist').textContent=(dist/1000).toFixed(1);
   document.getElementById('fKills').textContent=kills;

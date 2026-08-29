@@ -50,6 +50,10 @@ uniform float uAlpha;
 uniform vec3 uFogColor;
 uniform float uFogNear;
 uniform float uFogFar;
+/* 0.0 = the usual neon fresnel edge (default for an unset uniform, so every
+   existing draw call is untouched). 1.0 = matte, for huge grazing-angle
+   surfaces like the desert floor, where a full-strength rim washes to white. */
+uniform float uMatte;
 
 void main() {
   /* winding is inconsistent and culling is off -> face the normal at us */
@@ -77,24 +81,30 @@ void main() {
   float under = pow(clamp(-N.y, 0.0, 1.0), 1.5);
   amb += vec3(0.55, 0.08, 0.42) * under * 0.55;
 
-  /* --- specular ------------------------------------------------- */
-  vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), 42.0);
-
-  /* --- FRESNEL RIM : the neon edge, the whole point ------------- */
+  /* --- FRESNEL RIM : the neon edge, the whole point -------------
+     A grazing-angle ground plane has fres ~= 1 everywhere, so a full rim
+     washes the desert to white. uMatte damps it; it also lets the three
+     pow() calls be skipped entirely on the big terrain fills. */
   float fres = 1.0 - max(dot(N, V), 0.0);
-  float rim = pow(fres, 3.0);
-  float hotRim = pow(fres, 9.0);
-
-  /* rim hue: cyan on the up-facing edges, magenta on the low ones */
-  vec3 rimCol = mix(vec3(1.00, 0.14, 0.72), vec3(0.32, 0.94, 1.00), up);
-  rimCol *= (0.55 + 0.85 * vCol);
+  float rimK = 1.0 - clamp(uMatte, 0.0, 1.0);
 
   /* --- composite ------------------------------------------------ */
   vec3 col = vCol * (amb + keyCol * ndl + fillCol * ndf);
-  col += keyCol * spec * 1.15;
-  col += rimCol * rim * 2.10;
-  col += vec3(1.0) * hotRim * 0.45;
+
+  if (rimK > 0.004) {
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 42.0);
+    float rim = pow(fres, 3.0);
+    float hotRim = pow(fres, 9.0);
+
+    /* rim hue: cyan on the up-facing edges, magenta on the low ones */
+    vec3 rimCol = mix(vec3(1.00, 0.14, 0.72), vec3(0.32, 0.94, 1.00), up);
+    rimCol *= (0.55 + 0.85 * vCol);
+
+    col += keyCol * spec * 1.15 * rimK;
+    col += rimCol * rim * 2.10 * rimK;
+    col += vec3(1.0) * hotRim * 0.45 * rimK;
+  }
 
   /* additive emissive (damage flashes / boss phases) */
   col += uTint * (0.85 + 0.95 * fres);
