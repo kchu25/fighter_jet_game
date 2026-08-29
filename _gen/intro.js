@@ -10,12 +10,12 @@ const CINE = (function () {
   const VW = 1600, VH = 900;
 
   /* ---- scene boundaries (absolute seconds) ---- */
-  const T1 = 10.6;              // 0    .. 10.6  incident
-  const T2 = T1 + 2.8;          // 10.6 .. 13.4  the signal (quiet alert)
-  const T3 = T2 + 4.5;          // 13.4 .. 17.9  the pilot
-  const T4 = T3 + 3.5;          // 17.9 .. 21.4  catapult launch, first person
-  const T5 = T4 + 4.7;          // 21.4 .. 26.1  mass launch
-  const T6 = T5 + 5.4;          // 26.1 .. 31.5  encounter
+  const T1 = 12.8;              // 0    .. 12.8  incident
+  const T2 = T1 + 2.5;          // 12.8 .. 15.3  the signal (quiet alert)
+  const T3 = T2 + 4.5;          // 15.3 .. 19.8  the pilot
+  const T4 = T3 + 3.2;          // 19.8 .. 23.0  catapult launch, first person
+  const T5 = T4 + 4.4;          // 23.0 .. 27.4  mass launch
+  const T6 = T5 + 5.0;          // 27.4 .. 32.4  encounter
   const HANDOFF = T6 - 0.62;    // gameplay starts under the fading canvas
 
   let cv = null, c = null, W = 0, H = 0, dpr = 1, sc = 1, ox = 0, oy = 0;
@@ -160,16 +160,301 @@ const CINE = (function () {
   function art() { return window.CINE_ART || null; }
 
   /* ================================================================
-     SCENE 1 — the inciting incident
+     SCENE 1 — the inciting incident, in three movements:
+       1   0.0 ..  3.2   the rocket goes up.  Nothing else happens.
+       2   3.2 ..  7.0   something is out there.  You never see it whole.
+       3   8.3 .. 12.8   you see what it came off.
      ================================================================ */
-  const IGN = 1.25, LIFT = 2.35, WARP = 6.05, LOCK = 6.95, FIRE = 7.8, BOOM = 8.3;
+  const IGN = 0.95, LIFT = 1.85;
+  const FIRE = 6.58, BOOM = 7.02;
+  const HUGE = 8.32;            /* the prow starts crossing the right edge */
+  const HUGE_V = 556;           /* px/s of hull dragged past the lens */
   const PAD_Y = 605, GND_Y = 700;
-  const SHIPS = [
-    { x: 322, y: 232, s: 1.00, tw: WARP },
-    { x: 1298, y: 158, s: 0.86, tw: WARP + 0.26 },
-    { x: 838, y: 104, s: 0.66, tw: WARP + 0.52 }
-  ];
+  /* where the unseen things are when they discharge.  Never drawn lit. */
+  const STRIKE = [[1286, 178], [252, 250], [828, 92]];
   let camAlt = 0, camPrev = 0, rkX = 800, rkY = PAD_Y, rkRot = 0;
+
+  /* ---------------------------------------------------------------
+     The small craft.  A path, and only ever a path: either filled with
+     something darker than the sky it is standing in front of, or one
+     hairline of its leading edge catching light for a few frames.  It
+     is never lit enough to be read as a machine.
+     --------------------------------------------------------------- */
+  const DART = [0, -30, 4, -11, 15, -6, 33, 12, 24, 16, 8, 9, 5, 20, 11, 27,
+    0, 24, -11, 27, -5, 20, -8, 9, -24, 16, -33, 12, -15, -6, -4, -11];
+  function dartPt(i, x, y, s, co, si) {
+    const px = DART[i * 2] * s, py = DART[i * 2 + 1] * s;
+    return [x + px * co - py * si, y + px * si + py * co];
+  }
+  function dartDark(x, y, s, rot, a) {
+    const co = Math.cos(rot), si = Math.sin(rot);
+    c.beginPath();
+    for (let i = 0; i < 16; i++) {
+      const p = dartPt(i, x, y, s, co, si);
+      if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]);
+    }
+    c.closePath();
+    c.fillStyle = 'rgba(0,0,3,' + (0.92 * a).toFixed(3) + ')';
+    c.fill();
+    c.strokeStyle = 'rgba(104,132,180,' + (0.085 * a).toFixed(3) + ')';
+    c.lineWidth = 1; c.stroke();
+  }
+  /* a few frames of light down the starboard leading edge, and nothing else */
+  function dartEdge(x, y, s, rot, a, col) {
+    if (a <= 0.01) return;
+    const co = Math.cos(rot), si = Math.sin(rot);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.lineCap = 'round';
+    c.strokeStyle = rgba(col || C.ice, sat(a));
+    c.lineWidth = Math.max(1, 1.5 * s);
+    c.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const p = dartPt(i, x, y, s, co, si);
+      if (i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]);
+    }
+    c.stroke();
+    c.restore();
+  }
+
+  /* the curve of the world, far below — a scale reference, and something
+     for the dark shapes (and later the shadow) to bite into */
+  function planetLimb(a) {
+    if (a <= 0.004) return;
+    const R = 5400, cx = 690, cy = 764 + R;
+    const A0 = Math.PI * 1.42, A1 = Math.PI * 1.58;
+    c.save();
+    c.globalAlpha = a;
+    c.fillStyle = '#02030a';
+    c.beginPath(); c.arc(cx, cy, R, A0, A1);
+    c.lineTo(VW + 220, VH + 220); c.lineTo(-220, VH + 220); c.closePath(); c.fill();
+    /* sparse settlement light along the terminator: this is a planet */
+    c.globalCompositeOperation = 'lighter';
+    let s = 7717;
+    for (let i = 0; i < 46; i++) {
+      s = (s * 1664525 + 1013904223) & 0x7fffffff;
+      const fx = (s / 0x7fffffff);
+      s = (s * 1664525 + 1013904223) & 0x7fffffff;
+      const fy = (s / 0x7fffffff);
+      const x = -60 + fx * (VW + 120);
+      const yy = cy - Math.sqrt(Math.max(0, R * R - (x - cx) * (x - cx))) + 6 + fy * 92;
+      c.globalAlpha = a * (0.10 + 0.32 * fy) * (0.55 + 0.45 * Math.sin(t * 1.7 + i));
+      c.fillStyle = rgba(C.amber, 1);
+      c.fillRect(x, yy, 1.6, 1.6);
+    }
+    /* airglow */
+    c.globalAlpha = a * 0.5;
+    c.lineWidth = 34; c.strokeStyle = 'rgba(46,92,190,0.10)';
+    c.beginPath(); c.arc(cx, cy, R + 22, A0, A1); c.stroke();
+    c.lineWidth = 5; c.strokeStyle = 'rgba(150,206,255,0.30)';
+    c.beginPath(); c.arc(cx, cy, R + 3, A0, A1); c.stroke();
+    c.restore();
+  }
+
+  /* ---- MOVEMENT 2 -------------------------------------------------
+     Six looks, none of them clean.  Everything here is drawn on top of
+     the rocket and its exhaust, because whatever it is, it is between
+     the lens and the launch.
+     ----------------------------------------------------------------- */
+  function movement2(u) {
+    let q;
+
+    /* 3.22 — a shape crosses the top of frame.  Small, high, almost unlit:
+       one flicker off a wing and then nothing. */
+    q = (u - 3.22) / 0.66;
+    if (q > 0 && q < 1) {
+      const a = Math.min(1, Math.sin(q * Math.PI) * 2.6);
+      const x = 1512 - q * 430, y = 150 + q * 52;
+      dartDark(x, y, 0.78, 2.05, a);
+      if (q > 0.30 && q < 0.42)
+        dartEdge(x, y, 0.78, 2.05, (1 - Math.abs(q - 0.36) / 0.06) * 0.55);
+    }
+
+    /* 4.00 — a wing edge takes the sun.  Two frames.  Gone. */
+    q = (u - 4.00) / 0.34;
+    if (q > 0 && q < 1) {
+      const x = 388 + q * 104, y = 306 - q * 40;
+      const a = Math.pow(1 - q, 2.4);
+      dartDark(x, y, 0.94, -1.12, Math.min(1, Math.sin(q * Math.PI) * 2.2) * 0.7);
+      dartEdge(x, y, 0.94, -1.12, a * 0.95);
+    }
+
+    /* 4.50 — a shadow crosses the stack.  There is nothing above it. */
+    q = (u - 4.50) / 0.94;
+    if (q > 0 && q < 1) {
+      const sx = 1460 - q * 1560, sy = 232 + q * 130;
+      const a = Math.sin(q * Math.PI);
+      c.save();
+      c.globalAlpha = a * 0.92;
+      c.drawImage(glow([0, 0, 3]), sx - 600, sy - 220, 1200, 440);
+      c.restore();
+    }
+
+    /* 5.02 — something far larger passes the bottom corner, three
+       quarters of it outside the frame. */
+    q = (u - 5.02) / 0.78;
+    if (q > 0 && q < 1) {
+      const a = Math.min(1, Math.sin(q * Math.PI) * 2.1);
+      const bx = -300 + q * 760, by = 828 - q * 104;
+      dartDark(bx, by, 4.7, 1.44 - q * 0.12, a);
+      if (q > 0.40 && q < 0.62)
+        dartEdge(bx, by, 4.7, 1.44 - q * 0.12, (1 - Math.abs(q - 0.51) / 0.11) * 0.42);
+    }
+
+    /* 5.50 — three of them, echelon, across the top.  One glints. */
+    q = (u - 5.50) / 0.80;
+    if (q > 0 && q < 1) {
+      const a = Math.min(1, Math.sin(q * Math.PI) * 2.4);
+      for (let i = 0; i < 3; i++) {
+        const p = q - i * 0.12; if (p < 0) continue;
+        const x = 1700 - p * 1220 - i * 128, y = 146 + i * 64 + p * 50;
+        const s = 0.74 + i * 0.07;
+        dartDark(x, y, s, 1.98, a);
+        /* the sky is at its blackest up here: an occluder alone reads as
+           nothing, so each one takes the sun briefly, in turn. */
+        const gq = 0.30 + i * 0.17;
+        if (q > gq - 0.07 && q < gq + 0.07)
+          dartEdge(x, y, s, 1.98, (1 - Math.abs(q - gq) / 0.07) * (0.88 - i * 0.14));
+      }
+    }
+
+    /* 6.06 — they are around the stack now.  Three lights, one blink
+       each, at ranges you have no way of judging. */
+    for (let i = 0; i < STRIKE.length; i++) {
+      const p = (u - (6.04 + i * 0.14)) / 0.32;
+      if (p <= 0 || p >= 1) continue;
+      const a = Math.sin(p * Math.PI);
+      c.save(); c.globalCompositeOperation = 'lighter';
+      c.globalAlpha = a * 0.5;
+      c.drawImage(glow(C.violet), STRIKE[i][0] - 56, STRIKE[i][1] - 56, 112, 112);
+      c.globalAlpha = a;
+      c.fillStyle = rgba(C.mag, 1);
+      c.fillRect(STRIKE[i][0] - 1.5, STRIKE[i][1] - 1.5, 3, 3);
+      c.restore();
+    }
+
+    /* the discharge lights them, badly, for a fifth of a second */
+    if (u >= FIRE && u < FIRE + 0.22) {
+      const a = 1 - (u - FIRE) / 0.22;
+      const rots = [2.34, 0.84, 1.62];
+      for (let i = 0; i < STRIKE.length; i++) {
+        dartDark(STRIKE[i][0], STRIKE[i][1], 0.92, rots[i], 1);
+        dartEdge(STRIKE[i][0], STRIKE[i][1], 0.92, rots[i], a * 0.85, C.mag);
+      }
+    }
+  }
+
+  /* ---- MOVEMENT 3 -------------------------------------------------
+     The belly of something that does not fit in the frame.  The whole
+     effect is occlusion and duration: an edge arrives and simply keeps
+     arriving, and the sky goes out behind it.
+     ----------------------------------------------------------------- */
+  function bellyY(d) {
+    if (d <= 0) return -560;
+    return -330 + 1220 * (1 - Math.exp(-d / 660));
+  }
+  function colossus(u) {
+    const q = u - HUGE;
+    if (q <= 0) return;
+    const px = VW + 210 - q * HUGE_V;      /* the prow */
+
+    /* its shadow runs ahead of the hull and never comes back */
+    const sg = c.createLinearGradient(px - 520, 0, px + 660, 0);
+    sg.addColorStop(0, 'rgba(0,0,2,0)');
+    sg.addColorStop(1, 'rgba(0,0,2,0.64)');
+    c.fillStyle = sg; c.fillRect(0, 0, VW, VH);
+    /* stars die just ahead of the edge, before the edge itself shows */
+    c.save(); c.globalAlpha = 0.5;
+    c.drawImage(glow([0, 0, 3]), px - 700, -640, 1400, 1400);
+    c.restore();
+
+    /* ---- the hull ---- */
+    c.beginPath();
+    c.moveTo(-140, -560);
+    for (let x = -140; x <= VW + 140; x += 14) c.lineTo(x, Math.max(-560, bellyY(x - px)));
+    c.lineTo(VW + 140, -560);
+    c.closePath();
+    /* the hull is not black — it is a dark surface, and it has to read as
+       one or the size of it means nothing */
+    const hg = c.createLinearGradient(0, -340, 0, 960);
+    hg.addColorStop(0, '#191d2a');
+    hg.addColorStop(0.46, '#141824');
+    hg.addColorStop(1, '#0e111b');
+    c.fillStyle = hg;
+    c.save();
+    c.fill();
+    c.clip();
+    /* structure, kept coarse — ribs 430px apart, so the eye has something
+       to measure the length against */
+    c.strokeStyle = 'rgba(112,146,200,0.10)'; c.lineWidth = 3;
+    for (let k = 1; k < 11; k++) {
+      const rx = px + k * 430;
+      c.beginPath(); c.moveTo(rx, -560); c.lineTo(rx - 190, 1020); c.stroke();
+    }
+    /* three trenches running back down the belly, parallel to the edge */
+    for (let k = 0; k < 3; k++) {
+      c.beginPath();
+      for (let x = -140; x <= VW + 140; x += 22) {
+        const y = bellyY(x - px) - (74 + k * 168);
+        if (x === -140) c.moveTo(x, y); else c.lineTo(x, y);
+      }
+      c.strokeStyle = 'rgba(122,156,215,' + (0.16 - k * 0.045) + ')';
+      c.lineWidth = 30 - k * 9; c.stroke();
+      c.strokeStyle = 'rgba(0,0,4,0.5)'; c.lineWidth = 2; c.stroke();
+    }
+    c.restore();
+
+    /* ---- the light on it: one bloomed hairline down the leading edge ---- */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.lineCap = 'round';
+    c.beginPath();
+    let started = false;
+    for (let x = Math.max(-140, px); x <= VW + 140; x += 10) {
+      const y = bellyY(x - px);
+      if (y < -560) continue;
+      if (!started) { c.moveTo(x, y); started = true; } else c.lineTo(x, y);
+    }
+    if (started) {
+      const mk = function (a0, a1, a2) {
+        const rg = c.createLinearGradient(px, 0, px + 1250, 0);
+        rg.addColorStop(0, 'rgba(206,228,255,' + a0 + ')');
+        rg.addColorStop(0.26, 'rgba(158,188,246,' + a1 + ')');
+        rg.addColorStop(0.66, 'rgba(126,158,228,' + a2 + ')');
+        rg.addColorStop(1, 'rgba(120,150,220,0)');
+        return rg;
+      };
+      c.strokeStyle = mk(0.20, 0.11, 0.05); c.lineWidth = 22; c.stroke();
+      c.strokeStyle = mk(0.55, 0.28, 0.13); c.lineWidth = 6; c.stroke();
+      c.strokeStyle = mk(0.95, 0.52, 0.24); c.lineWidth = 2.2; c.stroke();
+    }
+    /* running lights, 470px apart, slow */
+    for (let k = 0; k < 12; k++) {
+      const lx = px + 250 + k * 470;
+      if (lx < -160 || lx > VW + 160) continue;
+      const ly = bellyY(lx - px) - 24;
+      if (ly < -180) continue;
+      const bl = 0.42 + 0.36 * Math.sin(t * 0.85 + k * 1.7);
+      const col = k % 3 ? C.amber : C.violet;
+      c.globalAlpha = bl * 0.7;
+      c.drawImage(glow(col), lx - 70, ly - 70, 140, 140);
+      c.globalAlpha = bl;
+      c.fillStyle = rgba(col, 1);
+      c.fillRect(lx - 2.5, ly - 2.5, 5, 5);
+    }
+    c.globalAlpha = 1;
+    c.restore();
+
+    /* ---- things that came off it, for scale ---- */
+    for (let k = 0; k < 4; k++) {
+      const ex = px + 470 + k * 300 - q * 132;
+      if (ex < -60 || ex > VW + 60) continue;
+      const ey = bellyY(ex - px) + 96 + k * 52;
+      if (ey > VH + 40 || ey < -40) continue;
+      dartDark(ex, ey, 0.28, 1.92, 0.85);
+      if ((k + Math.floor(t * 1.7)) % 5 === 0) dartEdge(ex, ey, 0.28, 1.92, 0.55);
+    }
+  }
 
   function scene1(u, dt) {
     /* --- flight profile --- */
@@ -182,9 +467,9 @@ const CINE = (function () {
     const space = sat(camAlt / 1500);
     const dead = u > BOOM;
 
-    rkX = 800 + ramp(3.4, BOOM, u) * 96;
+    rkX = 800 + ramp(2.9, BOOM, u) * 96;
     rkY = PAD_Y - Math.min(alt, 300);
-    rkRot = ramp(3.0, BOOM, u) * 0.26;
+    rkRot = ramp(2.5, BOOM, u) * 0.26;
 
     /* --- sky --- */
     const g = c.createLinearGradient(0, 0, 0, VH);
@@ -193,7 +478,8 @@ const CINE = (function () {
     g.addColorStop(1, space > 0.8 ? '#03040e' : ('rgb(' + Math.round(18 + 40 * (1 - space)) + ',' +
       Math.round(10 + 22 * (1 - space)) + ',' + Math.round(38 + 30 * (1 - space)) + ')'));
     c.fillStyle = g; c.fillRect(0, 0, VW, VH);
-    starField(9173, 150, camAlt, 0.25 + 0.65 * space);
+    starField(9173, 300, camAlt, 0.25 + 0.65 * space);
+    planetLimb(ramp(0.30, 0.72, space));
 
     /* --- ground complex (only while it is on screen) --- */
     const gy = GND_Y + camAlt;
@@ -247,79 +533,13 @@ const CINE = (function () {
     const A = art();
     if (!dead && A) A.rocket(c, rkX, rkY, 0.95, rkRot, thr, t);
 
-    /* --- alien arrival --- */
-    let tips = null;
-    for (let i = 0; i < SHIPS.length; i++) {
-      const sh = SHIPS[i], q = u - sh.tw;
-      if (q < 0) continue;
-      once('warp' + i, sh.tw, function () { sfx('warp'); shake = Math.max(shake, 7); });
-      /* warp streak + ring */
-      if (q < 0.62) {
-        c.globalCompositeOperation = 'lighter';
-        if (q < 0.17) {
-          const w = sat(q / 0.17);
-          c.globalAlpha = 1 - w * 0.35;
-          c.fillStyle = rgba(C.white, 1);
-          c.fillRect(sh.x - 1400 * w, sh.y - 2, 2800 * w, 4);
-        }
-        const rq = sat((q - 0.12) / 0.5);
-        if (rq > 0) {
-          c.globalAlpha = (1 - rq) * 0.85; c.lineWidth = 6 * (1 - rq) + 1;
-          c.strokeStyle = rgba(C.violet, 1);
-          c.beginPath(); c.ellipse(sh.x, sh.y, 60 + 340 * rq * sh.s, (18 + 96 * rq) * sh.s, 0, 0, 6.2832);
-          c.stroke();
-        }
-        c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
-      }
-      const a = ramp(sh.tw + 0.18, sh.tw + 0.6, u);
-      const ch = dead ? 0 : ramp(LOCK, FIRE, u) * (u > FIRE + 0.6 ? 0 : 1);
-      if (A) {
-        const r = A.warship(c, sh.x, sh.y + Math.sin(t * 0.9 + i) * 5, sh.s, a, ch, t);
-        if (r && r.tips) { SHIPS[i]._tips = r.tips; if (!tips) tips = r.tips; }
-      }
-    }
-    once('lock', LOCK, function () { sfx('beep', 0.9); sfx('beep', 0.4); });
-
-    /* target brackets on the doomed rocket */
-    if (u > LOCK && u < BOOM) {
-      const a = ramp(LOCK, LOCK + 0.25, u) * (0.55 + 0.45 * pulse(t, 6));
-      c.globalCompositeOperation = 'lighter';
-      c.strokeStyle = rgba(C.mag, a); c.lineWidth = 3;
-      const bw = 72, bh = 132, cx = rkX, cy = rkY - 6, k = 26;
-      const cs = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
-      for (let i = 0; i < 4; i++) {
-        const sx = cs[i][0], sy = cs[i][1];
-        c.beginPath();
-        c.moveTo(cx + sx * bw, cy + sy * bh - sy * k); c.lineTo(cx + sx * bw, cy + sy * bh);
-        c.lineTo(cx + sx * bw - sx * k, cy + sy * bh); c.stroke();
-      }
-      c.globalCompositeOperation = 'source-over';
-    }
-
-    /* --- plasma beams --- */
-    once('fire', FIRE, function () { sfx('plasma'); shake = Math.max(shake, 16); flash = 0.35; flashCol = C.mag; });
-    if (u > FIRE && u < BOOM + 0.16) {
-      const life = sat((u - FIRE) / 0.1) * (1 - ramp(BOOM, BOOM + 0.16, u));
-      c.globalCompositeOperation = 'lighter';
-      for (let i = 0; i < SHIPS.length; i++) {
-        const tp = SHIPS[i]._tips; if (!tp) continue;
-        for (let j = 0; j < tp.length; j++) {
-          const jitter = Math.sin(t * 90 + j * 3 + i) * 3;
-          const passes = [[30, C.mag, 0.20], [13, C.mag, 0.5], [4.5, C.white, 1]];
-          for (let p = 0; p < 3; p++) {
-            c.strokeStyle = rgba(passes[p][1], passes[p][2] * life);
-            c.lineWidth = passes[p][0] * (0.85 + 0.15 * Math.sin(t * 60 + p));
-            c.beginPath(); c.moveTo(tp[j][0], tp[j][1]);
-            c.lineTo(rkX + jitter, rkY - 20 + jitter); c.stroke();
-          }
-        }
-      }
-      const bl = 120 + 40 * Math.sin(t * 40);
-      c.drawImage(glow(C.white), rkX - bl / 2, rkY - 20 - bl / 2, bl, bl);
-      c.globalCompositeOperation = 'source-over';
-      if (Math.random() < 0.6)
-        burst(rkX, rkY - 20, 4, 460, C.amber, 0.5, 16, { g: 200 });
-    }
+    /* --- the strike (drawn later, over the exhaust) --- */
+    once('sight', 3.22, function () { sfx('setIntensity', 0.34); });
+    once('fire', FIRE, function () {
+      sfx('plasma'); shake = Math.max(shake, 13); flash = 0.24; flashCol = C.violet;
+    });
+    if (u > FIRE && u < BOOM + 0.14 && Math.random() < 0.6)
+      burst(rkX, rkY - 20, 3, 420, C.amber, 0.45, 13, { g: 200 });
 
     /* --- destruction --- */
     once('boom', BOOM, function () {
@@ -327,9 +547,11 @@ const CINE = (function () {
       sfx('setIntensity', 0.5);
       if (rumbleH && rumbleH.stop) { rumbleH.stop(0.35); rumbleH = null; }
       burst(rkX, rkY - 10, 90, 900, C.white, 0.7, 40, { g: 90, d: 0.9 });
-      burst(rkX, rkY - 10, 110, 640, C.orange, 1.5, 54, { g: 130, d: 0.93, gr: 30 });
-      burst(rkX, rkY - 10, 70, 380, C.amber, 2.2, 60, { g: 60, d: 0.95, gr: 40 });
-      burst(rkX, rkY - 10, 60, 300, C.smoke, 3.4, 70, { add: false, g: -20, d: 0.96, gr: 46 });
+      /* short lives, and enough speed that they disperse instead of piling
+         into one bright ball: the sky has to be black again by 8.0 */
+      burst(rkX, rkY - 10, 110, 700, C.orange, 0.80, 46, { g: 130, d: 0.93, gr: 20 });
+      burst(rkX, rkY - 10, 60, 520, C.amber, 1.05, 44, { g: 60, d: 0.95, gr: 24 });
+      burst(rkX, rkY - 10, 46, 300, C.smoke, 2.7, 70, { add: false, g: -20, d: 0.96, gr: 46, a: 0.55 });
       for (let i = 0; i < 34; i++) {
         const a2 = rnd(0, 6.2832), sp = rnd(220, 820);
         part(rkX, rkY - 10, Math.cos(a2) * sp, Math.sin(a2) * sp, rnd(1.6, 3.2),
@@ -340,14 +562,15 @@ const CINE = (function () {
       const q = u - BOOM;
       /* fireball + shockwave */
       c.globalCompositeOperation = 'lighter';
-      const fb = 260 * Math.exp(-q * 0.9) + 60;
-      c.globalAlpha = sat(1.1 - q * 0.45);
+      /* it has to be gone before the silence: the reveal needs a dark sky */
+      const fb = 230 * Math.exp(-q * 2.5) + 26;
+      c.globalAlpha = sat(1.05 - q * 1.15) * sat(1.05 - q * 1.15);
       c.drawImage(glow(C.orange), rkX - fb, rkY - 10 - fb, fb * 2, fb * 2);
       c.drawImage(glow(C.white), rkX - fb * 0.4, rkY - 10 - fb * 0.4, fb * 0.8, fb * 0.8);
       c.globalAlpha = 1;
-      if (q < 1.1) {
-        const rq = q / 1.1;
-        c.strokeStyle = rgba(C.amber, (1 - rq) * 0.8); c.lineWidth = 14 * (1 - rq) + 1;
+      if (q < 0.85) {
+        const rq = q / 0.85;
+        c.strokeStyle = rgba(C.amber, (1 - rq) * (1 - rq) * 0.55); c.lineWidth = 16 * (1 - rq) + 1;
         c.beginPath(); c.arc(rkX, rkY - 10, 60 + 900 * rq, 0, 6.2832); c.stroke();
       }
       c.globalCompositeOperation = 'source-over';
@@ -355,19 +578,65 @@ const CINE = (function () {
 
     drawParts(true);
 
+    /* ---- MOVEMENT 2: whatever it is, it is in front of all of that ---- */
+    if (u > 3.1 && u < FIRE + 0.24) movement2(u);
+
+    /* the lances, over everything, including the exhaust they cut through */
+    if (u > FIRE && u < BOOM + 0.14) {
+      const life = sat((u - FIRE) / 0.07) * (1 - ramp(BOOM, BOOM + 0.14, u));
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      const passes = [[28, C.violet, 0.20], [11, C.mag, 0.5], [3.2, C.white, 1]];
+      for (let i = 0; i < STRIKE.length; i++) {
+        const jitter = Math.sin(t * 88 + i * 2.1) * 2.6;
+        for (let p = 0; p < 3; p++) {
+          c.strokeStyle = rgba(passes[p][1], passes[p][2] * life);
+          c.lineWidth = passes[p][0] * (0.85 + 0.15 * Math.sin(t * 60 + p));
+          c.beginPath(); c.moveTo(STRIKE[i][0], STRIKE[i][1]);
+          c.lineTo(rkX + jitter, rkY - 20 + jitter); c.stroke();
+        }
+        c.globalAlpha = life * 0.7;
+        c.drawImage(glow(C.mag), STRIKE[i][0] - 66, STRIKE[i][1] - 66, 132, 132);
+        c.globalAlpha = 1;
+      }
+      const bl = 100 + 34 * Math.sin(t * 40);
+      c.drawImage(glow(C.white), rkX - bl / 2, rkY - 20 - bl / 2, bl, bl);
+      c.restore();
+    }
+
+    /* ---- MOVEMENT 3: the stillness, then the thing itself ---- */
+    once('quiet', BOOM + 0.30, function () { sfx('setIntensity', 0.16); });
+    once('huge', HUGE - 0.85, function () {
+      rumbleH = sfx('rumble', 0.10); sfx('setIntensity', 0.30);
+    });
+    once('hugeon', HUGE + 1.30, function () {
+      sfx('thud'); shake = Math.max(shake, 8); sfx('setIntensity', 0.46);
+    });
+    once('hugeoff', T1 - 0.40, function () {
+      if (rumbleH && rumbleH.stop) { rumbleH.stop(0.4); rumbleH = null; }
+    });
+    if (u > HUGE - 0.85) {
+      const adv = ramp(HUGE - 0.85, HUGE + 3.2, u);
+      if (rumbleH && rumbleH.set) rumbleH.set(0.10 + 0.85 * adv);
+      shake = Math.max(shake, 1.2 + 3.4 * adv * (0.6 + 0.4 * Math.sin(t * 7.3)));
+    }
+    colossus(u);
+
     /* slate */
-    if (u < 3.4) {
-      const a = ramp(0.3, 0.9, u) * (1 - ramp(2.7, 3.4, u));
+    if (u < 3.0) {
+      const a = ramp(0.3, 0.8, u) * (1 - ramp(2.3, 3.0, u));
       txt('CAPE ORION  //  04:17 LOCAL', 96, 108, 22, rgba(C.green, a * 0.9), 5);
       txt('MERIDIAN  HEAVY  —  ORBITAL DEFENCE PAYLOAD', 96, 144, 17, rgba(C.green, a * 0.6), 4);
     }
-    if (u > BOOM + 0.9 && u < T1 - 0.2) {
-      const a = ramp(BOOM + 0.9, BOOM + 1.4, u) * (1 - ramp(T1 - 0.9, T1 - 0.2, u));
+    /* the report of the loss, alone in the frame — and swallowed by what
+       arrives next */
+    if (u > BOOM + 0.55 && u < HUGE + 0.9) {
+      const a = ramp(BOOM + 0.55, BOOM + 1.0, u) * (1 - ramp(HUGE + 0.15, HUGE + 0.9, u));
       txt('TELEMETRY LOST', VW / 2, 806, 30, rgba(C.red, a * (0.5 + 0.5 * pulse(t, 2.4))), 12, 'center');
     }
-    vignette(0.55 + 0.2 * space);
+    vignette(0.52 + 0.16 * space - 0.30 * ramp(HUGE, HUGE + 1.4, u));
     /* fade to black into the alert */
-    const fo = ramp(T1 - 0.7, T1, u);
+    const fo = ramp(T1 - 0.58, T1, u);
     if (fo > 0) { c.fillStyle = 'rgba(0,0,0,' + fo + ')'; c.fillRect(0, 0, VW, VH); }
   }
 
@@ -750,7 +1019,7 @@ const CINE = (function () {
     const tension = ramp(0.08, L_SHOT, u);     // the wind-up before release
     const open = ramp(1.05, L_OUT, u);         // the far aperture growing
     const sky = ramp(L_OUT, L_OUT + 0.20, u);  // we are outside
-    const after = sat((u - L_OUT) / (3.5 - L_OUT));
+    const after = sat((u - L_OUT) / (3.2 - L_OUT));
     const drive = spd * (1 - 0.45 * after);
 
     /* ---------------------------------------------------- audio ---- */
@@ -994,7 +1263,7 @@ const CINE = (function () {
     /* in from scene 3's black, out through white into the mass launch */
     const fi = 1 - ramp(0, 0.22, u);
     if (fi > 0) { c.fillStyle = 'rgba(0,0,0,' + fi + ')'; c.fillRect(0, 0, VW, VH); }
-    const wo = ramp(3.14, 3.5, u);
+    const wo = ramp(2.86, 3.2, u);
     if (wo > 0) { c.fillStyle = 'rgba(255,255,255,' + wo + ')'; c.fillRect(0, 0, VW, VH); }
   }
 
@@ -1048,96 +1317,182 @@ const CINE = (function () {
   }
 
   /* ================================================================
-     SCENE 5 — the mass launch
+     SCENE 5 — the mass launch.  Four depth planes, each with its own
+     scale, contrast, haze and — the part that actually does the work —
+     its own rate.  A near jet crosses the frame in one second; a far
+     one covers a twentieth of it in the whole scene.
      ================================================================ */
   const SILOS = [
-    { x: 300, w: 210, at: 0.30 }, { x: 690, w: 250, at: 0.46 },
-    { x: 1080, w: 230, at: 0.62 }, { x: 1420, w: 180, at: 0.78 },
-    { x: 120, w: 150, at: 0.94 }
+    { x: 300, w: 210, at: 0.26 }, { x: 690, w: 250, at: 0.38 },
+    { x: 1080, w: 230, at: 0.50 }, { x: 1420, w: 180, at: 0.62 },
+    { x: 120, w: 150, at: 0.74 }
   ];
-  const FLEET = [];
+  const L_FAR = [], L_MID = [], L_NEAR = [];
+  const FG5 = [
+    { at: 1.00, dir: -1, y: 812, s: 4.4, dur: 0.60, rot: 1.02 },
+    { at: 3.00, dir: 1, y: 862, s: 5.3, dur: 0.54, rot: -1.16 }
+  ];
   (function () {
-    for (let i = 0; i < 15; i++) {
-      const si = i % SILOS.length;
-      FLEET.push({
-        si: si, at: 0.62 + i * 0.115,
-        dx: rnd(-260, 260), sp: rnd(300, 470), s0: rnd(0.5, 0.78), rot: rnd(-0.3, 0.3)
+    /* far: already up, tiny, hazed, drifting on their own headings */
+    for (let i = 0; i < 21; i++) {
+      L_FAR.push({
+        x: -80 + i * 88 + rnd(-38, 38), y: rnd(-266, -18),
+        s: rnd(0.11, 0.20), vx: rnd(13, 34) * (i % 3 ? 1 : -1),
+        vy: rnd(-14, -4), rot: rnd(0.10, 0.62) * (i % 3 ? 1 : -1), ph: rnd(0, 6.28)
       });
     }
+    /* mid: the launch itself, climbing out of the silos */
+    for (let i = 0; i < 13; i++) {
+      const dx = rnd(-340, 340);
+      L_MID.push({
+        si: i % SILOS.length, at: 0.62 + i * 0.122,
+        dx: dx, s0: rnd(0.28, 0.56), climb: rnd(180, 300),
+        /* it banks the way it is actually going: no two headings alike */
+        rot: dx / 760 + rnd(-0.12, 0.12)
+      });
+    }
+    /* near: fast diagonal departures right across the frame */
+    L_NEAR.push({ at: 0.48, dir: 1, y0: 700, y1: 128, s0: 2.5, s1: 0.72, dur: 1.12 });
+    L_NEAR.push({ at: 1.40, dir: -1, y0: 772, y1: 214, s0: 3.0, s1: 0.86, dur: 0.94 });
+    L_NEAR.push({ at: 2.36, dir: 1, y0: 730, y1: 86, s0: 2.7, s1: 0.68, dur: 1.04 });
+    /* slow enough that it is still mid-frame when the scene cuts: the last
+       thing you see is an aircraft close enough to count the panels on. */
+    L_NEAR.push({ at: 3.40, dir: -1, y0: 706, y1: 176, s0: 2.7, s1: 0.80, dur: 1.50 });
   })();
+
+  /* the air between the planes.  Warm and thick at the horizon, gone
+     overhead — draw it between layers and distance does the rest. */
+  function hazeVeil(hz, a) {
+    const g = c.createLinearGradient(0, hz - 430, 0, hz + 30);
+    g.addColorStop(0, 'rgba(132,54,120,0)');
+    g.addColorStop(0.52, 'rgba(150,62,124,' + (a * 0.34).toFixed(3) + ')');
+    g.addColorStop(0.88, 'rgba(206,80,108,' + (a * 0.72).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(255,124,88,' + a.toFixed(3) + ')');
+    c.fillStyle = g; c.fillRect(0, hz - 430, VW, 480);
+  }
 
   function scene5(u, dt) {
     const A = art();
-    const tilt = ramp(0.4, 4.2, u) * 215;
+    const tilt = ramp(0.3, 4.0, u) * 215;
     const hz = 646 + tilt;
+    const pan = ramp(0, 4.4, u) * 250;      /* the camera slews; parallax by z */
 
     once('c5snd', T4 + 0.05, function () {
       sfx('setIntensity', 0.72);
       if (rumbleH && rumbleH.set) rumbleH.set(0.55);
     });
-    once('c5pass1', T4 + 1.55, function () { sfx('jetPass', -1); });
-    once('c5pass2', T4 + 3.05, function () { sfx('jetPass', 1); });
+    once('c5pass1', T4 + 0.94, function () { sfx('jetPass', -1); });
+    once('c5pass2', T4 + 1.78, function () { sfx('jetPass', 1); });
+    once('c5pass3', T4 + 3.30, function () { sfx('jetPass', 1); });
 
+    stepParts(dt, 0);
     dawnSky(hz, 0);
-    if (A) A.cloudBank(c, hz - 200, 88, t, [120, 40, 130], 0.34);
-    neonGround(hz, t * 0.5, 0.85);
 
-    /* silo doors */
+    /* ---- PLANE 1 (z~0.08): specks.  Low contrast, washed out, slow. ---- */
+    if (A) for (let i = 0; i < L_FAR.length; i++) {
+      const f = L_FAR[i];
+      const x = f.x + f.vx * u - pan * 0.05;
+      const y = hz + f.y + f.vy * u + Math.sin(u * 0.7 + f.ph) * 3;
+      c.save();
+      c.globalAlpha = 0.40 + 0.16 * Math.sin(f.ph);
+      A.jet(c, x, y, f.s, f.rot, 0.45, [188, 128, 168]);
+      c.restore();
+    }
+    hazeVeil(hz, 0.40);
+
+    /* a cloud deck between the far and middle distance, so aircraft
+       genuinely pass behind something */
+    if (A) A.cloudBank(c, hz - 244, 98, t * 0.55, [120, 40, 130], 0.44);
+    hazeVeil(hz, 0.15);
+
+    /* ---- the ground plane ---- */
+    neonGround(hz, t * 0.5, 0.85);
     for (let i = 0; i < SILOS.length; i++) {
       const s = SILOS[i];
       const open = ramp(s.at, s.at + 0.55, u);
-      if (A) A.silo(c, s.x, hz + 66, s.w, open, C.cyan);
+      if (A) A.silo(c, s.x - pan * 0.16, hz + 66, s.w, open, C.cyan);
       if (open > 0.4 && Math.random() < 0.4)
-        part(s.x + rnd(-s.w / 2, s.w / 2), hz + 60, rnd(-30, 30), rnd(-40, -8),
+        part(s.x - pan * 0.16 + rnd(-s.w / 2, s.w / 2), hz + 60, rnd(-30, 30), rnd(-40, -8),
           rnd(1.2, 2.4), rnd(22, 50), C.smoke, { add: false, d: 0.96, gr: 26 });
     }
 
-    /* the fleet */
-    for (let i = 0; i < FLEET.length; i++) {
-      const f = FLEET[i], q = u - f.at;
+    /* ---- PLANE 2 (z~0.4): the launch.  Mid scale, mid rate. ---- */
+    for (let i = 0; i < L_MID.length; i++) {
+      const m = L_MID[i], q = u - m.at;
       if (q < 0) continue;
-      const s = SILOS[f.si];
-      const climb = 120 * q + 205 * q * q;
-      const x = s.x + f.dx * sat(q / 2.2);
-      const y = hz + 50 - climb;
-      const sc = Math.max(0.06, f.s0 * (1 - sat(q / 3.0) * 0.86));
-      if (y < -160) continue;
-      const rot = f.rot * sat(q / 1.4);
-      if (A) A.jet(c, x, y, sc, rot, 1, [130, 160, 200]);
-      if (i % 2 === 0)
-        part(x, y + 30 * sc, rnd(-24, 24), 220 + 190 * q, rnd(0.45, 0.95),
-          rnd(6, 16) * (sc + 0.35), i % 4 ? C.cyan : C.white, { d: 0.93, gr: 14 });
-    }
-
-    /* two hero passes across the foreground */
-    for (let h = 0; h < 2; h++) {
-      const at = 1.35 + h * 1.5, q = u - at;
-      if (q < 0 || q > 1.5) continue;
-      const dir = h ? 1 : -1;
-      const x = 800 + dir * (q - 0.75) * 2100;
-      const y = 300 + tilt * 0.4 + Math.sin(q * 2) * 40 + h * 120;
-      const sc = 1.15 + 0.5 * Math.sin(q * 2.1);
-      /* a drawn contrail sells the speed; the particles only fray its edge */
-      const tl = 620 * sc;
-      c.save(); c.globalCompositeOperation = 'lighter';
-      const cg = c.createLinearGradient(x, 0, x - dir * tl, 0);
-      cg.addColorStop(0, rgba(C.ice, 0.5)); cg.addColorStop(0.25, rgba(C.cyan, 0.22));
-      cg.addColorStop(1, 'rgba(0,0,0,0)');
-      c.strokeStyle = cg; c.lineCap = 'round';
-      c.lineWidth = 9 * sc;
-      c.beginPath(); c.moveTo(x - dir * 34 * sc, y + 22 * sc); c.lineTo(x - dir * tl, y + 22 * sc); c.stroke();
+      const sl = SILOS[m.si];
+      const climb = m.climb * q + 122 * q * q;
+      const x = sl.x + m.dx * sat(q / 2.4) - pan * 0.30;
+      const y = hz + 46 - climb;
+      const sc = Math.max(0.05, m.s0 * (1 - sat(q / 3.2) * 0.70));
+      if (y < -220) continue;
+      c.save();
+      c.globalAlpha = 0.90;
+      if (A) A.jet(c, x, y, sc, m.rot * sat(q / 1.5), 1, [116, 148, 196]);
       c.restore();
-      if (A) A.jet(c, x, y, sc, dir * 0.55, 1, [150, 190, 230]);
-      for (let k = 0; k < 4; k++)
-        part(x - dir * 46 * sc, y + 22 * sc + rnd(-5, 5), -dir * rnd(90, 260), rnd(-26, 44),
-          rnd(0.18, 0.4), rnd(4, 9) * sc, k ? C.cyan : C.white, { d: 0.88, gr: 26 });
-      shake = Math.max(shake, 7 * (1 - Math.abs(q - 0.75) / 0.75));
+      if (i % 2 === 0)
+        part(x, y + 30 * sc, rnd(-20, 20), 185 + 150 * q, rnd(0.4, 0.9),
+          rnd(5, 13) * (sc + 0.30), i % 4 ? C.cyan : C.white, { d: 0.93, gr: 12 });
     }
 
-    stepParts(dt, 0); drawParts(false); drawParts(true);
+    drawParts(false); drawParts(true);
+    hazeVeil(hz, 0.07);
 
-    if (u > 0.5 && u < 3.4) {
-      const a = ramp(0.5, 1.0, u) * (1 - ramp(2.8, 3.4, u));
+    /* ---- PLANE 3 (z~0.8): near.  Dark, saturated, and gone in a
+       second — they overtake and cross in front of everything. ---- */
+    for (let i = 0; i < L_NEAR.length; i++) {
+      const n = L_NEAR[i], k = (u - n.at) / n.dur;
+      if (k <= 0 || k >= 1) continue;
+      function px(kk) { return 800 + n.dir * (kk - 0.5) * 2300 - pan * 0.55; }
+      function py(kk) { return n.y0 + (n.y1 - n.y0) * (kk * kk * 0.7 + kk * 0.3); }
+      const x = px(k), y = py(k), sc = n.s0 + (n.s1 - n.s0) * k;
+      const kp = Math.max(0, k - 0.10), xp = px(kp), yp = py(kp);
+      /* the trail lies along the actual heading, so the bank reads right */
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      const cg = c.createLinearGradient(x, y, xp, yp);
+      cg.addColorStop(0, rgba(C.ice, 0.42));
+      cg.addColorStop(0.28, rgba(C.cyan, 0.18));
+      cg.addColorStop(1, 'rgba(0,0,0,0)');
+      c.strokeStyle = cg; c.lineCap = 'round'; c.lineWidth = 9 * sc;
+      c.beginPath();
+      c.moveTo(x - (x - xp) * 0.07, y - (y - yp) * 0.07);
+      c.lineTo(xp, yp); c.stroke();
+      c.restore();
+      const rot = n.dir * (0.66 - 0.34 * k);
+      if (A) {
+        c.save(); c.globalAlpha = 0.30;
+        A.jet(c, x - (x - xp) * 0.22, y - (y - yp) * 0.22, sc, rot, 1, [70, 96, 140]);
+        c.restore();
+        A.jet(c, x, y, sc, rot, 1, [82, 112, 158]);
+      }
+      shake = Math.max(shake, 6 * Math.sin(sat(k) * Math.PI));
+    }
+
+    /* ---- PLANE 4 (z~1): one aircraft close enough that the frame
+       cannot hold it.  This is what everything else is measured by. ---- */
+    for (let i = 0; i < FG5.length; i++) {
+      const f = FG5[i], k = (u - f.at) / f.dur;
+      if (k <= 0 || k >= 1) continue;
+      const yb = f.y + tilt * 0.16;
+      for (let g = 3; g >= 0; g--) {
+        const kk = k - g * 0.030;
+        if (kk < 0) continue;
+        c.save();
+        c.globalAlpha = g === 0 ? 1 : 0.20 / g;
+        if (A) A.jet(c, 800 + f.dir * (kk - 0.5) * 3500,
+          yb - Math.sin(kk * Math.PI) * 56, f.s, f.rot, 1, [46, 62, 92]);
+        c.restore();
+      }
+      for (let q2 = 0; q2 < 5; q2++)
+        part(800 + f.dir * (k - 0.62) * 3500, yb - 70 + rnd(-46, 46),
+          -f.dir * rnd(320, 940), rnd(-140, 70), rnd(0.2, 0.46), rnd(14, 34),
+          q2 ? C.cyan : C.white, { d: 0.90, gr: 42, a: 0.7 });
+      shake = Math.max(shake, 17 * Math.sin(k * Math.PI));
+    }
+
+    if (u > 0.45 && u < 3.2) {
+      const a = ramp(0.45, 0.95, u) * (1 - ramp(2.6, 3.2, u));
       txt('SILO CLUSTER 7  —  SCRAMBLE ORDER EXECUTED', VW / 2, 118, 24,
         rgba(C.cyan, a * 0.9), 7, 'center');
     }
@@ -1211,7 +1566,7 @@ const CINE = (function () {
         rnd(0.3, 0.6), rnd(8, 18) * pjS * 0.6, k ? C.cyan : C.white, { d: 0.9, gr: 22 });
 
     /* speed streaks */
-    const st = ramp(3.1, 5.0, u);
+    const st = ramp(2.8, 4.6, u);
     if (st > 0) {
       c.save(); c.globalCompositeOperation = 'lighter';
       c.strokeStyle = rgba(C.ice, 0.5 * st); c.lineWidth = 2;
@@ -1234,7 +1589,7 @@ const CINE = (function () {
       const a = ramp(0.45, 0.95, u) * (1 - ramp(2.4, 3.0, u));
       txt('INTERCEPTOR 01  —  YOU HAVE THE LEAD', VW / 2, 820, 26, rgba(C.cyan, a), 8, 'center');
     }
-    once('c6flash', T5 + 4.45, function () { flash = 0.9; flashCol = C.ice; shake = 22; });
+    once('c6flash', T5 + 4.05, function () { flash = 0.9; flashCol = C.ice; shake = 22; });
     vignette(0.55);
   }
 

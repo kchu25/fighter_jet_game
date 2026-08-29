@@ -58,9 +58,11 @@ const CAM_BACK=300, CAM_UP=34;
 const GROUND_Y=-270, CEIL_Y=340, GRID_STEP=250;
 const BX=238, BY=150;            // player flight envelope
 const FLOW=1150;                 // base world scroll speed
+const BOLT_TAIL=.034;            // seconds of travel drawn behind an enemy bolt
 const COL={
   cyan:[0.13,0.88,1.0], mag:[1.0,0.24,0.94], amber:[1.0,0.60,0.17],
-  red:[1.0,0.17,0.30], green:[0.24,1.0,0.62], purple:[0.64,0.29,1.0], white:[1,1,1]
+  red:[1.0,0.17,0.30], green:[0.24,1.0,0.62], purple:[0.64,0.29,1.0], white:[1,1,1],
+  smoke:[0.30,0.30,0.34]
 };
 const css=c=>'rgb('+(c[0]*255|0)+','+(c[1]*255|0)+','+(c[2]*255|0)+')';
 
@@ -211,18 +213,38 @@ addEventListener('focus', ()=>AUDIO.resume());
 
 /* ------------------------------------------------------------------ state */
 let P, stars, enemies, shots, foes, rockets, parts, crates, pops, boss, debris, rings, evq;
-let dist, score, kills, combo, comboT, shake, flash, flashC, speed, flow;
+let dist, ddist, score, kills, combo, comboT, shake, flash, flashC, speed, flow;
 let gameOn=false, T=0, spawnT, waveN, nextBoss, alarmT, tipT, hitT, bossWarn, bossFx, hintT=0;
+
+const TIP_DEFAULT='WASD FLY  ·  CLICK GUNS  ·  SPACE MISSILE  ·  SHIFT BOOST  ·  AA/DD ROLL';
+let tipMsg=TIP_DEFAULT;
+
+/* ---- first-run on-ramp ----------------------------------------------------
+   A brand new pilot gets ~26s of runway: an opening stretch of empty sky to
+   learn the stick on, then threats phasing back in. easeT is the seconds of
+   ramp left; easeP (0..1) is how far through it we are.
+
+   everDied / runNo live OUTSIDE reset(), which re-inits per-run state only.
+   start() is reachable from the cinematic's onEnd and from the RE-LAUNCH
+   button, and the only way to reach that button is to die — so gating the
+   ramp on !everDied means a retry is always full difficulty, which is the
+   whole point: someone who just died does not need to be taught to fly. */
+const EASE_LEN=26;      // seconds of ramp at a purely passive burn rate
+const EASE_CALM=.27;    // first 27% of the ramp is empty sky
+let easeT=0, easeStage=0, runNo=0, everDied=false;
 
 function reset(){
   P={x:0,y:0,vx:0,vy:0,roll:0,pitch:0,yaw:0,hp:100,shield:60,boost:100,
-     fireCd:0,misCd:0,weapon:'std',wepT:0,rollT:0,rollDir:1,inv:0,thr:.4};
+     fireCd:0,misCd:0,weapon:'std',wepT:0,rollT:0,rollDir:1,inv:0,thr:.4,
+     burn:0,burnX:0,burnY:0};
   stars=[]; for(let i=0;i<300;i++) stars.push({x:rnd(-3000,3000),y:rnd(-900,1500),z:rnd(200,SPAWN_Z+900)});
   enemies=[]; shots=[]; foes=[]; rockets=[]; parts=[]; crates=[]; pops=[]; boss=null;
   debris=[]; rings=[]; evq=[];
-  dist=0; score=0; kills=0; combo=1; comboT=0; shake=0; flash=0; flashC=COL.white;
+  dist=0; ddist=0; score=0; kills=0; combo=1; comboT=0; shake=0; flash=0; flashC=COL.white;
   speed=1; flow=FLOW; spawnT=.25; waveN=0; nextBoss=2800; alarmT=0; tipT=4.5; hitT=0;
-  bossWarn=0; bossFx=0;
+  bossWarn=0; bossFx=0; easeStage=0; tipMsg=TIP_DEFAULT;
+  /* easeT is deliberately NOT touched here — start() owns it, because whether
+     this run gets the on-ramp depends on state that must survive reset(). */
 }
 
 /* ------------------------------------------------------------------ actions */
@@ -322,14 +344,19 @@ function lockOn(){
 function spawnDrone(){
   /* early drones fly nearly straight — a hard jink is unleadable at a 0.4s
      bullet flight time, so the evasion ramps in with distance */
-  const ev=.55+.45*Math.min(1,dist/30000);
+  const ev=.55+.45*Math.min(1,ddist/30000);
+  /* on the first-run ramp the early drones close slower and jink less, so a
+     new pilot gets targets that hold still long enough to be learned on */
+  const soft = easeT>0 ? 1-easeT/EASE_LEN : 1;
   enemies.push({k:'drone',x:rnd(-250,250),y:rnd(-140,150),z:SPAWN_Z,hp:2,r:32,rz:46,
-    ph:rnd(0,6.28),amp:rnd(90,240)*ev,spd:(rnd(1180,1480)+waveN*12)*(.78+.22*ev),c:COL.mag,roll:0,yaw:0});
+    ph:rnd(0,6.28),amp:rnd(90,240)*ev*lerp(.45,1,soft),
+    spd:(rnd(1180,1480)+waveN*12)*(.78+.22*ev)*lerp(.66,1,soft),c:COL.mag,roll:0,yaw:0});
 }
 function spawnCruiser(){
   const hp = 10+waveN*.8;
   enemies.push({k:'cruiser',x:rnd(-240,240),y:rnd(-120,130),z:SPAWN_Z,hp,max:hp,r:64,rz:64,
-    ph:rnd(0,6.28),amp:rnd(40,110),spd:rnd(640,780),c:COL.amber,roll:0,yaw:0,cd:rnd(.4,1.1)});
+    ph:rnd(0,6.28),amp:rnd(40,110),spd:rnd(640,780),c:COL.amber,roll:0,yaw:0,
+    cd:rnd(.4,1.1)+(easeT>0?1.5:0)});
 }
 function spawnCrate(){
   crates.push({x:rnd(-220,220),y:rnd(-120,130),z:SPAWN_Z,
@@ -353,6 +380,23 @@ function update(dt){
   dist += flow*dt;
   AUDIO.setEngine(boosting?1:0, speed);
 
+  /* on-ramp clock. It burns faster while the player is actually flying and
+     scoring, so an aggressive pilot pulls the real game towards them instead
+     of being held in a tutorial; a passive one gets the full 26s. */
+  let easeP = 1;
+  if(easeT>0){
+    const busy = (mouse.fire?1:0) + ((keys['a']||keys['d']||keys['w']||keys['s'])?1:0);
+    easeT = Math.max(0, easeT - dt*(1 + busy*.55 + Math.min(2.4, kills*.45)));
+    easeP = easeT>0 ? 1-easeT/EASE_LEN : 1;
+    if(easeT<=0){ tipMsg='WEAPONS FREE  ·  GOOD HUNTING'; tipT=2.4; }
+    else if(easeStage===0 && easeP>=EASE_CALM){
+      easeStage=1; tipMsg='CONTACT  ·  DRONES INBOUND'; tipT=2.4;
+    }
+  }
+  /* difficulty distance. The quiet opening must not silently bank scaling the
+     player never actually faced, so it advances slowly while the ramp runs. */
+  ddist += flow*dt*(easeT>0 ? .28+.72*easeP : 1);
+
   /* player */
   const ax=(keys['a']?1:0)-(keys['d']?1:0);
   const ay=(keys['w']?1:0)-(keys['s']?1:0);
@@ -367,6 +411,22 @@ function update(dt){
   if(P.rollT>0) P.rollT-=dt;
   if(P.inv>0) P.inv-=dt;
   if(P.muzzle>0) P.muzzle-=dt;
+  /* fire on the airframe: a hot flare right after the hit, then smoke that
+     lingers while the jet is badly damaged */
+  if(P.burn>0){
+    P.burn-=dt;
+    if(Math.random()<.45){
+      const bx=P.x+P.burnX+rnd(-3,3), by=P.y+P.burnY+rnd(-2,2);
+      parts.push(mk(bx,by,4, rnd(-20,20),rnd(20,60),-rnd(700,1100),
+        Math.random()<.55?COL.amber:COL.red, rnd(.12,.2), rnd(4,7), 0, .1, .85));
+    }
+  }
+  if(P.hp<45 && P.hp>0){
+    const w=(45-P.hp)/45;
+    if(Math.random()<.18+w*.28)
+      parts.push(mk(P.x+rnd(-12,12),P.y+rnd(-4,6),-6, rnd(-20,20),rnd(20,60),-rnd(800,1300),
+        Math.random()<w*.45?COL.amber:COL.smoke, rnd(.28,.5), rnd(6,11), 0, .06, 1.1));
+  }
   if(P.wepT>0 && (P.wepT-=dt)<=0) P.weapon='std';
 
   P.fireCd-=dt; P.misCd-=dt;
@@ -382,16 +442,23 @@ function update(dt){
 
   /* director */
   if(!boss){
+    /* opening stretch of the first-run ramp: nothing in the sky at all, so the
+       only thing to do is fly. spawnT is left alone, so the first wave lands
+       the moment the calm lifts. */
+    const calm = easeT>0 && easeP<EASE_CALM;
     if(score>=nextBoss){ nextBoss=score+4600+waveN*1600; spawnBoss(); }
-    else if((spawnT-=dt)<=0){
+    else if(!calm && (spawnT-=dt)<=0){
       waveN++;
-      const d=Math.min(1,dist/46000);
-      const n=1+((Math.random()*(1.4+d*2.6))|0);
-      for(let i=0;i<n;i++) (waveN>3 && Math.random()<.32+d*.24) ? spawnCruiser() : spawnDrone();
-      if(Math.random()<.15) spawnCrate();
-      spawnT = Math.max(.34, 1.25-d*.85)*rnd(.75,1.25);
+      const d=Math.min(1,ddist/46000);
+      let n=1+((Math.random()*(1.4+d*2.6))|0);
+      if(easeT>0) n=Math.min(n, easeP<.55?1:2);
+      /* cruisers shoot back, so they are the last thing to phase in */
+      const cru = waveN>3 && (easeT<=0 || easeP>.6);
+      for(let i=0;i<n;i++) (cru && Math.random()<.32+d*.24) ? spawnCruiser() : spawnDrone();
+      if(Math.random()<(easeT>0?.30:.15)) spawnCrate();
+      spawnT = Math.max(.34, 1.25-d*.85)*rnd(.75,1.25) * (easeT>0 ? 1+2.1*(1-easeP) : 1);
     }
-    AUDIO.setIntensity(.32+Math.min(.42, dist/50000));
+    AUDIO.setIntensity((.32+Math.min(.42, ddist/50000)) * (easeT>0 ? .55+.45*easeP : 1));
   } else AUDIO.setIntensity(1);
   bossFx = lerp(bossFx, boss?1:0, Math.min(1,dt*1.5));
 
@@ -498,7 +565,7 @@ function update(dt){
   for(let i=foes.length-1;i>=0;i--){
     const s=foes[i]; s.x+=s.vx*dt; s.y+=s.vy*dt; s.z+=s.vz*dt;
     if(s.z<60){
-      if(s.z>-90 && Math.hypot(s.x-P.x,s.y-P.y)<44){ hurt(s.dmg,null); foes.splice(i,1); continue; }
+      if(s.z>-90 && Math.hypot(s.x-P.x,s.y-P.y)<44){ hurt(s.dmg,null,s); foes.splice(i,1); continue; }
       if(s.z<DESPAWN_Z) foes.splice(i,1);
     }
   }
@@ -681,13 +748,32 @@ function damage(e,dmg,x,y,z,big,s){
     if(Math.random()<.07) spawnCrate();
   }
 }
-function hurt(dmg,src){
+function hurt(dmg,src,s){
   if(P.inv>0) return;
   if(src){ explode(src,src.x,src.y,src.z); const i=enemies.indexOf(src); if(i>=0) enemies.splice(i,1); }
+  const shielded = P.shield>0;
   if(P.shield>0){ const a=Math.min(P.shield,dmg); P.shield-=a; dmg-=a; }
   P.hp-=dmg; combo=1; P.inv=.55; hitT=.42;
   shake=Math.min(34,shake+16); flash=Math.min(.55,flash+.28); flashC=COL.red;
   AUDIO.thud();
+  /* strike the hull where the round came in, so the hit reads on the aircraft
+     and not only as a red wash over the whole screen */
+  const src2 = s||src;
+  let ox = src2? clamp(src2.x-P.x,-26,26) : rnd(-22,22);
+  let oy = src2? clamp(src2.y-P.y,-12,12) : rnd(-8,10);
+  const hx=P.x+ox, hy=P.y+oy, hz=6;
+  const hc = shielded? COL.cyan : COL.amber;
+  sparks(hx,hy,hz, 9, 300, .45, hc, 0,.25,-1, 1);
+  shock(hx,hy,hz, 5, 30, .17, 2.4, shielded?COL.cyan:COL.white, .8);
+  parts.push(mk(hx,hy,hz, 0,0,0, COL.white, .08, 12, 0, .2, 1.15));
+  if(!shielded){
+    /* torn skin and a burning scar that keeps smoking after the flash is gone */
+    for(let i=0;i<2;i++)
+      if(Math.random()<.7)
+        shard(hx,hy,hz, rnd(-160,160),rnd(30,180),rnd(-300,-90), rnd(.13,.22), COL.cyan, rnd(.24,.44));
+    P.burn = Math.min(2.2, (P.burn||0) + (dmg>=20?1.5:.95));
+    P.burnX = ox; P.burnY = oy;
+  }
 }
 function take(kind){
   AUDIO.pickup();
@@ -882,9 +968,20 @@ function buildFX(){
     beam(m.x,m.y,m.z, m.x,m.y,m.z-90, 6, COL.amber, 1.2);
     sprite(m.x,m.y,m.z, 15, COL.white, 1);
   }
+  /* Incoming fire reads as a tracer round, not a lamp: a short streak laid
+     along its own velocity carries the "fast ordnance" cue, and the head is
+     kept small and just under the additive clip point so it stops blooming
+     into a soft ball — which matters most in a 15-bolt boss volley, where the
+     old fat halos merged into one wall of white.
+     The streak foreshortens to nothing on a bolt coming straight down the z
+     axis at you, i.e. exactly the one you must dodge, so the round head is
+     what keeps those legible and is deliberately not shrunk any further. */
   for(const s of foes){
-    sprite(s.x,s.y,s.z, s.r, s.c, 1.25);
-    sprite(s.x,s.y,s.z, s.r*.45, COL.white, 1.1);
+    const r=s.r, tx=s.x-s.vx*BOLT_TAIL, ty=s.y-s.vy*BOLT_TAIL, tz=s.z-s.vz*BOLT_TAIL;
+    beam(s.x,s.y,s.z, tx,ty,tz, r*.52, s.c,      .40);
+    beam(s.x,s.y,s.z, tx,ty,tz, r*.19, COL.white, .85);
+    sprite(s.x,s.y,s.z, r*.56, s.c,      .85);
+    sprite(s.x,s.y,s.z, r*.20, COL.white, .85);
   }
   for(const p of parts){
     const a=clamp(p.life/p.max,0,1);
@@ -1019,7 +1116,7 @@ function drawHUD(){
   if(tipT>0){
     h2d.globalAlpha=Math.min(1,tipT/1.2); h2d.textAlign='center';
     h2d.font='12px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
-    h2d.fillText('WASD FLY  ·  CLICK GUNS  ·  SPACE MISSILE  ·  SHIFT BOOST  ·  AA/DD ROLL', W/2, H*.88);
+    h2d.fillText(tipMsg, W/2, H*.88);
     h2d.globalAlpha=1;
   }
   // damage / pickup flash
@@ -1073,11 +1170,19 @@ function showMenu(){
 
 function start(){
   AUDIO.init(); reset();
+  runNo++;
+  /* the on-ramp is for a genuine first play only; every retry is full pace */
+  const firstRun = !everDied;
+  easeT = firstRun ? EASE_LEN : 0;
+  if(firstRun){
+    nextBoss = 3400;                                  // a little more open sky first
+    tipT = 6; tipMsg = 'CLEAR AIRSPACE  ·  GET A FEEL FOR HER';
+  }
   introEl.classList.add('hidden'); overEl.classList.add('hidden');
-  gameOn=true; hintT=5.5; last=performance.now();
+  gameOn=true; hintT=firstRun?9:5.5; last=performance.now();
 }
 function gameOver(){
-  gameOn=false;
+  gameOn=false; everDied=true;
   burst(P.x,P.y,0,COL.red,90,2.2); AUDIO.boom(1.8); AUDIO.setIntensity(.15);
   shock(P.x,P.y,0, 20,520,.6, 16, COL.white, 1);
   sparks(P.x,P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);

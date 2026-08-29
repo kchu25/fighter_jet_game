@@ -761,49 +761,158 @@ const CINE_ART = (function () {
   }
 
   /* ==================================================================
-     3. JET — player interceptor seen from BEHIND, nose toward -y
-     ~92 wingspan (x +/-46), ~80 long (y -40 .. +40)
+     3. JET — the player's "Wraith" interceptor, seen from BEHIND and
+     ABOVE, nose toward -y.
+
+     Every outline below is PROJECTED FROM MODELS.jet's own vertices so
+     the cinematic aircraft and the in-game mesh are the same machine:
+       - needle nose on a long, narrow, chined spine
+       - two fat engine nacelles riding HIGH and close to the centreline,
+         two thirds of the length, forward-facing intakes
+       - hard-swept, drooping delta wings set well aft, nearly straight
+         trailing edge, upturned wingtip fins
+       - underslung gun pods whose barrels reach forward past the canopy
+       - NO conventional tailfins: one dorsal blade on the centreline and
+         one asymmetric blade on the port nacelle
+     Envelope: x +/-38.6, y -47 (nose) .. +32 (tail), nozzles at y=30.
      ================================================================== */
   const JET_TINT = [120, 175, 225];
 
+  /* Cinematic camera: 64 deg above the horizon, on the centreline,
+     behind the jet — the same rig game.js flies (lookAt from -Z, so
+     world +X lands on SCREEN LEFT, hence the negated x).
+       screen-up = Y*cos(el) + Z*sin(el)
+     Built once at load: no allocation, no trig, per frame. */
+  const JG = (function () {
+    const K = 1.20, EY = 0.438, EZ = 0.899;
+    function pt(X, Y, Z) { return [-K * X, -K * (EY * Y + EZ * Z)]; }
+    function fp(a) {
+      const o = [];
+      for (let i = 0; i < a.length; i++) {
+        const q = pt(a[i][0], a[i][1], a[i][2]);
+        o.push(q[0], q[1]);
+      }
+      return o;
+    }
+    function mir(p) {
+      const o = [];
+      for (let i = 0; i < p.length; i += 2) o.push(-p[i], p[i + 1]);
+      return o;
+    }
+    /* [screen-left copy, screen-right copy] of a starboard-side part */
+    function two(a) { const r = fp(a); return [r, mir(r)]; }
+    /* one half + its mirror, walked back, closed on the centreline */
+    function half(a) {
+      const f = fp(a), o = f.slice();
+      for (let i = f.length - 2; i >= 0; i -= 2) o.push(-f[i], f[i + 1]);
+      return o;
+    }
+    return {
+      /* central fuselage: hexLoop chine stations 44 .. -30 */
+      FUSE: half([[0, -0.45, 44], [2.10, -0.50, 30], [3.10, -0.30, 20], [4.20, 0, 6],
+      [4.00, 0.20, -10], [3.20, 0.40, -24], [2.40, 0.40, -30]]),
+      DECK: half([[0, -0.45, 44], [0.945, 0.70, 30], [1.395, 1.50, 20], [1.89, 2.40, 6],
+      [1.80, 2.80, -10], [1.44, 2.40, -24], [1.08, 1.90, -30]]),
+      CHINE: two([[2.18, -0.56, 30], [3.22, -0.36, 20], [4.37, -0.06, 6]]),
+      CHNB: two([[2.18, -0.56, 30], [3.22, -0.36, 20], [4.37, -0.06, 6],
+      [3.36, 0.69, 6], [2.48, 0.39, 20], [1.68, 0.19, 30]]),
+      /* wings: swept 41 deg, drooped 8 units, near-straight trailing edge */
+      WING: two([[4.2, 1.40, 15], [26.5, -6.80, -9], [29.6, -7.20, -17], [4.8, 1.60, -23]]),
+      WLE: two([[4.4, 1.62, 15], [26.5, -6.58, -9], [26.1, -6.58, -11.6], [4.7, 1.62, 12.2]]),
+      WTE: two([[5.3, 1.82, -22.0], [28.9, -6.98, -16.4], [28.7, -6.98, -14.6], [5.4, 1.82, -19.4]]),
+      WSH: two([[26.5, -6.80, -9], [29.6, -7.20, -17], [5.4, 1.60, -23], [16.0, -3.0, -16]]),
+      TIPF: two([[26.8, -6.60, -9.5], [31.5, -0.40, -12.5], [32.2, -0.40, -16.5], [29.3, -7.20, -18.5]]),
+      /* underslung gun / sensor pods, barrels well forward */
+      POD: two([[7.3, -2.0, 12], [11.5, -2.0, 12], [11.5, -2.0, -8], [7.3, -2.0, -8]]),
+      PODN: two([[11.5, -2.0, 12], [7.3, -2.0, 12], [8.2, -2.8, 19], [10.6, -2.8, 19]]),
+      BARR: two([[8.8, -3.6, 18.5], [10.0, -3.6, 18.5], [10.0, -3.6, 26.5], [8.8, -3.6, 26.5]]),
+      MUZZ: two([[8.5, -3.3, 25.2], [10.3, -3.3, 25.2], [10.3, -3.3, 26.8], [8.5, -3.3, 26.8]]),
+      STRK: two([[1.9, 0, 29], [7.8, -1.0, 23.5], [7.2, -1.0, 20.5], [2.2, 0.10, 21]]),
+      PYL: two([[3.0, 5.7, 4], [6.4, 5.7, 4], [6.4, 5.7, -20], [3.0, 5.7, -20]]),
+      /* nacelles: slabLoop stations 9 .. -30.5, bevelled */
+      NAC: two([[10.5, 7.1, 9], [12.1, 8.0, 1], [12.3, 8.1, -17], [11.8, 7.8, -27],
+      [11.8, 5.6, -30.5], [3.8, 5.6, -30.5], [3.8, 7.8, -27], [3.3, 8.1, -17],
+      [3.5, 8.0, 1], [5.1, 7.1, 9]]),
+      NTOP: two([[9.5, 8.1, 9], [10.4, 9.7, 1], [10.5, 9.9, -17], [10.2, 9.4, -27],
+      [5.4, 9.4, -27], [5.1, 9.9, -17], [5.2, 9.7, 1], [6.1, 8.1, 9]]),
+      NOUT: two([[10.5, 7.1, 9], [12.1, 8.0, 1], [12.3, 8.1, -17], [11.8, 7.8, -27]]),
+      NIN: two([[5.1, 7.1, 9], [3.5, 8.0, 1], [3.3, 8.1, -17], [3.8, 7.8, -27]]),
+      INTK: two([[10.5, 7.1, 9], [5.1, 7.1, 9], [5.9, 5.6, 5], [9.7, 5.6, 5]]),
+      ILIP: two([[6.3, 8.22, 9.1], [9.3, 8.22, 9.1], [9.3, 7.90, 7.4], [6.3, 7.90, 7.4]]),
+      NPB1: two([[5.3, 9.94, -3], [10.3, 9.94, -3], [10.3, 9.94, -5], [5.3, 9.94, -5]]),
+      NPB2: two([[5.4, 9.94, -12], [10.2, 9.94, -12], [10.2, 9.94, -13.4], [5.4, 9.94, -13.4]]),
+      /* centreline furniture */
+      SPINE: half([[0.8, 1.90, 13], [0.8, 4.90, 3], [0.8, 4.70, -20], [0.8, 1.90, -26]]),
+      SPTR: half([[0.85, 4.72, 1], [0.85, 4.66, -14]]),
+      BLADE: half([[0.45, 4.60, -1], [0.45, 12.40, -5], [0.45, 12.00, -7.5], [0.45, 4.40, -9]]),
+      CAN: half([[0, 0.90, 31], [0.55, 0.55, 31], [1.50, 0.85, 27], [1.95, 1.25, 22.5], [1.70, 1.75, 17]]),
+      CRDG: fp([[0, 0.90, 31], [0, 2.10, 27], [0, 3.00, 22.5], [0, 2.80, 17]]),
+      /* the two deliberately asymmetric greebles */
+      NBLD: fp([[9.0, 9.90, -4], [10.7, 13.60, -7], [10.7, 13.20, -9.5], [9.0, 9.70, -11]]),
+      BLIS: fp([[-5.9, 1.10, 25.5], [-3.3, 1.10, 25.5], [-3.3, 1.10, 18.5], [-5.9, 1.10, 18.5]]),
+      BLSF: fp([[-5.5, 0.70, 25.6], [-3.7, 0.70, 25.6], [-3.7, -0.70, 25.6], [-5.5, -0.70, 25.6]]),
+      /* nozzles: circles in the XY plane, so they project to flat ellipses */
+      NZX: K * 7.8, NZY: 30,
+      THY: -K * (EY * 5.6 + EZ * -25.0),
+      RX: K * 4.0, RY: K * EY * 4.0,
+      BX: K * 2.4, BY: K * EY * 2.4,
+      TIPX: K * 32.2, TIPY: -K * (EY * -0.4 + EZ * -14.5)
+    };
+  })();
+
+  /* cool gunmetal set, keyed from screen upper-left */
+  const JC = {
+    ink: '#060910', belly: '#0a0e14', hull: '#1a212b', hull2: '#27313d',
+    panel: '#333e4c', steel: '#4a5a6e', steel2: '#61748b', line: '#8296ad'
+  };
+
+  /* Exhaust. In game the nozzles throw a cyan beam 72 units aft plus a
+     white core sprite, so the plume here is cyan-cored with only a
+     violet outer skirt to sit in the dawn palette. The nozzle bore is a
+     flat ellipse at this camera angle, so the plume is correspondingly
+     narrow at the root and flares aft. */
   function jetBurner(c, nx, thrust, tint) {
     if (thrust <= 0.005) return;
     const N = 60;                              // normalised flame length
-    const L = (12 + 52 * thrust);
+    const L = (14 + 68 * thrust);
     c.save();
     c.translate(nx, 30);
     c.scale(1, L / N);
     const go = lg(c, 'jt.bo', 0, 0, 0, N, [
-      [0.00, 'rgba(190,150,255,0.60)'],
-      [0.34, 'rgba(150,90,255,0.34)'],
+      [0.00, 'rgba(140,190,255,0.52)'],
+      [0.30, 'rgba(120,120,255,0.30)'],
       [1.00, 'rgba(110,50,220,0)']
     ]);
     c.beginPath();
-    c.moveTo(-6.6, 0);
-    c.quadraticCurveTo(-7.4, N * 0.42, 0, N);
-    c.quadraticCurveTo(7.4, N * 0.42, 6.6, 0);
+    c.moveTo(-5.0, 0);
+    c.quadraticCurveTo(-6.2, N * 0.42, 0, N);
+    c.quadraticCurveTo(6.2, N * 0.42, 5.0, 0);
     c.closePath();
     c.fillStyle = go; c.fill();
     const gi = lg(c, 'jt.bi', 0, 0, 0, N, [
       [0.00, 'rgba(255,255,255,0.95)'],
-      [0.20, 'rgba(190,244,255,0.72)'],
-      [0.58, 'rgba(88,214,255,0.28)'],
+      [0.20, 'rgba(190,244,255,0.74)'],
+      [0.58, 'rgba(88,214,255,0.30)'],
       [1.00, 'rgba(58,180,255,0)']
     ]);
     c.beginPath();
-    c.moveTo(-3.3, 0);
-    c.quadraticCurveTo(-3.8, N * 0.34, 0, N * 0.78);
-    c.quadraticCurveTo(3.8, N * 0.34, 3.3, 0);
+    c.moveTo(-2.5, 0);
+    c.quadraticCurveTo(-3.1, N * 0.34, 0, N * 0.80);
+    c.quadraticCurveTo(3.1, N * 0.34, 2.5, 0);
     c.closePath();
     c.fillStyle = gi; c.fill();
     c.restore();
-    blob(c, nx, 31, 15 + 12 * thrust, tint, 0.5 * thrust);
-    blob(c, nx, 31, 7 + 5 * thrust, WH, 0.55 * thrust);
+    blob(c, nx, 30.5, 13 + 11 * thrust, tint, 0.52 * thrust);
+    blob(c, nx, 30.5, 6 + 4.5 * thrust, WH, 0.58 * thrust);
   }
 
   function jet(c, x, y, s, rot, thrust, tint) {
     thrust = thrust == null ? 0 : sat(thrust);
     const T = tint || JET_TINT;
+    /* the airframe's painted TRIM is electric cyan in the mesh; pull the
+       caller's tint toward it so the markings stay recognisably the same
+       livery whatever colour the scene asks the exhaust to be */
+    const TR = [mix(T[0], CY[0], 0.55), mix(T[1], CY[1], 0.55), mix(T[2], CY[2], 0.55)];
 
     c.save();
     c.translate(x, y);
@@ -811,178 +920,196 @@ const CINE_ART = (function () {
     c.scale(s, s);
     c.lineJoin = 'round';
 
-    /* ---------- wings: leading-edge (far) darker slab first ------ */
-    /* the leading edge is the FAR edge in this rear view, so it is the
-       thickness face that catches almost no light */
+    /* ================= 1. underslung gun / sensor pods ============
+       These hang below everything and their barrels run forward past
+       the canopy, so they are laid down first and stay visible either
+       side of the needle nose. */
+    const podG = [
+      lg(c, 'jt2.pdL', -14, 0, -8, 0, [[0, '#131a23'], [0.5, '#3b4859'], [1, '#1b2029']]),
+      lg(c, 'jt2.pdR', 8, 0, 14, 0, [[0, '#161d27'], [0.5, '#2b3542'], [1, '#0f151c']])
+    ];
     for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      c.save();
-      c.scale(sg, 1);
-      fillP(c, [6, -10, 46, 10, 46, 14, 6, -6], '#0a0e16');
-      c.restore();
+      fillP(c, JG.POD[i], podG[i]);
+      fillP(c, JG.PODN[i], i ? '#232c37' : '#33404f');
+      strokeP(c, JG.POD[i], 'rgba(5,8,13,0.85)', 0.8);
+      fillP(c, JG.BARR[i], i ? '#4c5a6b' : '#6d8098');
+      fillP(c, JG.MUZZ[i], '#0a0e14');
+      strokeP(c, JG.BARR[i], 'rgba(5,8,13,0.7)', 0.6);
     }
 
-    /* ---------- wing top surfaces (lighter, with dihedral) ------- */
-    const wL = lg(c, 'jt.wL', -46, 0, -6, 0, [
-      [0, '#1d2632'], [0.24, '#3d4d61'], [0.55, '#5b7089'], [0.82, '#2f3a49'], [1, '#161c24']
-    ]);
-    const wR = lg(c, 'jt.wR', 6, 0, 46, 0, [
-      [0, '#121820'], [0.24, '#2b3644'], [0.6, '#414f61'], [0.85, '#1c242e'], [1, '#0e131a']
-    ]);
-    fillP(c, [-6, -6, -46, 14, -46, 18, -9, 27], wL);
-    fillP(c, [6, -6, 46, 14, 46, 18, 9, 27], wR);
-    /* outboard shadow wedge + inboard lit panel: the wing is a surface
-       turning away from the light, not one flat swatch */
-    fillP(c, [-46, 14, -32, 7, -30, 22, -46, 18], 'rgba(4,7,11,0.42)');
-    fillP(c, [46, 14, 32, 7, 30, 22, 46, 18], 'rgba(4,7,11,0.55)');
-    fillP(c, [-6, -6, -24, 3, -21, 25, -9, 27], 'rgba(150,180,210,0.10)');
-    /* wing trailing-edge thickness (near face, catches bounce) */
-    fillP(c, [-46, 18, -9, 27, -9, 29.5, -45, 20.5], 'rgba(120,150,185,0.22)');
-    fillP(c, [46, 18, 9, 27, 9, 29.5, 45, 20.5], 'rgba(90,115,145,0.16)');
-
-    /* wing panel seams */
+    /* ================= 2. nose strakes / canards ================== */
     for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      c.save(); c.scale(sg, 1);
-      seg(c, 14, 2.5, 16, 22, 'rgba(0,0,0,0.35)', 0.7);
-      seg(c, 26, 8.5, 27, 24, 'rgba(0,0,0,0.32)', 0.7);
-      seg(c, 36, 13, 37, 25.5, 'rgba(0,0,0,0.28)', 0.6);
-      c.restore();
+      fillP(c, JG.STRK[i], i ? '#2b3644' : '#48586c');
+      strokeP(c, JG.STRK[i], 'rgba(6,9,14,0.8)', 0.7);
     }
-    /* accent trim strip along the leading edge (tinted) */
+
+    /* ================= 3. wings ==================================
+       Hard sweep, big droop, tips almost level with the trailing edge:
+       the tell-tale Wraith planform. Key from screen upper-left. */
+    const wgL = lg(c, 'jt2.wL', -39, 0, -5, 0, [
+      [0, '#1b232e'], [0.20, '#3f4f63'], [0.52, '#63788f'], [0.80, '#313d4c'], [1, '#182029']
+    ]);
+    const wgR = lg(c, 'jt2.wR', 5, 0, 39, 0, [
+      [0, '#151d26'], [0.24, '#2a3441'], [0.60, '#3c4959'], [0.86, '#1b232d'], [1, '#0e141b']
+    ]);
+    const wg = [wgL, wgR];
+    for (let i = 0; i < 2; i++) {
+      fillP(c, JG.WING[i], wg[i]);
+      /* the drooping outboard panel turns away from the key */
+      fillP(c, JG.WSH[i], i ? 'rgba(4,7,11,0.50)' : 'rgba(4,7,11,0.34)');
+      fillP(c, JG.WTE[i], 'rgba(0,0,0,0.35)');
+      strokeP(c, JG.WING[i], 'rgba(5,8,13,0.9)', 0.9);
+    }
+    /* cyan leading-edge strip — the mesh carries the same TRIM band */
     c.save();
     c.globalCompositeOperation = 'lighter';
-    seg(c, -8, -6.6, -45, 13.4, rgba(T, 0.5), 1.5);
-    seg(c, 8, -6.6, 45, 13.4, rgba(T, 0.32), 1.5);
+    fillP(c, JG.WLE[0], rgba(TR, 0.44));
+    fillP(c, JG.WLE[1], rgba(TR, 0.28));
     c.restore();
 
-    /* ---------- horizontal stabs / tailerons -------------------- */
-    const stG = lg(c, 'jt.st', -26, 0, 26, 0, [
-      [0, '#38465a'], [0.5, '#1e2733'], [1, '#141b24']
-    ]);
-    fillP(c, [-8, 18, -25, 27, -25, 31, -9, 31], stG);
-    fillP(c, [8, 18, 25, 27, 25, 31, 9, 31], stG);
-
-    /* ---------- twin canted vertical stabilisers ---------------- */
+    /* ================= 4. upturned wingtip fins =================== */
     for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      c.save();
-      c.scale(sg, 1);
-      /* the fin sits well above the wing so it must read light against
-         the dark wing behind it, with a dark inboard face for thickness */
-      const fG = lg(c, 'jt.fin', 4, 0, 26, 0, [
-        [0, '#8a9fb8'], [0.30, '#6a7c93'], [0.68, '#3b4757'], [1, '#141a22']
-      ]);
-      fillP(c, [4.5, 2, 22, -10, 26, 3, 10, 25], fG);
-      /* cast shadow onto the wing under the fin root */
-      fillP(c, [4.5, 2, 10, 25, 14, 26, 8, 3], 'rgba(4,7,11,0.55)');
-      /* inboard (shadowed) face gives the fin real thickness */
-      fillP(c, [4.5, 2, 22, -10, 23.2, -6.6, 5.6, 5.0], 'rgba(6,9,14,0.85)');
-      strokeP(c, [4.5, 2, 22, -10, 26, 3, 10, 25], 'rgba(6,9,14,0.75)', 1.0);
-      /* rudder hinge line */
-      seg(c, 13, 12, 24, 0.5, 'rgba(0,0,0,0.4)', 0.7);
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      seg(c, 5.0, 2.8, 21.4, -9.0, rgba(T, 0.5), 1.2);
-      c.restore();
-      c.restore();
+      fillP(c, JG.TIPF[i], i ? '#3d4a5c' : '#66798f');
+      strokeP(c, JG.TIPF[i], 'rgba(5,8,13,0.85)', 0.8);
     }
 
-    /* ---------- fuselage ---------------------------------------- */
-    const fuG = lg(c, 'jt.fu', -8, 0, 8, 0, [
-      [0.00, '#141a23'], [0.16, '#33404f'], [0.40, '#6c7f96'],
-      [0.55, '#4b5b6e'], [0.82, '#232c38'], [1.00, '#0e131a']
+    /* ================= 5. fuselage spine ========================== */
+    const fuG = lg(c, 'jt2.fu', -5.2, 0, 5.2, 0, [
+      [0.00, '#0e141b'], [0.16, '#374557'], [0.42, '#6b7f97'],
+      [0.60, '#485870'], [0.86, '#202834'], [1.00, '#0c1118']
     ]);
-    c.beginPath();
-    c.moveTo(0, -40);
-    c.quadraticCurveTo(-4.5, -30, -6.4, -10);
-    c.lineTo(-8.0, 24);
-    c.lineTo(-15.5, 33);
-    c.lineTo(15.5, 33);
-    c.lineTo(8.0, 24);
-    c.lineTo(6.4, -10);
-    c.quadraticCurveTo(4.5, -30, 0, -40);
-    c.closePath();
-    c.fillStyle = fuG; c.fill();
-
-    /* raised dorsal spine */
-    const spG = lg(c, 'jt.sp', -3.4, 0, 3.4, 0, [
-      [0, '#43526a'], [0.4, '#8fa4bd'], [1, '#2b3542']
+    fillP(c, JG.FUSE, fuG);
+    /* upper deck facet: the flat top of the chined hex section */
+    const dkG = lg(c, 'jt2.dk', -2.4, 0, 2.4, 0, [
+      [0, '#556880'], [0.45, '#8296ad'], [1, '#39465a']
     ]);
-    c.beginPath();
-    c.moveTo(0, -34);
-    c.quadraticCurveTo(-2.6, -22, -3.4, -2);
-    c.lineTo(-3.0, 22);
-    c.lineTo(3.0, 22);
-    c.lineTo(3.4, -2);
-    c.quadraticCurveTo(2.6, -22, 0, -34);
-    c.closePath();
-    c.fillStyle = spG; c.fill();
-    seg(c, 0, -32, 0, 21, 'rgba(255,255,255,0.16)', 0.7);
-    /* spine shadow line where it meets the deck */
-    seg(c, -3.9, -2, -3.6, 22, 'rgba(0,0,0,0.5)', 0.8);
-    seg(c, 3.9, -2, 3.6, 22, 'rgba(0,0,0,0.5)', 0.8);
-
-    /* fuselage panel seams */
-    seg(c, -6.2, 2, 6.2, 2, 'rgba(0,0,0,0.30)', 0.6);
-    seg(c, -7.0, 12, 7.0, 12, 'rgba(0,0,0,0.30)', 0.6);
-    seg(c, -7.0, 13.1, 7.0, 13.1, 'rgba(210,230,255,0.12)', 0.5);
-    /* small dorsal greebles: flush intake lip + blade antenna */
-    fillP(c, [-2.0, -18, 2.0, -18, 1.6, -13.5, -1.6, -13.5], 'rgba(14,19,27,0.75)');
-    seg(c, -1.9, -13.6, 1.9, -13.6, 'rgba(190,215,240,0.22)', 0.6);
-    seg(c, 0, -24, 0, -30, 'rgba(150,180,210,0.45)', 0.9);
-
-    /* ---------- tail bulkhead + engine nozzles ------------------ */
-    fillP(c, [-15.5, 33, 15.5, 33, 14, 37, -14, 37], '#080b11');
-    const nzX = 8.2, nzY = 30;
-    for (let i = 0; i < 2; i++) {
-      const sg = i ? 1 : -1;
-      const nx = sg * nzX;
-      /* outer housing */
-      const nG = rg(c, 'jt.nz' + i, nx - 3, nzY - 3, 1, nx, nzY, 8.4, [
-        [0, '#6b7b90'], [0.55, '#333e4c'], [1, '#0d1117']
-      ]);
-      disc(c, nx, nzY, 8.4, nG);
-      ring(c, nx, nzY, 8.4, 'rgba(8,11,17,0.8)', 1.1);
-      /* petal ring */
-      c.save();
-      c.beginPath(); c.arc(nx, nzY, 6.6, 0, TAU); c.clip();
-      c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = 0.7;
-      for (let k = 0; k < 10; k++) {
-        const a = k * TAU / 10;
-        seg(c, nx, nzY, nx + Math.cos(a) * 8, nzY + Math.sin(a) * 8, 'rgba(0,0,0,0.45)', 0.7);
-      }
-      c.restore();
-      disc(c, nx, nzY, 5.6, '#0a0d13');
-      ring(c, nx, nzY, 5.6, 'rgba(160,185,215,0.30)', 0.9);
-      /* hot inner plate */
-      const hot = 0.18 + 0.82 * thrust;
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      disc(c, nx, nzY, 4.4, rgba(T, 0.30 * hot));
-      disc(c, nx, nzY, 2.6, rgba(WH, 0.5 * hot));
-      blob(c, nx, nzY, 13, T, 0.35 * hot);
-      c.restore();
-    }
-
-    /* ---------- afterburners (additive, trailing toward +y) ----- */
+    fillP(c, JG.DECK, dkG);
+    strokeP(c, JG.FUSE, 'rgba(5,8,13,0.9)', 0.9);
+    /* forebody chine trim: the mesh runs a broad cyan TRIM band down
+       each chine, and it is the single loudest marking on the nose */
     c.save();
     c.globalCompositeOperation = 'lighter';
-    jetBurner(c, -nzX, thrust, T);
-    jetBurner(c, nzX, thrust, T);
+    fillP(c, JG.CHNB[0], rgba(TR, 0.30));
+    fillP(c, JG.CHNB[1], rgba(TR, 0.19));
+    strokeP(c, JG.CHINE[0], rgba(TR, 0.70), 1.2);
+    strokeP(c, JG.CHINE[1], rgba(TR, 0.46), 1.2);
+    c.restore();
+    /* panel breaks across the spine */
+    seg(c, -4.2, -4, 4.2, -4, 'rgba(0,0,0,0.30)', 0.6);
+    seg(c, -4.6, 14, 4.6, 14, 'rgba(0,0,0,0.30)', 0.6);
+    seg(c, -4.6, 15.0, 4.6, 15.0, 'rgba(200,222,248,0.10)', 0.5);
+    /* starboard sensor blister, forward and to one side only */
+    fillP(c, JG.BLIS, '#39465a');
+    strokeP(c, JG.BLIS, 'rgba(5,8,13,0.8)', 0.6);
+
+    /* ================= 6. canopy ================================== */
+    const cnG = lg(c, 'jt2.cn', 0, -34, 0, -19, [
+      [0.00, 'rgba(120,235,255,0.55)'], [0.35, 'rgba(38,150,190,0.85)'],
+      [1.00, 'rgba(12,34,48,0.95)']
+    ]);
+    fillP(c, JG.CAN, cnG);
+    strokeP(c, JG.CAN, 'rgba(6,10,16,0.8)', 0.7);
+    strokeP(c, JG.CRDG, 'rgba(190,240,255,0.30)', 0.6);
+
+    /* ================= 7. dorsal spine ridge + blade antenna ====== */
+    fillP(c, JG.SPINE, lg(c, 'jt2.sp', -1.2, 0, 1.2, 0, [
+      [0, '#61748b'], [0.55, '#333e4c'], [1, '#171e28']
+    ]));
+    strokeP(c, JG.SPINE, 'rgba(4,7,12,0.75)', 0.6);
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    fillP(c, JG.SPTR, rgba(TR, 0.48));
+    c.restore();
+    fillP(c, JG.BLADE, '#8ea2b8');
+    strokeP(c, JG.BLADE, 'rgba(4,7,12,0.85)', 0.5);
+
+    /* ================= 8. engine pylons + nacelles ================
+       Fat, high, and hugging the spine — the single biggest silhouette
+       difference from a conventional fighter. */
+    for (let i = 0; i < 2; i++) fillP(c, JG.PYL[i], '#1c2430');
+    const nacG = [
+      lg(c, 'jt2.nL', -15, 0, -4, 0, [
+        [0, '#151d26'], [0.20, '#46586d'], [0.50, '#6b7f97'], [0.78, '#38445a'], [1, '#1a222c']
+      ]),
+      lg(c, 'jt2.nR', 4, 0, 15, 0, [
+        [0, '#1a222c'], [0.24, '#333e4d'], [0.58, '#465366'], [0.82, '#1e2732'], [1, '#0f151c']
+      ])
+    ];
+    const ntG = [
+      lg(c, 'jt2.tL', -13, 0, -6, 0, [[0, '#4d5e73'], [0.5, '#7f93aa'], [1, '#445265']]),
+      lg(c, 'jt2.tR', 6, 0, 13, 0, [[0, '#3d4959'], [0.5, '#556478'], [1, '#2b3542']])
+    ];
+    for (let i = 0; i < 2; i++) {
+      fillP(c, JG.NAC[i], nacG[i]);
+      fillP(c, JG.NTOP[i], ntG[i]);
+      /* recessed forward intake: a dark trapezoid narrowing aft */
+      fillP(c, JG.INTK[i], '#05080d');
+      /* panel breaks on the nacelle deck */
+      fillP(c, JG.NPB1[i], 'rgba(190,212,238,0.16)');
+      fillP(c, JG.NPB2[i], 'rgba(0,0,0,0.34)');
+      strokeP(c, JG.NAC[i], 'rgba(4,7,12,0.9)', 1.0);
+      strokeP(c, JG.NIN[i], 'rgba(0,0,0,0.55)', 0.9);
+      /* cyan strip down the flank keeps the shadow side readable —
+         exactly the trick the mesh plays with its TRIM quads */
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      strokeP(c, JG.NOUT[i], rgba(TR, i ? 0.26 : 0.42), 1.0);
+      fillP(c, JG.ILIP[i], rgba(TR, i ? 0.42 : 0.62));
+      c.restore();
+    }
+    /* the one asymmetric blade, on the port nacelle only */
+    fillP(c, JG.NBLD, '#7b8fa6');
+    strokeP(c, JG.NBLD, 'rgba(4,7,12,0.85)', 0.6);
+
+    /* ================= 9. nozzles =================================
+       Circular in the mesh, but this camera flattens them to slots.  */
+    const hot = 0.18 + 0.82 * thrust;
+    for (let i = 0; i < 2; i++) {
+      const nx = (i ? 1 : -1) * JG.NZX;
+      c.save();
+      c.translate(nx, JG.NZY);
+      c.beginPath(); c.ellipse(0, 0, JG.RX, JG.RY, 0, 0, TAU);
+      c.fillStyle = i ? '#232c37' : '#3b4757'; c.fill();
+      c.strokeStyle = 'rgba(5,8,13,0.85)'; c.lineWidth = 0.8; c.stroke();
+      /* the throat is a cone, so its lit interior stretches forward */
+      c.beginPath(); c.ellipse(0, -1.4, JG.BX, JG.BY + 2.2, 0, 0, TAU);
+      c.fillStyle = '#070a10'; c.fill();
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      c.beginPath(); c.ellipse(0, -1.2, JG.BX * 0.86, JG.BY + 1.9, 0, 0, TAU);
+      c.fillStyle = rgba(T, 0.38 * hot); c.fill();
+      c.beginPath(); c.ellipse(0, -1.0, JG.BX * 0.42, JG.BY + 0.9, 0, 0, TAU);
+      c.fillStyle = rgba(WH, 0.55 * hot); c.fill();
+      c.restore();
+      c.restore();
+      /* cyan rim trim on the nozzle ring */
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      seg(c, nx - JG.RX, JG.NZY - JG.RY * 0.62, nx + JG.RX, JG.NZY - JG.RY * 0.62,
+        rgba(TR, 0.40), 0.9);
+      blob(c, nx, JG.NZY, 12, T, 0.32 * hot);
+      c.restore();
+    }
+
+    /* ================ 10. afterburners (additive, aft) ============ */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    jetBurner(c, -JG.NZX, thrust, T);
+    jetBurner(c, JG.NZX, thrust, T);
     c.restore();
 
-    /* ---------- wingtip navigation lights ----------------------- */
+    /* ================ 11. trim lights ============================
+       The mesh has no red/green navs — it is lit with the same cyan
+       TRIM everywhere — so the tips and the blade tip glow cyan. */
     c.save();
     c.globalCompositeOperation = 'lighter';
-    const navL = [255, 70, 96], navR = [64, 255, 158];
-    disc(c, -45, 16, 1.5, rgba(navL, 0.95));
-    blob(c, -45, 16, 11, navL, 0.5);
-    disc(c, 45, 16, 1.5, rgba(navR, 0.95));
-    blob(c, 45, 16, 11, navR, 0.5);
-    /* spine strobe */
-    disc(c, 0, -30, 1.2, rgba(T, 0.85));
-    blob(c, 0, -30, 8, T, 0.35);
+    for (let i = 0; i < 2; i++) {
+      const tx = (i ? 1 : -1) * JG.TIPX;
+      disc(c, tx, JG.TIPY, 1.1, rgba(TR, 0.9));
+      blob(c, tx, JG.TIPY, 8, TR, 0.34);
+    }
+    disc(c, 0, 1.0, 1.0, rgba(TR, 0.8));
+    blob(c, 0, 1.0, 6, TR, 0.28);
     c.restore();
 
     c.restore();
@@ -1215,7 +1342,7 @@ const CINE_ART = (function () {
       c.closePath();
     }
     const bdG = lg(c, 'pl.body', -250, 40, 230, 380, [
-      [0.00, '#242c35'], [0.20, '#191f27'], [0.52, '#11161d'], [1.00, '#080b10']
+      [0.00, '#38434f'], [0.20, '#28313b'], [0.52, '#1a2028'], [1.00, '#0e1319']
     ]);
     bodyPath();
     c.fillStyle = bdG; c.fill();
@@ -1226,7 +1353,7 @@ const CINE_ART = (function () {
 
     /* survival vest sitting proud of the suit */
     const vsG = lg(c, 'pl.vest', -170, 60, 180, 400, [
-      [0.00, '#2d3742'], [0.40, '#1c232b'], [1.00, '#0c1016']
+      [0.00, '#44525f'], [0.40, '#2b343f'], [1.00, '#12171e']
     ]);
     c.beginPath();
     c.moveTo(-196, 460);
@@ -1239,6 +1366,33 @@ const CINE_ART = (function () {
     c.closePath();
     c.fillStyle = vsG; c.fill();
     c.strokeStyle = 'rgba(3,5,9,0.7)'; c.lineWidth = 2.6; c.stroke();
+    /* fabric: nomex gathers where the harness pulls the vest in.
+       Each fold is a dark crease with a lit lip on its upper side, and
+       they fan out from the strap anchors rather than running parallel. */
+    (function () {
+      const FOLD = [
+        /* x0,y0  cx,cy  x1,y1  strength */
+        [-176, 178, -120, 206, -46, 232, 1.00],
+        [-172, 214, -112, 244, -40, 268, 0.72],
+        [-166, 356, -104, 372, -44, 366, 0.55],
+        [162, 190, 104, 214, 30, 236, 0.90],
+        [168, 232, 108, 252, 34, 268, 0.62],
+        [176, 372, 116, 386, 52, 380, 0.48],
+        [-96, 96, -40, 118, 26, 108, 0.66],
+        [-150, 288, -96, 300, -50, 292, 0.40]
+      ];
+      for (let i = 0; i < FOLD.length; i++) {
+        const f = FOLD[i], a = f[6];
+        c.beginPath();
+        c.moveTo(f[0], f[1]); c.quadraticCurveTo(f[2], f[3], f[4], f[5]);
+        c.strokeStyle = 'rgba(0,0,0,' + (0.42 * a).toFixed(3) + ')';
+        c.lineWidth = 4.5; c.stroke();
+        c.beginPath();
+        c.moveTo(f[0], f[1] - 3.6); c.quadraticCurveTo(f[2], f[3] - 3.6, f[4], f[5] - 3.2);
+        c.strokeStyle = 'rgba(190,214,244,' + (0.13 * a).toFixed(3) + ')';
+        c.lineWidth = 2; c.stroke();
+      }
+    })();
     seg(c, -18, 92, -6, 460, 'rgba(0,0,0,0.5)', 3);
     seg(c, -13, 92, -1, 460, 'rgba(165,195,225,0.08)', 1.2);
     fillP(c, [-168, 250, -56, 266, -60, 336, -172, 320], 'rgba(255,255,255,0.03)');
@@ -1268,8 +1422,26 @@ const CINE_ART = (function () {
       ];
       fillP(c, q, wbG);
       strokeP(c, q, 'rgba(2,4,8,0.7)', 1.8);
+      /* the lit edge is on the side the webbing rolls toward the key */
       seg(c, x0 + nx * w0 * 0.45, y0 + ny * w0 * 0.45,
-        x1 + nx * w1 * 0.45, y1 + ny * w1 * 0.45, 'rgba(210,230,255,0.10)', 1.4);
+        x1 + nx * w1 * 0.45, y1 + ny * w1 * 0.45, 'rgba(210,230,255,0.16)', 1.8);
+      seg(c, x0 - nx * w0 * 0.62, y0 - ny * w0 * 0.62,
+        x1 - nx * w1 * 0.62, y1 - ny * w1 * 0.62, 'rgba(0,0,0,0.34)', 3);
+      /* tension: the strap bites into the vest, so it casts a hard
+         shadow just outboard of itself and the stitched edges pinch in */
+      c.save();
+      c.globalCompositeOperation = 'source-over';
+      seg(c, x0 - nx * (w0 + 5), y0 - ny * (w0 + 5),
+        x1 - nx * (w1 + 5), y1 - ny * (w1 + 5), 'rgba(0,0,0,0.30)', 7);
+      c.restore();
+      /* stitch line down the centre */
+      const dsh = 5;
+      const n = Math.max(2, (L / 14) | 0);
+      for (let i = 0; i < n; i++) {
+        const t0 = i / n + 0.012, t1 = t0 + dsh / L;
+        seg(c, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1,
+          'rgba(228,238,255,0.13)', 1.1);
+      }
     }
     strap(-132, 58 - shrug, -36, 216, 22, 17);
     strap(120, 76 - shrug * 0.6, 18, 214, 20, 16);
@@ -1298,21 +1470,28 @@ const CINE_ART = (function () {
     c.save();
     c.globalCompositeOperation = 'lighter';
     const kyG = lg(c, 'pl.key', -270, 440, 60, 50, [
-      [0.00, 'rgba(255,170,78,0.58)'], [0.42, 'rgba(255,134,56,0.22)'],
+      [0.00, 'rgba(255,178,88,0.72)'], [0.42, 'rgba(255,140,60,0.26)'],
       [1.00, 'rgba(255,120,40,0)']
     ]);
     c.globalAlpha = alpha * key;
     c.fillStyle = kyG; c.fillRect(-270, 10, 540, 470);
     const rmG = lg(c, 'pl.rim', 268, 30, 40, 270, [
-      [0.00, 'rgba(130,228,255,0.36)'], [1.00, 'rgba(80,200,255,0)']
+      [0.00, 'rgba(168,240,255,0.70)'], [0.30, 'rgba(120,222,255,0.26)'],
+      [1.00, 'rgba(80,200,255,0)']
     ]);
     c.globalAlpha = alpha * rim;
     c.fillStyle = rmG; c.fillRect(-60, -30, 340, 510);
+    /* a low cool bounce off the canopy sill keeps the near shoulder off
+       the background even when neither key nor rim is up */
+    const amG = lg(c, 'pl.bamb', 0, 20, 0, 460, [
+      [0.00, 'rgba(96,150,205,0.10)'], [1.00, 'rgba(60,96,150,0.02)']
+    ]);
     c.globalAlpha = alpha;
+    c.fillStyle = amG; c.fillRect(-280, -30, 560, 520);
     c.restore();
     /* deep shadow in the chest hollow under the chin */
     const shG = lg(c, 'pl.bshade', 0, -6, 0, 190, [
-      [0.00, 'rgba(0,0,0,0.62)'], [1.00, 'rgba(0,0,0,0)']
+      [0.00, 'rgba(0,0,0,0.40)'], [1.00, 'rgba(0,0,0,0)']
     ]);
     c.fillStyle = shG; c.fillRect(-320, -30, 640, 240);
     c.restore();
@@ -1322,10 +1501,14 @@ const CINE_ART = (function () {
     c.globalCompositeOperation = 'lighter';
     bodyPath();
     const bsG = lg(c, 'pl.bstroke', -240, 0, 260, 0, [
-      [0.00, 'rgba(255,152,62,0.52)'], [0.34, 'rgba(255,150,60,0.07)'],
-      [0.70, 'rgba(120,225,255,0.12)'], [1.00, 'rgba(160,240,255,0.70)']
+      [0.00, 'rgba(255,158,68,0.90)'], [0.30, 'rgba(255,150,60,0.14)'],
+      [0.66, 'rgba(120,225,255,0.24)'], [1.00, 'rgba(180,246,255,1)']
     ]);
-    c.strokeStyle = bsG; c.lineWidth = 4.2; c.stroke();
+    c.strokeStyle = bsG; c.lineWidth = 5.6; c.stroke();
+    /* a tighter, hotter core inside the rim so the edge reads as a lit
+       curve of cloth rather than a drawn outline */
+    bodyPath();
+    c.strokeStyle = bsG; c.lineWidth = 1.8; c.stroke();
     c.restore();
 
     /* ==================================================================
@@ -1338,7 +1521,7 @@ const CINE_ART = (function () {
     seg(c, nkx + 34, -70, nkx + 40, 30, rgba(CY, 0.20 * rim), 4);
     c.restore();
     const clG = lg(c, 'pl.collar', -110, 6, 110, 78, [
-      [0.00, '#2e3641'], [0.38, '#1b212a'], [1.00, '#0a0e14']
+      [0.00, '#333c47'], [0.38, '#1e252e'], [1.00, '#0c1016']
     ]);
     c.beginPath();
     c.moveTo(nkx - 106, 74);
@@ -1355,7 +1538,7 @@ const CINE_ART = (function () {
     /* ==================================================================
        MASK HOSE — from the mask down into the chest connector
        ================================================================== */
-    const mkx = mixv(-74, -14, turn), mky = 42;
+    const mkx = mixv(-74, -14, turn), mky = 34;
     const mkw = mixv(0.82, 1.06, turn);
     const hoseTop = h2b(mkx - 22 * mkw, mky + 30);
     const cnx = -150, cny = 250;
@@ -1415,25 +1598,35 @@ const CINE_ART = (function () {
     /* --- jaw / lower face (drawn under the shell) --------------- */
     smoothP(c, jaw);
     const skG = lg(c, 'pl.skin', -104, 30, 20, -10, [
-      [0.00, '#6d4634'], [0.34, '#3a251c'], [0.72, '#1a1310'], [1.00, '#0a0808']
+      [0.00, '#98684c'], [0.30, '#5b3b2c'], [0.66, '#2c1d17'], [1.00, '#120d0b']
     ]);
     c.fillStyle = skG; c.fill();
     c.save();
     smoothP(c, jaw);
     c.clip();
     const jsG = lg(c, 'pl.jshade', 0, 10, 0, 84, [
-      [0.00, 'rgba(0,0,0,0.7)'], [0.5, 'rgba(0,0,0,0.15)'], [1.00, 'rgba(0,0,0,0.65)']
+      [0.00, 'rgba(0,0,0,0.60)'], [0.5, 'rgba(0,0,0,0.12)'], [1.00, 'rgba(0,0,0,0.56)']
     ]);
     c.fillStyle = jsG; c.fillRect(-120, -20, 240, 120);
     c.save();
     c.globalCompositeOperation = 'lighter';
     c.globalAlpha = alpha * key;
-    const jkG = lg(c, 'pl.jkey', -110, 70, -10, 10, [
-      [0.00, 'rgba(255,170,96,0.5)'], [1.00, 'rgba(255,150,70,0)']
+    /* the panel light is close and low, so the jaw doesn't just get
+       brighter — thin flesh over the mandible passes red through it.
+       Warm amber on the lit plane rolling into a red bleed at the
+       terminator is what actually makes skin read as skin. */
+    const jkG = lg(c, 'pl.jkey', -110, 74, 4, 4, [
+      [0.00, 'rgba(255,196,132,0.50)'], [0.30, 'rgba(240,142,86,0.24)'],
+      [0.58, 'rgba(176,66,48,0.13)'], [1.00, 'rgba(120,30,26,0)']
     ]);
     c.fillStyle = jkG; c.fillRect(-120, -20, 240, 120);
     c.globalAlpha = alpha;
     c.restore();
+    /* stubble / shadow under the lip line, and the crease of the cheek */
+    c.beginPath();
+    c.moveTo(mixv(-96, -48, turn), 34);
+    c.quadraticCurveTo(mixv(-66, -18, turn), 64, mixv(-16, 30, turn), 52);
+    c.strokeStyle = 'rgba(46,20,16,0.34)'; c.lineWidth = 9; c.stroke();
     c.restore();
 
     /* --- ear cup, bulging out of the shell's side --------------- */
@@ -1461,8 +1654,8 @@ const CINE_ART = (function () {
 
     /* --- shell -------------------------------------------------- */
     const hsG = lg(c, 'pl.shell', -92, -96, 80, 60, [
-      [0.00, '#3c4653'], [0.15, '#2a333e'], [0.42, '#1a212a'],
-      [0.72, '#10151c'], [1.00, '#070a0f']
+      [0.00, '#7d8ea5'], [0.18, '#4e5c6f'], [0.46, '#2d3745'],
+      [0.74, '#1a212a'], [1.00, '#0b0f15']
     ]);
     smoothP(c, shell);
     c.fillStyle = hsG; c.fill();
@@ -1472,20 +1665,96 @@ const CINE_ART = (function () {
     c.clip();
     /* crown sheen */
     const cwG = lg(c, 'pl.crown', -34, -106, 4, -12, [
-      [0.00, 'rgba(200,226,255,0.18)'], [1.00, 'rgba(200,226,255,0)']
+      [0.00, 'rgba(206,230,255,0.30)'], [1.00, 'rgba(200,226,255,0)']
     ]);
     c.fillStyle = cwG; c.fillRect(-110, -110, 220, 110);
+    /* the shell is painted gloss, so it carries a tight, bounded
+       specular rather than an even sheen — a soft hot patch up on the
+       crown toward the key, plus a smaller second one from the canopy */
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.save();
+    c.translate(mixv(-52, -20, turn), -62);
+    c.rotate(-0.42); c.scale(1, 0.46);
+    const spcG = rg(c, 'pl.hspec', 0, 0, 2, 0, 0, 44, [
+      [0.00, 'rgba(226,240,255,0.52)'], [0.42, 'rgba(180,214,250,0.16)'],
+      [1.00, 'rgba(150,200,255,0)']
+    ]);
+    c.fillStyle = spcG; c.fillRect(-46, -46, 92, 92);
+    c.restore();
+    c.save();
+    c.translate(mixv(16, 44, turn), -34);
+    c.rotate(0.5); c.scale(0.5, 1);
+    const spc2 = rg(c, 'pl.hspec2', 0, 0, 2, 0, 0, 40, [
+      [0.00, 'rgba(150,224,255,0.34)'], [1.00, 'rgba(120,200,255,0)']
+    ]);
+    c.globalAlpha = alpha * rim;
+    c.fillStyle = spc2; c.fillRect(-42, -42, 84, 84);
+    c.globalAlpha = alpha;
+    c.restore();
+    c.restore();
     /* the back of the shell falls away into the dark */
     const ocG = lg(c, 'pl.occ', 24, 0, 104, 0, [
-      [0.00, 'rgba(0,0,0,0)'], [1.00, 'rgba(0,0,0,0.55)']
+      [0.00, 'rgba(0,0,0,0)'], [1.00, 'rgba(0,0,0,0.40)']
     ]);
     c.fillStyle = ocG; c.fillRect(16, -110, 96, 200);
+    /* mask retention strap: it does NOT sit on the shell surface, it
+       runs from the mask bayonet up the side of the helmet and over
+       toward the nape, so it foreshortens hard as he turns and it is
+       partly hidden behind the ear cup. */
+    (function () {
+      const sw = mixv(0.30, 1, turn);       // seen edge-on when turned away
+      c.save();
+      c.beginPath();
+      c.moveTo(mixv(-78, -50, turn), 26);
+      c.bezierCurveTo(mixv(-34, 2, turn), mixv(-4, -24, turn),
+        mixv(30, 52, turn), mixv(-14, -22, turn),
+        mixv(66, 88, turn), mixv(22, 14, turn));
+      c.lineWidth = 15 * sw + 4;
+      c.strokeStyle = 'rgba(0,0,0,0.42)'; c.stroke();
+      c.lineWidth = 11 * sw + 2.6;
+      c.strokeStyle = '#2b3441'; c.stroke();
+      c.lineWidth = 3 * sw + 0.8;
+      c.strokeStyle = 'rgba(198,220,248,0.16)'; c.stroke();
+      c.restore();
+      /* adjuster ladder-lock partway along it */
+      c.save();
+      c.translate(mixv(-8, 22, turn), mixv(-8, -14, turn));
+      c.scale(sw, 1); c.rotate(-0.24);
+      fillP(c, [-12, -10, 12, -10, 12, 10, -12, 10], '#3c4757');
+      strokeP(c, [-12, -10, 12, -10, 12, 10, -12, 10], 'rgba(2,4,8,0.8)', 1.6);
+      seg(c, -6, -6, -6, 6, 'rgba(0,0,0,0.6)', 2.4);
+      seg(c, -8, -6, -8, 6, 'rgba(200,222,250,0.18)', 1.2);
+      c.restore();
+    })();
     /* moulded seam over the crown */
     c.beginPath();
     c.moveTo(mixv(-88, -66, turn), mixv(-14, -26, turn));
     c.quadraticCurveTo(mixv(-34, -12, turn), -102, mixv(58, 44, turn), mixv(-64, -70, turn));
     c.strokeStyle = 'rgba(0,0,0,0.5)'; c.lineWidth = 4; c.stroke();
     c.strokeStyle = 'rgba(180,210,240,0.09)'; c.lineWidth = 1.4; c.stroke();
+    /* Wear. A flight helmet is not a new ball — it is scuffed where it
+       rubs the canopy rail and the seat, and the paint is matte enough
+       to hold a faint mottle. Deterministic, so it never crawls. */
+    for (let i = 0; i < 26; i++) {
+      const n0 = noise(i * 2.7 + 0.5), n1 = noise(i * 5.3 + 11.2), n2 = noise(i * 1.9 + 31.7);
+      const sx = -104 + n0 * 200, sy = -104 + n1 * 176;
+      if (sx * sx / 11000 + sy * sy / 9000 > 1) continue;
+      const L = 5 + n2 * 22, an = n0 * TAU;
+      c.beginPath();
+      c.moveTo(sx, sy);
+      c.lineTo(sx + Math.cos(an) * L, sy + Math.sin(an) * L * 0.5);
+      c.strokeStyle = (i & 1)
+        ? 'rgba(186,212,242,' + (0.03 + 0.07 * n2).toFixed(3) + ')'
+        : 'rgba(0,0,0,' + (0.05 + 0.10 * n1).toFixed(3) + ')';
+      c.lineWidth = 0.8 + n1 * 2.2; c.stroke();
+    }
+    /* rubbed-through paint along the crown where the canopy rail hits */
+    c.beginPath();
+    c.moveTo(mixv(-74, -50, turn), -76);
+    c.quadraticCurveTo(mixv(-24, -2, turn), -96, mixv(30, 42, turn), -74);
+    c.strokeStyle = 'rgba(196,216,240,0.10)'; c.lineWidth = 6; c.stroke();
+    c.strokeStyle = 'rgba(0,0,0,0.16)'; c.lineWidth = 1.6; c.stroke();
     /* squadron flash, low on the back of the shell */
     c.save();
     c.globalAlpha = alpha * (0.45 + 0.35 * key);
@@ -1500,7 +1769,7 @@ const CINE_ART = (function () {
     c.globalCompositeOperation = 'lighter';
     c.globalAlpha = alpha * key;
     const hkG = lg(c, 'pl.hkey', -104, 70, -14, -30, [
-      [0.00, 'rgba(255,176,84,0.44)'], [0.55, 'rgba(255,140,56,0.12)'],
+      [0.00, 'rgba(255,182,96,0.66)'], [0.55, 'rgba(255,140,56,0.20)'],
       [1.00, 'rgba(255,130,50,0)']
     ]);
     c.fillStyle = hkG; c.fillRect(-110, -110, 220, 220);
@@ -1525,10 +1794,10 @@ const CINE_ART = (function () {
     c.globalCompositeOperation = 'lighter';
     smoothP(c, shell);
     const hrimG = lg(c, 'pl.hrim', -98, -60, 94, 56, [
-      [0.00, 'rgba(255,170,80,0.5)'], [0.26, 'rgba(255,150,60,0.05)'],
-      [0.60, 'rgba(120,220,255,0.10)'], [1.00, 'rgba(180,244,255,0.8)']
+      [0.00, 'rgba(255,176,88,0.72)'], [0.24, 'rgba(255,150,60,0.06)'],
+      [0.62, 'rgba(120,220,255,0.10)'], [1.00, 'rgba(184,242,255,0.86)']
     ]);
-    c.strokeStyle = hrimG; c.lineWidth = 3.2; c.stroke();
+    c.strokeStyle = hrimG; c.lineWidth = 3.0; c.stroke();
     c.restore();
 
     /* --- the eye, while the visor is still up ------------------- */
@@ -1561,7 +1830,10 @@ const CINE_ART = (function () {
     /* --- oxygen mask -------------------------------------------- */
     c.save();
     c.translate(mkx, mky);
-    c.scale(0.60 * mkw, 0.60);
+    /* an MBU-style mask covers nose-to-chin: sized so only the cheeks
+       and the temple stay bare, which is what stops the lower face
+       reading as a bare oval with a badge stuck on it */
+    c.scale(0.76 * mkw, 0.72);
     const mcG = lg(c, 'pl.mask', -66, -46, 44, 56, [
       [0.00, '#333d4a'], [0.20, '#3f4a5a'], [0.5, '#212832'],
       [0.78, '#141920'], [1.00, '#080b10']
@@ -1641,12 +1913,42 @@ const CINE_ART = (function () {
     c.translate(0, mixv(-16, 6, vis));
     c.scale(1, mixv(0.22, 1, vis));
     visorShape(c);
-    const gl = c.createLinearGradient(-58, -8, 40, 50);
-    gl.addColorStop(0.00, 'rgba(' + (36 + 58 * vis) + ',' + (26 + 38 * vis) + ',12,0.9)');
-    gl.addColorStop(0.34, 'rgba(' + (24 + 26 * vis) + ',' + (18 + 18 * vis) + ',10,0.93)');
-    gl.addColorStop(0.72, 'rgba(14,12,10,0.95)');
-    gl.addColorStop(1.00, 'rgba(' + (26 + 38 * vis) + ',' + (20 + 26 * vis) + ',10,0.92)');
+    /* Gold-coated glass is a mirror, not a tint: the base has to stay
+       near-black so the reflections read, and everything bright on it
+       is a REFLECTION with a falloff, not a fill. */
+    const gl = c.createLinearGradient(-58, -14, 40, 54);
+    gl.addColorStop(0.00, 'rgba(' + (30 + 44 * vis) + ',' + (22 + 30 * vis) + ',10,0.94)');
+    gl.addColorStop(0.34, 'rgba(' + (18 + 18 * vis) + ',' + (13 + 12 * vis) + ',8,0.95)');
+    gl.addColorStop(0.72, 'rgba(10,9,8,0.96)');
+    gl.addColorStop(1.00, 'rgba(' + (20 + 26 * vis) + ',' + (15 + 18 * vis) + ',8,0.94)');
     c.fillStyle = gl; c.fill();
+    /* the panel's specular: a tight elongated hot spot with a steep
+       falloff, sitting where the coaming would actually be mirrored */
+    c.save();
+    visorShape(c);
+    c.clip();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = alpha * vfx * (0.35 + 0.65 * key);
+    c.save();
+    c.translate(-30, 34); c.rotate(-0.30); c.scale(1, 0.34);
+    const vspec = rg(c, 'pl.vspec', 0, 0, 1, 0, 0, 52, [
+      [0.00, 'rgba(255,232,178,0.95)'], [0.18, 'rgba(255,196,104,0.55)'],
+      [0.46, 'rgba(255,150,58,0.16)'], [1.00, 'rgba(255,130,40,0)']
+    ]);
+    c.fillStyle = vspec; c.fillRect(-56, -56, 112, 112);
+    c.restore();
+    /* and a small, much tighter cool one from the canopy bow */
+    c.save();
+    c.translate(26, -2); c.rotate(0.6); c.scale(0.34, 1);
+    const vspec2 = rg(c, 'pl.vspec2', 0, 0, 1, 0, 0, 34, [
+      [0.00, 'rgba(226,246,255,0.80)'], [0.30, 'rgba(160,222,255,0.22)'],
+      [1.00, 'rgba(120,200,255,0)']
+    ]);
+    c.globalAlpha = alpha * vfx * (0.4 + 0.6 * rim);
+    c.fillStyle = vspec2; c.fillRect(-38, -38, 76, 76);
+    c.restore();
+    c.globalAlpha = alpha;
+    c.restore();
 
     c.save();
     visorShape(c);
@@ -1654,9 +1956,9 @@ const CINE_ART = (function () {
     c.save();
     c.globalCompositeOperation = 'lighter';
     const gg = c.createLinearGradient(-62, 48, 26, -14);
-    gg.addColorStop(0.00, 'rgba(255,176,72,' + (0.22 * vfx).toFixed(3) + ')');
-    gg.addColorStop(0.45, 'rgba(255,132,54,' + (0.06 * vfx).toFixed(3) + ')');
-    gg.addColorStop(1.00, 'rgba(150,215,255,' + (0.16 * vfx).toFixed(3) + ')');
+    gg.addColorStop(0.00, 'rgba(255,180,80,' + (0.40 * vfx).toFixed(3) + ')');
+    gg.addColorStop(0.45, 'rgba(255,132,54,' + (0.10 * vfx).toFixed(3) + ')');
+    gg.addColorStop(1.00, 'rgba(150,215,255,' + (0.30 * vfx).toFixed(3) + ')');
     c.fillStyle = gg; c.fillRect(-72, -18, 144, 82);
     if (hud * vfx > 0.02) {
       c.globalAlpha = alpha * hud * vfx;
@@ -1677,9 +1979,9 @@ const CINE_ART = (function () {
     /* the canopy reflected as a hard streak across the glass */
     const sp = c.createLinearGradient(-58, -6, 16, 46);
     sp.addColorStop(0.00, 'rgba(255,255,255,0)');
-    sp.addColorStop(0.44, 'rgba(226,244,255,' + (0.28 * vfx).toFixed(3) + ')');
-    sp.addColorStop(0.53, 'rgba(255,255,255,' + (0.46 * vfx).toFixed(3) + ')');
-    sp.addColorStop(0.63, 'rgba(226,244,255,' + (0.15 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.44, 'rgba(226,244,255,' + (0.44 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.53, 'rgba(255,255,255,' + (0.80 * vfx).toFixed(3) + ')');
+    sp.addColorStop(0.63, 'rgba(226,244,255,' + (0.26 * vfx).toFixed(3) + ')');
     sp.addColorStop(1.00, 'rgba(255,255,255,0)');
     c.fillStyle = sp; c.fillRect(-72, -18, 144, 82);
     c.restore();
@@ -1696,12 +1998,37 @@ const CINE_ART = (function () {
     c.globalCompositeOperation = 'lighter';
     visorShape(c);
     const veG = lg(c, 'pl.vedge', -58, 0, 52, 0, [
-      [0.00, 'rgba(255,200,116,0.8)'], [0.42, 'rgba(255,180,90,0.08)'],
-      [1.00, 'rgba(180,244,255,0.5)']
+      [0.00, 'rgba(255,206,132,1)'], [0.40, 'rgba(255,180,90,0.16)'],
+      [1.00, 'rgba(200,248,255,0.92)']
     ]);
-    c.strokeStyle = veG; c.lineWidth = 2.2; c.stroke();
+    c.strokeStyle = veG; c.lineWidth = 4.4; c.stroke();
+    c.strokeStyle = veG; c.lineWidth = 1.4; c.stroke();
     c.restore();
     c.restore();
+
+    /* --- the bloom the glass throws into the air around it ---------
+       Drawn OUTSIDE the visor clip and after the edge, so it spills
+       onto the shell and the mask the way a real hot highlight does. */
+    if (vis > 0.05) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      const bl = alpha * vis * vfx;
+      blob(c, -26, 26, 96, [255, 186, 88], 0.30 * bl * (0.4 + 0.6 * key));
+      blob(c, -34, 20, 54, [255, 214, 140], 0.34 * bl * (0.4 + 0.6 * key));
+      blob(c, 22, 2, 46, [168, 232, 255], 0.24 * bl * (0.4 + 0.6 * rim));
+      if (hud > 0.02) blob(c, -4, 20, 88, [96, 255, 182], 0.16 * bl * hud);
+      /* an anamorphic smear along the visor's long axis */
+      c.save();
+      c.translate(-16, 22); c.rotate(-0.18); c.scale(1, 0.11);
+      const anG = rg(c, 'pl.vbloom', 0, 0, 1, 0, 0, 110, [
+        [0.00, 'rgba(255,216,150,0.66)'], [0.35, 'rgba(255,176,80,0.18)'],
+        [1.00, 'rgba(255,150,60,0)']
+      ]);
+      c.globalAlpha = bl * (0.35 + 0.65 * key);
+      c.fillStyle = anG; c.fillRect(-116, -116, 232, 232);
+      c.restore();
+      c.restore();
+    }
 
     /* housing / track across the brow — the glass slides under it */
     c.beginPath();
