@@ -7,6 +7,7 @@
 import { AUDIO } from './audio/index.js';
 import { CINE } from './cinematic/scenes/index.js';
 import { rnd } from './core/utils.js';
+import { loadBest, submitRun } from './core/records.js';
 import { S, COL, EASE_LEN, reset } from './game/state.js';
 import { update } from './game/update.js';
 import { render } from './render/scene-draw.js';
@@ -33,6 +34,12 @@ export const LINES=[
 export let li=0, menuShown=false;
 export function showMenu(){
   introEl.classList.remove('hidden');
+  const best = loadBest();
+  if(best){
+    const el = document.getElementById('best');
+    el.textContent = `SERVICE RECORD · BEST ${best.score.toLocaleString()} · ${(best.dist/1000).toFixed(1)} KM · ${best.kills} KILLS`;
+    el.style.display = 'block';
+  }
   if(menuShown){ launchBtn.classList.add('on'); return; }
   menuShown=true;
   (function pushLine(){
@@ -66,6 +73,9 @@ export function gameOver(){
   document.getElementById('fScore').textContent=S.score;
   document.getElementById('fDist').textContent=(S.dist/1000).toFixed(1);
   document.getElementById('fKills').textContent=S.kills;
+  const rec = submitRun(S.score, S.dist, S.kills);
+  document.getElementById('fBest').textContent = rec.best.toLocaleString();
+  document.getElementById('newrec').classList.toggle('on', rec.isRecord && S.score > 0);
   setTimeout(()=>overEl.classList.remove('hidden'), 950);
 }
 launchBtn.addEventListener('click', start);

@@ -5,6 +5,11 @@
   "type": "module",
   "description": "SKYFALL INTERCEPTOR — WebGL fighter-jet dogfighter with a procedural cinematic intro.",
   "scripts": {
-    "start": "python3 -m http.server 8123"
+    "start": "python3 -m http.server 8123",
+    "build": "node build.js",
+    "build:min": "node build.js --minify"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
