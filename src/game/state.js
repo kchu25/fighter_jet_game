@@ -11,6 +11,7 @@ export const BOLT_TAIL=.034;            // seconds of travel drawn behind an ene
 export const COL={
   cyan:[0.13,0.88,1.0], mag:[1.0,0.24,0.94], amber:[1.0,0.60,0.17],
   red:[1.0,0.17,0.30], green:[0.24,1.0,0.62], purple:[0.64,0.29,1.0], white:[1,1,1],
+  bio:[0.55,0.95,0.25],
   smoke:[0.30,0.30,0.34]
 };
 export const FOVY = 62*Math.PI/180;
@@ -41,12 +42,16 @@ export const S = {
   dist: 0, ddist: 0, score: 0, kills: 0, combo: 1, comboT: 0, shake: 0, flash: 0,
   flashC: [1,1,1], speed: 1, flow: 0,
   gameOn: false, T: 0, spawnT: 0, waveN: 0, nextBoss: 0, alarmT: 0, tipT: 0, hitT: 0,
-  bossWarn: 0, bossWarnName: 'MOTHERSHIP', bossFx: 0, hintT: 0,
+  bossWarn: 0, bossWarnName: 'MOTHERSHIP INBOUND', bossFx: 0, hintT: 0,
   bossN: 0,
   /* director pacing: sector counts fights this run, lullT is the between-sector
      breather, sectorKills snapshots S.kills at sector start, threat/threatCap
      are the live enemy budget — HUD and audio read these by name */
   sector: 1, lullT: 0, sectorKills: 0, threat: 0, threatCap: 3.5,
+  /* friendly wingmen: short-lived ally flight that joins, fights, and is shot
+     down on-screen — the "only bird in the air" premise made visible in-run.
+     allyNext is the sector the next flight may appear at. */
+  allies: null, allyNext: 2,
   tipMsg: TIP_DEFAULT,
   easeT: 0, easeStage: 0, runNo: 0, everDied: false
 };
@@ -66,8 +71,9 @@ export function reset(){
   S.debris=[]; S.rings=[]; S.evq=[];
   S.dist=0; S.ddist=0; S.score=0; S.kills=0; S.combo=1; S.comboT=0; S.shake=0; S.flash=0; S.flashC=COL.white;
   S.speed=1; S.flow=FLOW; S.spawnT=.25; S.waveN=0; S.bossN=0; S.nextBoss=2800; S.alarmT=0; S.tipT=4.5; S.hitT=0;
-  S.bossWarn=0; S.bossWarnName='MOTHERSHIP'; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
+  S.bossWarn=0; S.bossWarnName='MOTHERSHIP INBOUND'; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
+  S.allies=[]; S.allyNext=2;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
 }

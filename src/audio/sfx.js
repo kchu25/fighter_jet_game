@@ -410,6 +410,197 @@ export function sectorClear() {
   setTimeout(function () { try { send.disconnect(); } catch (e) { } }, 2200);
 }
 
+/* ravager acid burst: three quick pitched-down wet 'bloop' taps + breath */
+export function spit() {
+  if (!A.ready || A.muted) return;
+  var t = now();
+  if (t - A.lastSpitT < 0.15) return;              // rapid-fire guard
+  if (!budget(3)) return;
+  A.lastSpitT = t;
+  t += 0.002;
+
+  var head = gainNode(0.32);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // shared wet lowpass so the whole burst sounds hollow/gloopy
+  var wf = lp(1100, 4);
+  wf.connect(head);
+
+  for (var i = 0; i < 3; i++) {
+    var bt = t + i * 0.11;
+    var o = osc('sine', 520 - i * 60, bt);         // each glob a bit lower
+    o.frequency.exponentialRampToValueAtTime(fclamp(110 - i * 12), bt + 0.09);
+    var g = pluck(bt, 0.55, 0.11, 0.002);
+    o.connect(g); g.connect(wf);
+    o.start(bt); o.stop(bt + 0.13);
+    srcs.push(o);
+  }
+
+  // slight noise breath under the lobs (spittle hiss)
+  var nb = bp(900, 1.4);
+  nb.frequency.setValueAtTime(fclamp(1300), t);
+  nb.frequency.exponentialRampToValueAtTime(fclamp(380), t + 0.36);
+  var ng = pluck(t, 0.1, 0.38, 0.004);
+  nb.connect(ng); ng.connect(head);
+  var ns = noise(t, 0.4, 0.8); ns.connect(nb); srcs.push(ns);
+
+  voice(head, srcs);
+}
+
+/* organic impact/death ichor burst: layers UNDER boom() on bio deaths */
+export function squish(size) {
+  if (!A.ready || A.muted || !budget(4)) return;
+  size = clamp(size == null ? 1 : size, 0.5, 2);
+  var t = now() + 0.002;
+  var dur = 0.25 + 0.23 * (size - 0.5);            // ~0.25s at .5, ~0.6s at 2
+  var head = gainNode(clamp(0.24 + 0.1 * size, 0.2, 0.4));
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // wet splat: lowpassed noise, filter slamming shut
+  var sf = lp(2200, 2.2);
+  sf.frequency.setValueAtTime(fclamp(2400 / Math.pow(size, 0.4)), t);
+  sf.frequency.exponentialRampToValueAtTime(fclamp(160 / size), t + dur * 0.9);
+  var sg = pluck(t, 0.7, dur, 0.002);
+  sf.connect(sg); sg.connect(head);
+  var ss = noise(t, dur + 0.02, 0.7); ss.connect(sf); srcs.push(ss);
+
+  // downward 'gloop' sine
+  var go = osc('sine', 300 / Math.pow(size, 0.4), t);
+  go.frequency.exponentialRampToValueAtTime(fclamp(52 / size), t + dur * 0.8);
+  var gg = pluck(t, 0.5, dur * 0.85, 0.004);
+  go.connect(gg); gg.connect(head);
+  go.start(t); go.stop(t + dur);
+  srcs.push(go);
+
+  // brief comb-ish flutter: two detuned short sines beating against each other
+  var ff = lp(900, 1.5);
+  var fg = pluck(t + 0.02, 0.22, dur * 0.6, 0.003);
+  ff.connect(fg); fg.connect(head);
+  var fa = osc('sine', 170, t);
+  var fb = osc('sine', 187, t);                    // ~17Hz beat = wet flutter
+  fa.connect(ff); fb.connect(ff);
+  fa.start(t); fa.stop(t + dur * 0.7);
+  fb.start(t); fb.stop(t + dur * 0.7);
+  srcs.push(fa, fb);
+
+  voice(head, srcs);
+}
+
+/* creature/boss aggro cry: detuned saws swept up-then-down with vibrato,
+   through a resonant bandpass sweep. Rare (boss beats), so it can be rich. */
+export function screech(p) {
+  if (!A.ready || A.muted || !budget(6)) return;
+  var t = now() + 0.002;
+  var dur = 1.0;
+  var head = gainNode(0.5);
+  var pn = panner(clamp(p == null ? 0 : p, -1, 1));
+  if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
+  var srcs = [];
+
+  // resonant formant sweep: opens with the rise, chokes on the fall
+  var f = bp(1200, 6);
+  f.frequency.setValueAtTime(fclamp(700), t);
+  f.frequency.exponentialRampToValueAtTime(fclamp(2600), t + dur * 0.42);
+  f.frequency.exponentialRampToValueAtTime(fclamp(480), t + dur);
+  var g = A.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.55, t + 0.06);
+  g.gain.setValueAtTime(0.55, t + dur * 0.6);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  f.connect(g); g.connect(head);
+
+  // vibrato LFO shared by both saws (osc -> gain -> frequency)
+  var lfo = osc('sine', 11, t);
+  var lg = gainNode(0);
+  lg.gain.setValueAtTime(4, t);
+  lg.gain.linearRampToValueAtTime(46, t + dur * 0.5);
+  lg.gain.linearRampToValueAtTime(10, t + dur);
+  lfo.connect(lg);
+  lfo.start(t); lfo.stop(t + dur + 0.05);
+  srcs.push(lfo);
+
+  for (var k = 0; k < 2; k++) {
+    var o = osc('sawtooth', 480, t);
+    o.detune.value = k ? 21 : -18;
+    o.frequency.setValueAtTime(fclamp(430), t);
+    o.frequency.exponentialRampToValueAtTime(fclamp(1750), t + dur * 0.42);
+    o.frequency.exponentialRampToValueAtTime(fclamp(300), t + dur);
+    lg.connect(o.frequency);
+    o.connect(f);
+    o.start(t); o.stop(t + dur + 0.03);
+    srcs.push(o);
+  }
+
+  // rasp: thin noise through the same formant so it screams, not hisses
+  var rg = A.ctx.createGain();
+  rg.gain.setValueAtTime(0.0001, t);
+  rg.gain.exponentialRampToValueAtTime(0.12, t + dur * 0.4);
+  rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  rg.connect(f);
+  var rs = noise(t, dur + 0.02, 1.5); rs.connect(rg); srcs.push(rs);
+
+  // give the cry room over the music
+  duckPump(t, 0.22, 0.8);
+
+  voice(head, srcs);
+  if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, (dur + 0.4) * 1000);
+}
+
+/* wingman radio distress: squelch static, two urgent beeps, garbled 'voice'
+   blips, squelch cut. Dry + mono/center so it reads as comms, not music. */
+export function mayday() {
+  if (!A.ready || A.muted || !budget(6)) return;
+  var t = now() + 0.002;
+  var dur = 1.2;
+  var head = gainNode(0.36);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // everything speaks through one narrow voice-band radio filter
+  var rf = bp(1100, 1.6);
+  var rh = hp(300);
+  var rl = lp(2800);
+  rh.connect(rf); rf.connect(rl); rl.connect(head);
+
+  // squelch static bed: opens with a pop, sputters, dies at the cut
+  var sg = A.ctx.createGain();
+  sg.gain.setValueAtTime(0.0001, t);
+  sg.gain.exponentialRampToValueAtTime(0.3, t + 0.012);   // squelch open pop
+  sg.gain.exponentialRampToValueAtTime(0.08, t + 0.1);
+  sg.gain.setValueAtTime(0.08, t + dur - 0.08);
+  sg.gain.exponentialRampToValueAtTime(0.24, t + dur - 0.03); // squelch cut burst
+  sg.gain.setValueAtTime(0.0001, t + dur);
+  sg.connect(rh);
+  var ss = noise(t, dur + 0.02, 1.3); ss.connect(sg); srcs.push(ss);
+
+  // two urgent beep taps
+  for (var i = 0; i < 2; i++) {
+    var bt = t + 0.06 + i * 0.14;
+    var bo = osc('square', 1180, bt);
+    var bg = pluck(bt, 0.3, 0.07, 0.001);
+    bo.connect(bg); bg.connect(rh);
+    bo.start(bt); bo.stop(bt + 0.09);
+    srcs.push(bo);
+  }
+
+  // garbled 'voice': fast random-stepped sine blips in the 400-900Hz band
+  var vt0 = t + 0.38, blips = 7;
+  for (var j = 0; j < blips; j++) {
+    var vt = vt0 + j * 0.088 + Math.random() * 0.02;
+    var vf = 400 + Math.random() * 500;
+    var vo = osc('sine', vf, vt);
+    vo.frequency.linearRampToValueAtTime(fclamp(vf * (0.85 + Math.random() * 0.3)), vt + 0.06);
+    var vg = pluck(vt, 0.24 + Math.random() * 0.12, 0.07 + Math.random() * 0.03, 0.004);
+    vo.connect(vg); vg.connect(rh);
+    vo.start(vt); vo.stop(vt + 0.11);
+    srcs.push(vo);
+  }
+
+  voice(head, srcs);
+}
+
 export function alarm() {
   if (!A.ready || A.muted || !budget(4)) return;
   var t = now() + 0.002;

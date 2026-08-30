@@ -95,9 +95,44 @@ export function spawnLancer(o={}){
     cd:rnd(1.2,2.2)*(o.cdMul||1)+(S.easeT>0?1.5:0),chg:0,
     c:o.c||COL.purple,roll:0,yaw:0});
 }
+export function spawnWasp(o={}){
+  /* bio swarmer: flutters (fast low-amp jink) and homes weakly on the player.
+     Melee only — no ranged attack; hp 1, dies to anything. vx/vy are the
+     homing pull, ph drives the flutter (update.js advances it ~7/s). */
+  S.enemies.push({k:'wasp',x:o.x??rnd(-250,250),y:o.y??rnd(-140,150),z:o.z??SPAWN_Z,hp:1,r:26,rz:34,
+    ph:o.ph??rnd(0,6.28),amp:rnd(60,120)*(o.ampMul||1),spd:rnd(1300,1550)*(o.spdMul||1),
+    vx:0,vy:0,c:o.c||COL.bio,roll:0,yaw:Math.PI});
+}
+export function spawnRavager(o={}){
+  /* organic gunship: slow heave, constant writhe, spits fat slow glob bursts.
+     Has max so the wounded list/smoke behaviour applies (writhe is blended in
+     by update.js on top of the wounded list). */
+  const hp = Math.min(22, 8+S.waveN*.5);
+  S.enemies.push({k:'ravager',x:o.x??rnd(-230,230),y:o.y??rnd(-110,120),z:o.z??SPAWN_Z,hp,max:hp,r:60,rz:60,
+    ph:o.ph??rnd(0,6.28),amp:rnd(70,130)*(o.ampMul||1),spd:rnd(560,680)*(o.spdMul||1),
+    cd:rnd(2.2,3.0)*(o.cdMul||1)+(S.easeT>0?1.5:0),
+    c:o.c||COL.bio,roll:0,yaw:Math.PI});
+}
 export function spawnCrate(){
   S.crates.push({x:rnd(-220,220),y:rnd(-120,130),z:SPAWN_Z,
     kind:['shield','rapid','spread'][(Math.random()*3)|0],spin:0});
+}
+/* friendly two-ship: spawns behind/below the player view and climbs to a
+   station beside them. Every ally is doomed — doom is the seconds until it is
+   hit and goes down in front of you; the second ship dies after the first
+   (staggered dread). update.js owns the whole lifecycle. */
+export function spawnAllies(){
+  const d0=rnd(5.5,7.5);
+  let n=0;
+  for(const [cs,side] of [['VIPER 2',-1],['VIPER 5',1]]){
+    S.allies.push({cs,side,
+      x:S.P.x+side*170, y:-120, z:-150, vx:0, vy:0,
+      stx:side*rnd(160,200), sty:rnd(-20,30), stz:rnd(750,950),
+      ph:rnd(0,6.28), t:0, doom:n===0?d0:d0+rnd(1.5,2.5),
+      state:'join', roll:0, yaw:0, pitch:0, thr:.8,
+      fireT:rnd(.8,1.4), burnT:0, dieT:0, hitN:0});
+    n++;
+  }
 }
 export function spawnBoss(){
   /* keyed off S.bossN (bosses defeated this run), not S.waveN (trash-mob waves,
@@ -110,20 +145,27 @@ export function spawnBoss(){
      walls). All three stay ONE S.boss object — lockOn/hitScan/missiles/HUD
      concat [S.boss] and must keep working unchanged. The carrier runs 0.9x
      HP (its escorts soak your fire), the dreadnought 1.1x. */
-  const type = ['mothership','carrier','dreadnought'][S.bossN%3];
-  const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT' : 'MOTHERSHIP';
-  const c    = type==='carrier'?COL.green : type==='dreadnought'?COL.red : COL.purple;
-  const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1 : 1));
-  const r  = type==='carrier'?240 : type==='dreadnought'?170 : 210;
-  const rz = type==='carrier'?140 : type==='dreadnought'?210 : 150;
+  const type = ['mothership','carrier','dreadnought','leviathan'][S.bossN%4];
+  const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT'
+             : type==='leviathan'?'LEVIATHAN' : 'MOTHERSHIP';
+  const c    = type==='carrier'?COL.green : type==='dreadnought'?COL.red
+             : type==='leviathan'?COL.bio : COL.purple;
+  const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1
+             : type==='leviathan'?1.05 : 1));
+  const r  = type==='carrier'?240 : type==='dreadnought'?170 : type==='leviathan'?230 : 210;
+  const rz = type==='carrier'?140 : type==='dreadnought'?210 : type==='leviathan'?170 : 150;
   /* every field ANY type's update branch reads is initialised here, so a
      branch can never touch an undefined on its first frame:
-     chg/mode = dreadnought lance state, alt = carrier wave alternator,
-     flash = carrier bay-launch glow, fcd = carrier phase-3 direct-fire cd */
+     chg/mode = dreadnought lance state (leviathan reuses both for its maw
+     lance / attack cycle), alt = carrier & leviathan wave alternator,
+     flash = carrier bay-launch / leviathan birth glow, fcd = carrier
+     phase-3 direct-fire cd, scr3 = leviathan phase-3 screech latch */
   S.boss={k:'boss',type,name,x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r,rz,c,
         phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0,
-        chg:0,mode:'lance',alt:false,flash:0,fcd:2.4};
-  S.bossWarn=2.4; S.bossWarnName=name; AUDIO.siren();
+        chg:0,mode:'lance',alt:false,flash:0,fcd:2.4,scr3:false};
+  /* hud prints the warn phrase raw — the leviathan's carries its own verb */
+  S.bossWarn=2.4; S.bossWarnName = type==='leviathan'?'LEVIATHAN RISING' : name+' INBOUND';
+  AUDIO.siren();
 }
 
 export function nearestAhead(m){
@@ -203,6 +245,47 @@ export function dreadWall(b){
   }
   AUDIO.thud();
 }
+/* -------------------------------------------------------- leviathan attacks */
+export function sporeBarrage(b){
+  /* loose shotgun of slow fat bio globs with ONE guaranteed safe lane —
+     the dodge puzzle is spotting the gap in the spray and holding it */
+  const n = b.phase===1?8 : b.phase===2?10 : 12;
+  const safe = rnd(-200,200);
+  const vents = ATT.levVents, V=1100, t=b.z/V;
+  let placed=0, tries=0;
+  while(placed<n && tries<n*4){
+    tries++;
+    const g = vents[(Math.random()*vents.length)|0];
+    const gx=b.x+g[0], gy=b.y+g[1];
+    const tx=S.P.x+rnd(-260,260), ty=S.P.y+rnd(-140,140);
+    if(Math.abs(tx-safe)<95) continue;         // keep the lane clear
+    S.foes.push({x:gx,y:gy,z:b.z+g[2],vx:(tx-gx)/t,vy:(ty-gy)/t,vz:-V,dmg:9,c:COL.bio,r:36});
+    placed++;
+  }
+  AUDIO.spit && AUDIO.spit();
+}
+export function levBirth(b){
+  /* spews a wasp pod from the maw. Same anti-flood rule as the carrier:
+     never past ~7 live enemies; returns false so update() retries on a
+     short cd instead of eating the whole cycle. */
+  const n = 3+(Math.random()<.5?1:0);
+  if(S.enemies.length+n>7) return false;
+  const mw=ATT.levMaw;
+  for(let i=0;i<n;i++)
+    spawnWasp({x:clamp(b.x+mw[0]+rnd(-60,60),-300,300),
+               y:clamp(b.y+mw[1]+rnd(-40,40),-140,150),
+               z:b.z+mw[2]});
+  b.flash=.4; AUDIO.squish && AUDIO.squish(.8);
+  return true;
+}
+export function levLance(b){
+  /* the dreadnought's spine lance reskinned: fired at the END of a 1.2s maw
+     charge, aimed at the player's position AT FIRE TIME */
+  const mw=ATT.levMaw, gx=b.x+mw[0], gy=b.y+mw[1], gz=b.z+mw[2];
+  const V=3400, t=gz/V;
+  S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t,vy:(S.P.y-gy)/t,vz:-V,dmg:15,c:COL.bio,r:36});
+  AUDIO.lance && AUDIO.lance();
+}
 export function hitScan(s,dmg,big){
   const list = S.boss? S.enemies.concat([S.boss]) : S.enemies;
   /* test the whole span the shot swept this frame, or it tunnels through
@@ -220,6 +303,10 @@ export function hitScan(s,dmg,big){
   return false;
 }
 /* --------------------------------------------------------------- violence */
+/* organic kinds burst in ichor, not sparks — checked by kind (the leviathan
+   boss is caught through e.type since its e.k is 'boss') */
+export const BIOK = { wasp:1, ravager:1, leviathan:1 };
+function isBio(e){ return !!(BIOK[e.k] || (e.type && BIOK[e.type])); }
 export function impact(e,dmg,x,y,z,big,s){
   const heavy = e===S.boss || e.k==='cruiser';
   const pw = clamp(dmg*.4,.3,1.4);
@@ -227,7 +314,7 @@ export function impact(e,dmg,x,y,z,big,s){
   if(s){ const l=Math.hypot(s.vx,s.vy,s.vz)||1; dx=-s.vx/l; dy=-s.vy/l; dz=-s.vz/l; }
   /* spray back down the shot line so the spark cone opens toward the camera */
   sparks(x,y,z, big?30:Math.min(20,9+(dmg*3|0)), (big?2100:1500)*(.65+pw*.45),
-    big?1.5:1.25, e===S.boss?e.c:COL.cyan, dx,dy,dz, 1);
+    big?1.5:1.25, (e===S.boss||isBio(e))?e.c:COL.cyan, dx,dy,dz, 1);
   shock(x,y,z, heavy?16:9, (heavy?170:100)*(.55+pw*.6), big?.34:.25,
     heavy?9:6.5, COL.white, big?1.5:1.35);
   S.parts.push(mk(x,y,z, dx*120,dy*120,dz*120, COL.white, big?.14:.10,
@@ -246,6 +333,16 @@ export function impact(e,dmg,x,y,z,big,s){
 export function explode(e,x,y,z){
   const k = e===S.boss?'boss' : e.k;
   const c = e.c, R = e.r;
+  /* organic deaths read WET: a few slow, fat, long-lived ichor blobs on top
+     of the standard fireball, and a squish under the boom */
+  if(isBio(e)){
+    const bg = k==='boss'?2.2 : k==='ravager'?1.3 : 1;
+    for(let i=0;i<3;i++)
+      S.parts.push(mk(x+rnd(-R*.4,R*.4), y+rnd(-R*.3,R*.3), z+rnd(-R*.3,R*.3),
+        rnd(-70,70), rnd(-30,90), rnd(-70,70),
+        COL.bio, rnd(.9,1.5), rnd(30,52)*bg, 0, .5, 1.6));
+    AUDIO.squish && AUDIO.squish(k==='boss'?2 : k==='ravager'?1 : .5);
+  }
   if(k==='boss'){
     /* each boss type dies in its own colour — c is e.c (purple/green/red) */
     shock(x,y,z, 40,1600, .95, 26, COL.white, 1);
@@ -309,7 +406,7 @@ export function damage(e,dmg,x,y,z,big,s){
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=S.enemies.indexOf(e); if(i>=0) S.enemies.splice(i,1);
-    const pts=(e.k==='cruiser'?250:e.k==='lancer'?300:e.k==='striker'?150:e.k==='mine'?60:100)*S.combo; S.score+=pts;
+    const pts=(e.k==='cruiser'?250:e.k==='ravager'?250:e.k==='lancer'?300:e.k==='striker'?150:e.k==='mine'?60:e.k==='wasp'?40:100)*S.combo; S.score+=pts;
     pop(e.x,e.y,e.z,'+'+pts,e.c);
     S.combo=Math.min(9,S.combo+1); S.comboT=2.6;
     if(Math.random()<.07) spawnCrate();

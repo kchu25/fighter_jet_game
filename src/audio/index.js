@@ -7,7 +7,7 @@ import { A } from './state.js';
 import { STEP, LOOKAHEAD_MS } from './constants.js';
 import { gainNode, lp, now, makeSoftCurve } from './primitives.js';
 import { buildEngine, setEngine } from './engine.js';
-import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance } from './sfx.js';
+import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance, spit, squish, screech, mayday } from './sfx.js';
 import { applyIntensity, scheduler, setIntensity } from './scheduler.js';
 import { rumble, sirenLoop, stopCine } from './cine-loops.js';
 import { warp, plasma, explode, helmetOn, breath, beep, cineRiser, jetPass } from './cine-oneshots.js';
@@ -134,6 +134,10 @@ export const AUDIO = {
   strafe: strafe,
   mineArm: mineArm,
   lance: lance,
+  spit: spit,
+  squish: squish,
+  screech: screech,
+  mayday: mayday,
   setIntensity: setIntensity,
   toggle: toggle,
   suspend: suspend,

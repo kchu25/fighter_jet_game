@@ -10,10 +10,10 @@
 import { AUDIO } from '../audio/index.js';
 import { rnd, lerp } from '../core/utils.js';
 import { S, COL, EASE_CALM } from './state.js';
-import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate,
-         spawnStriker, spawnMine, spawnLancer } from './combat.js';
+import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate, spawnAllies,
+         spawnStriker, spawnMine, spawnLancer, spawnWasp, spawnRavager } from './combat.js';
 
-const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2 };
+const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2, wasp: .5, ravager: 2.5 };
 function aliveCost(){ let c=0; for(const e of S.enemies) c+=COST[e.k]||1; return c; }
 
 /* per-sector quality multipliers, all hard-capped so nothing grows forever */
@@ -74,6 +74,20 @@ const FORMS = [
       spawnLancer({x,y,cdMul:m.cc});
       spawnDrone({x:x-100,y:y+40,spdMul:m.ds,ampMul:m.da});
       spawnDrone({x:x+100,y:y+40,spdMul:m.ds,ampMul:m.da}); } },
+  /* bio kinds — same drones:3 ramp-filter carry as the other new forms.
+     Wasps only ever arrive as pods: singles don't read as a swarm. */
+  { w:.9, cost:2.5, drones:3, ok:q=>q>.2,          // wasp pod of 5, loose cluster
+    go:m=>{ const x=rnd(-140,140), y=rnd(-70,80);
+      for(let i=0;i<5;i++) spawnWasp({x:x+rnd(-120,120),y:y+rnd(-120,120),spdMul:m.ds}); } },
+  { w:.7, cost:4,   drones:3, ok:q=>q>.55,         // double pod: 8 wasps, two clusters
+    go:m=>{ for(const sx of [-140,140]){ const y=rnd(-80,80);
+      for(let i=0;i<4;i++) spawnWasp({x:sx+rnd(-120,120),y:y+rnd(-110,110),spdMul:m.ds}); } } },
+  { w:.8, cost:2.5, drones:3, ok:q=>q>.4,          // ravager solo
+    go:m=> spawnRavager({cdMul:m.cc}) },
+  { w:.6, cost:4.5, drones:3, ok:q=>q>.7,          // ravager + 4-wasp escort
+    go:m=>{ const x=rnd(-130,130), y=rnd(-70,80);
+      spawnRavager({x,y,cdMul:m.cc});
+      for(let i=0;i<4;i++) spawnWasp({x:x+rnd(-130,130),y:y+rnd(-110,110)}); } },
 ];
 
 /* ------------------------------------------------------------------ director */
@@ -93,8 +107,17 @@ export function directorTick(dt, easeP){
 
     if(S.score>=S.nextBoss){ S.nextBoss=S.score+4600+S.waveN*1600; spawnBoss(); }
     else if(S.lullT>0){
-      /* between-sector breather: nothing spawns, music sags, then a warning */
-      if((S.lullT-=dt)<=0){ S.lullT=0; S.tipMsg='HOSTILES INBOUND'; S.tipT=2; }
+      /* between-sector breather: nothing spawns, music sags, then a warning.
+         Some lull-ends bring company instead: a doomed friendly two-ship
+         joins on your wing — the intro's premise, made to happen beside you. */
+      if((S.lullT-=dt)<=0){
+        S.lullT=0;
+        if(S.sector>=S.allyNext && S.allies.length===0){
+          spawnAllies();
+          S.allyNext=S.sector+2+((Math.random()*2)|0);
+          S.tipMsg='VIPER FLIGHT  ·  ON YOUR WING'; S.tipT=2.5;
+        } else { S.tipMsg='HOSTILES INBOUND'; S.tipT=2; }
+      }
     }
     else if(!calm && S.easeT<=0 && prog>=1 && alive<=1){
       /* sector clear: enough kills AND the sky nearly empty — reward + rest */

@@ -840,6 +840,198 @@ export const MODELS = (function () {
     return M;
   }
 
+  /* ==================================================================== WASP
+     Bio swarmer: segmented chitinous teardrop — small head, fat abdomen
+     tapering to a stinger — two swept membrane wings and a pair of forward
+     sting spikes. Sickly yellow-green flesh over darker chitin plates. Kept
+     lean (~52 tris): they arrive five-to-eight at a time. */
+  function buildWasp() {
+    var M = Mesh();
+    var FLESH = [0.20, 0.30, 0.08];
+    var FLESH2 = [0.14, 0.22, 0.06];
+    var CHIT = [0.09, 0.12, 0.05];
+    var BIO = [0.55, 0.95, 0.25];
+    var WING = [0.30, 0.46, 0.22];
+
+    // body: head/thorax -> abdomen swell -> taper (nose at +z)
+    var S = [
+      hexLoop(8, 2.6, 1.8, 1.8, 0.2),
+      hexLoop(-2, 4.2, 3.0, 3.0, -0.2),
+      hexLoop(-14, 2.0, 1.5, 1.5, -0.8)
+    ];
+    M.skin(S[0], S[1], FLESH, CHIT);
+    M.skin(S[1], S[2], FLESH2, CHIT);
+    M.capFan(S[0], [0, 0.2, 16], CHIT);              // head point
+    M.capFan(S[2], [0, -2.0, -26], BIO);             // rear stinger, glowing tip
+
+    // swept membrane wings, double-sided (a single sheet vanishes edge-on
+    // for half the flutter cycle otherwise)
+    [1, -1].forEach(function (s) {
+      var a = [s * 3.2, 1.8, 4], b = [s * 18, 4.4, -5],
+        c = [s * 15.5, 4.2, -13], d = [s * 3.0, 1.6, -4];
+      M.quad(a, b, c, d, WING);
+      M.quad(d, c, b, a, shade(WING, 0.55));
+    });
+    // wing-root chitin plates
+    [1, -1].forEach(function (s) {
+      M.quad([s * 1.2, 2.6, 5], [s * 4.4, 2.2, 3], [s * 4.2, 2.0, -4], [s * 1.2, 2.4, -5], CHIT);
+    });
+
+    // forward sting spikes (thin double-sided blades)
+    [1, -1].forEach(function (s) {
+      var p0 = [s * 2.6, -1.4, 4], p1 = [s * 1.4, -2.4, 4], ap = [s * 2.4, -2.2, 15];
+      M.tri(p0, p1, ap, BIO); M.tri(ap, p1, p0, shade(BIO, 0.5));
+    });
+
+    return M;
+  }
+
+  /* ================================================================= RAVAGER
+     Organic gunship: bulbous pulsing abdomen aft, ribbed carapace plates down
+     the back, five segmented tentacle stubs trailing behind, one asymmetric
+     horn hooked off the right of its head. Nothing on it is machined — the
+     silhouette is all lumps and trailing meat. */
+  function buildRavager() {
+    var M = Mesh();
+    var FLESH = [0.24, 0.34, 0.09];
+    var FLESH2 = [0.17, 0.25, 0.07];
+    var CARAP = [0.10, 0.13, 0.05];
+    var DARK = [0.05, 0.07, 0.03];
+    var BIO = [0.55, 0.95, 0.25];
+    var GLOW = [0.68, 1.00, 0.34];
+
+    function sec(z, rx, ry, y) { return ringXY(0, y, z, rx, ry, 8, PI / 8); }
+
+    // body loft, nose at +z, abdomen bulging aft-of-centre
+    var S = [
+      sec(34, 8, 7, 2),
+      sec(20, 18, 15, 0),
+      sec(2, 26, 22, -2),
+      sec(-18, 24, 21, -3),
+      sec(-34, 12, 11, -2)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? FLESH2 : FLESH, CARAP);
+    M.capFan(S[0], [0, 1, 48], FLESH2);              // blunt snout
+    M.capCenter(S[4], DARK);
+
+    // ribbed carapace plates arched over the back
+    [[24, 12, 15], [10, 17, 20], [-6, 18, 21], [-24, 13, 17]].forEach(function (r) {
+      var z = r[0], w = r[1], yT = r[2];
+      M.plate([-w, yT, z + 4], [w, yT, z + 4], [w, yT, z - 4], [-w, yT, z - 4],
+        [0, 1, 0], 2.6, CARAP, DARK);
+    });
+
+    // five segmented tentacle stubs trailing aft (cone chains, 4-gon rings)
+    [[10, -8], [-10, -8], [16, 3], [-16, 3], [0, -15]].forEach(function (t, k) {
+      var cx = t[0], cy = t[1];
+      var a = ringXY(cx, cy, -32, 3.6, 3.6, 4, PI / 4 + k);
+      var b = ringXY(cx * 1.15, cy * 1.1, -46, 2.2, 2.2, 4, PI / 4 + k);
+      M.skin(a, b, k & 1 ? FLESH2 : FLESH, CARAP);
+      M.capFan(b, [cx * 1.3, cy * 1.2, -58], k === 4 ? BIO : FLESH2);
+    });
+
+    // asymmetric horn, hooked up-and-out off the right of the head
+    var hb = [[5, 5, 28], [11, 4, 26], [10, 9, 23], [4, 8, 25]];
+    M.quad(hb[3], hb[2], hb[1], hb[0], CARAP);
+    M.capFan(hb, [17, 20, 34], CARAP);
+
+    // glowing belly patch under the abdomen (spit sac — sprite rides here)
+    M.quad([-8, -23.5, 8], [8, -23.5, 8], [7, -22.5, -10], [-7, -22.5, -10], GLOW);
+    // a few bio pustules on the abdomen flanks
+    [[24, 4, 4], [-25, 0, -6], [20, -8, -14]].forEach(function (p) {
+      M.tri([p[0], p[1] + 3, p[2]], [p[0], p[1] - 2, p[2] + 3], [p[0] * 1.12, p[1], p[2] - 1], BIO);
+    });
+
+    return M;
+  }
+
+  /* =============================================================== LEVIATHAN
+     Boss #4: a whale-like bio-titan in the mothership's size class. Tapered
+     segmented body, a gaping maw recess at the nose, a dorsal spine ridge,
+     rows of side tentacle-fins, and trailing tail tendrils. Nose at +z;
+     attach points negated in z (same convention as carrier/dreadnought). */
+  function buildLeviathan() {
+    var M = Mesh();
+    var FLESH = [0.185, 0.260, 0.075];
+    var FLESH2 = [0.130, 0.195, 0.055];
+    var CARAP = [0.080, 0.105, 0.040];
+    var DARK = [0.030, 0.045, 0.020];
+    var BIO = [0.55, 0.95, 0.25];
+    var GLOW = [0.68, 1.00, 0.34];
+
+    function sec(z, rx, ry, y) { return ringXY(0, y, z, rx, ry, 8, PI / 8); }
+
+    // segmented body loft — big at the shoulders, tapering to the tail
+    var S = [
+      sec(300, 60, 45, 0),
+      sec(210, 130, 95, 10),
+      sec(80, 170, 120, 15),
+      sec(-80, 150, 105, 20),
+      sec(-220, 90, 65, 25),
+      sec(-330, 40, 30, 30)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? FLESH2 : FLESH, CARAP);
+    M.capCenter(S[S.length - 1], DARK);              // tail stump
+
+    // gaping maw: the snout ring funnels back into a dark throat with a
+    // glowing gullet plate (levMaw attach sits at the mouth)
+    var maw = ringXY(0, -5, 255, 30, 22, 8, PI / 8);
+    M.skin(S[0], maw, DARK);
+    M.capCenter(maw, GLOW);
+    // jaw lip teeth around the mouth rim
+    for (i = 0; i < 6; i++) {
+      var a = PI / 6 + i / 6 * TAU;
+      var tx = 52 * cos(a), ty = 38 * sin(a);
+      M.tri([tx * 0.9, ty * 0.9 - 2, 300], [tx * 1.15, ty * 1.15, 296], [tx * 0.8, ty * 0.8, 316], BIO);
+    }
+
+    // dorsal spine ridge: a row of swept fin-spikes down the back
+    [[220, 88], [140, 116], [60, 132], [-20, 128], [-100, 118], [-180, 92]].forEach(function (p, k) {
+      var z = p[0], yT = p[1], h = 34 + (k === 2 || k === 3 ? 14 : 0);
+      M.plate([0.9, yT - 6, z + 16], [0.9, yT + h, z + 2], [0.9, yT + h - 6, z - 10], [0.9, yT - 6, z - 20],
+        [-1, 0, 0], 2.6, CARAP, k & 1 ? BIO : FLESH2);
+    });
+
+    // side tentacle-fin rows, three per flank, drooping aft-and-down
+    [1, -1].forEach(function (s) {
+      [[150, 150], [20, 162], [-140, 132]].forEach(function (p) {
+        var z = p[0], x0 = p[1];
+        M.plate([s * (x0 - 45), -25, z + 32], [s * (x0 + 65), -80, z + 2],
+          [s * (x0 + 50), -85, z - 40], [s * (x0 - 50), -30, z - 30],
+          [0, -1, 0], 7, FLESH2, CARAP);
+      });
+    });
+
+    // trailing tail tendrils (segmented cones, 4-gon rings)
+    [[45, 10], [-45, 10], [25, 55], [-25, 55]].forEach(function (t, k) {
+      var cx = t[0], cy = t[1];
+      var a = ringXY(cx, cy, -320, 14, 14, 4, PI / 4 + k);
+      var b = ringXY(cx * 1.3, cy * 1.2, -390, 8, 8, 4, PI / 4 + k);
+      M.skin(a, b, k & 1 ? FLESH2 : FLESH, CARAP);
+      M.capFan(b, [cx * 1.5, cy * 1.3, -450], FLESH2);
+    });
+
+    // spore vents: six diamond sphincters along the flanks — dark rim patch
+    // with a glowing throat proud of it (levVents attach points sit on these;
+    // sprites carry the pulse)
+    [[160, 35, 120], [-160, 35, 120], [165, 30, 0], [-165, 30, 0], [140, 30, -120], [-140, 30, -120]]
+      .forEach(function (v) {
+        var s = v[0] > 0 ? 1 : -1, X = Math.abs(v[0]), y = v[1], z = v[2];
+        var a = [s * X, y - 20, z], b = [s * X, y, z - 20], c = [s * X, y + 20, z], d = [s * X, y, z + 20];
+        if (s > 0) M.quad(a, b, c, d, DARK); else M.quad(d, c, b, a, DARK);
+        var a2 = [s * (X + 3), y - 9, z], b2 = [s * (X + 3), y, z - 9], c2 = [s * (X + 3), y + 9, z], d2 = [s * (X + 3), y, z + 9];
+        if (s > 0) M.quad(a2, b2, c2, d2, GLOW); else M.quad(d2, c2, b2, a2, GLOW);
+      });
+
+    // belly ridge plates — keeps the underside from reading as a bare tube
+    [[180, -70], [40, -95], [-100, -80]].forEach(function (p) {
+      M.plate([-34, p[1], p[0] + 26], [34, p[1], p[0] + 26], [30, p[1], p[0] - 26], [-30, p[1], p[0] - 26],
+        [0, -1, 0], 8, CARAP, DARK);
+    });
+
+    return M;
+  }
+
   /* =================================================================== CRATE */
   function buildCrate() {
     var M = Mesh();
@@ -978,7 +1170,8 @@ export const MODELS = (function () {
   var jet = buildJet(), drone = buildDrone(), cruiser = buildCruiser(),
     boss = buildBoss(), crate = buildCrate(), shard = buildShard(),
     striker = buildStriker(), mine = buildMine(), lancer = buildLancer(),
-    carrier = buildCarrier(), dreadnought = buildDreadnought();
+    carrier = buildCarrier(), dreadnought = buildDreadnought(),
+    wasp = buildWasp(), ravager = buildRavager(), leviathan = buildLeviathan();
 
   return {
     jet: jet.build(),
@@ -987,9 +1180,12 @@ export const MODELS = (function () {
     striker: striker.build(),
     mine: mine.build(),
     lancer: lancer.build(),
+    wasp: wasp.build(),
+    ravager: ravager.build(),
     mothership: boss.build(),
     carrier: carrier.build(),
     dreadnought: dreadnought.build(),
+    leviathan: leviathan.build(),
     crate: crate.build(),
     shard: shard.build(),
     attach: {
@@ -1016,6 +1212,14 @@ export const MODELS = (function () {
       carrierBays: [[-170, -6, -296], [0, -6, -296], [170, -6, -296]],
       carrierCore: [0, 11, -309],
       dreadSpine: [0, 12, -400],
+      /* bio kinds fly yaw≈PI like the rest — mesh z negated, applied raw */
+      ravagerBelly: [0, -23, 1],
+      levMaw: [0, -5, -290],
+      levVents: [
+        [160, 35, -120], [-160, 35, -120],
+        [165, 30, 0], [-165, 30, 0],
+        [140, 30, 120], [-140, 30, 120]
+      ],
       dreadGuns: [
         [180, 10, -108], [-180, 10, -108],
         [210, 10, -108], [-210, 10, -108],

@@ -4,9 +4,10 @@ import { rnd, clamp, lerp } from '../core/utils.js';
 import { S, COL, SPAWN_Z, DESPAWN_Z, BX, BY, FLOW, EASE_LEN, EASE_CALM } from './state.js';
 import { ATT } from '../render/gl.js';
 import { keys, mouse } from './input.js';
-import { mk, sparks, shard } from './fx.js';
+import { mk, sparks, shard, shock, later } from './fx.js';
 import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, explode,
-         carrierLaunch, carrierVolley, dreadLance, dreadWall } from './combat.js';
+         carrierLaunch, carrierVolley, dreadLance, dreadWall,
+         sporeBarrage, levBirth, levLance } from './combat.js';
 import { directorTick } from './director.js';
 import { gameOver } from '../main.js';
 
@@ -117,6 +118,16 @@ export function update(dt){
       if(e.z<220 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<110){
         hurt(16,null); explode(e,e.x,e.y,e.z); S.enemies.splice(i,1); continue;
       }
+    } else if(e.k==='wasp'){
+      /* flutter: faster, tighter jink than a drone, PLUS a weak homing pull
+         onto the player's line (same idiom as the mine, but stronger) */
+      e.ph += dt*7;
+      const sx=Math.cos(e.ph)*e.amp*1.6, sy=Math.sin(e.ph*1.7)*e.amp*1.1;
+      e.vx = lerp(e.vx, clamp((S.P.x-e.x)*1.4,-260,260), Math.min(1,dt*2.2));
+      e.vy = lerp(e.vy, clamp((S.P.y-e.y)*1.4,-200,200), Math.min(1,dt*2.2));
+      e.x+=(sx+e.vx)*dt; e.y+=(sy+e.vy)*dt;
+      e.roll = lerp(e.roll, clamp(-(sx+e.vx)/320,-1.4,1.4), Math.min(1,dt*8));
+      e.yaw  = lerp(e.yaw,  clamp((sx+e.vx)/850,-.6,.6)+Math.PI, Math.min(1,dt*7));
     } else {
       e.ph += dt*(e.k==='drone'?4.2:1.6);
       let sx=Math.cos(e.ph)*e.amp*(e.k==='drone'?3.0:1.1);
@@ -143,6 +154,10 @@ export function update(dt){
             COL.white, rnd(.12,.3), rnd(9,17), .05, .1));
       }
     }
+    /* a ravager is never still: a slow roll/list writhe rides on top of
+       whatever the wounded-list code above just wrote (healthy = writhe
+       alone, wounded = writhe + list) */
+    if(e.k==='ravager') e.list = (e.list||0) + .2*Math.sin(S.T*2.4+e.ph);
     if(e.k==='cruiser' && (e.cd-=dt)<=0 && e.z>420 && e.z<2900){
       e.cd=rnd(.95,1.7);
       const g=ATT.cruiserGuns, V=2000, t=(e.z)/V;
@@ -150,6 +165,17 @@ export function update(dt){
         const gx=e.x+gp[0], gy=e.y+gp[1];
         S.foes.push({x:gx,y:gy,z:e.z,vx:(S.P.x-gx)/t*.8,vy:(S.P.y-gy)/t*.8,vz:-V,dmg:8,c:COL.amber,r:26});
       }
+    }
+    if(e.k==='ravager' && (e.cd-=dt)<=0 && e.z>420 && e.z<2900){
+      /* spit: a 3-glob burst — slower, fatter, more dodgeable than cruiser
+         bolts (.65 lead factor, fanned laterally) */
+      e.cd=rnd(2.2,3.0);
+      const V=1500, t=e.z/V;
+      for(let j=-1;j<=1;j++)
+        S.foes.push({x:e.x,y:e.y,z:e.z,
+          vx:(S.P.x-e.x)/t*.65+j*90, vy:(S.P.y-e.y)/t*.65+j*45,
+          vz:-V,dmg:9,c:COL.bio,r:34});
+      AUDIO.spit && AUDIO.spit();
     }
     if(e.k==='lancer' && e.z>460 && e.z<3000){
       /* hold → 0.9s visible charge → one fast bolt aimed at the player's
@@ -165,7 +191,7 @@ export function update(dt){
       } else if((e.cd-=dt)<=0) e.chg=1e-4;
     }
     if(e.z<70){
-      if(e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:e.k==='mine'?16:22,e); continue; }
+      if(e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:e.k==='mine'?16:e.k==='wasp'?8:22,e); continue; }
       /* a striker slipping out the back is not an "escape" — no combo reset */
       if(e.z<DESPAWN_Z){ S.enemies.splice(i,1); if(e.k!=='striker') S.combo=1; }
     }
@@ -179,8 +205,9 @@ export function update(dt){
     const b=S.boss; b.t+=dt;
     const type=b.type||'mothership';
     /* the carrier hangs deeper — its threat launches at you, it doesn't */
-    const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : 1500;
-    if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true; } }
+    const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : type==='leviathan'?1650 : 1500;
+    if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true;
+      if(type==='leviathan') AUDIO.screech && AUDIO.screech(); } }
     else{
       const rage=1-b.hp/b.max;
       b.phase = b.hp/b.max>.66?1 : b.hp/b.max>.33?2:3;
@@ -230,6 +257,40 @@ export function update(dt){
         b.z = holdZ+Math.sin(b.t*.35)*140;
         b.yaw = Math.PI + Math.sin(b.t*.4)*.08;
         b.roll = Math.sin(b.t*.5)*.05 + rage*.12*Math.sin(b.t*3.0);
+      } else if(type==='leviathan'){
+        /* bio-titan: deep slow undulation — the whole body heaves on a big
+           slow sine and never stops writhing. Attack cycle:
+           phase 1  spore barrage only;
+           phase 2  alternates barrage / birth (wasp pod from the maw);
+           phase 3  cycles spore → birth → maw lance (1.2s charge, x-drift
+           freezes — the stillness is the tell, same language as the
+           dreadnought). */
+        if(b.phase===3 && !b.scr3){ b.scr3=true; AUDIO.screech && AUDIO.screech(); }
+        b.y = 30+Math.sin(b.t*.5)*85;
+        b.z = holdZ+Math.sin(b.t*.33)*180;
+        b.yaw = Math.PI + Math.sin(b.t*.35)*.10;
+        b.roll = Math.sin(b.t*.45)*.14 + rage*.14*Math.sin(b.t*2.7);
+        if(b.flash>0) b.flash-=dt;
+        if(b.chg>0){
+          b.chg=Math.min(1,b.chg+dt/1.2);
+          if(b.chg>=1){ levLance(b); b.chg=0; b.cd=1.6; }
+        } else {
+          b.x += b.dir*(90+70*rage)*dt;
+          if(Math.abs(b.x)>240) b.dir*=-1;
+          if((b.cd-=dt)<=0){
+            if(b.phase===1){ sporeBarrage(b); b.cd=2.8; }
+            else if(b.phase===2){
+              /* capped birth returns false — retry soon, like the carrier */
+              if(b.alt=!b.alt){ sporeBarrage(b); b.cd=2.4; }
+              else b.cd = levBirth(b) ? 3.2 : .8;
+            } else {
+              b.mode = b.mode==='spore'?'birth' : b.mode==='birth'?'lance' : 'spore';
+              if(b.mode==='spore'){ sporeBarrage(b); b.cd=2.0; }
+              else if(b.mode==='birth') b.cd = levBirth(b) ? 2.4 : .8;
+              else b.chg=1e-4;
+            }
+          }
+        }
       } else {
         /* mothership — unchanged */
         b.x += b.dir*(190+180*rage)*dt;
@@ -261,6 +322,88 @@ export function update(dt){
     const k=S.crates[i]; k.z-=(950+drift)*dt; k.spin+=dt*3.4;
     if(k.z<60 && k.z>-80 && Math.hypot(k.x-S.P.x,k.y-S.P.y)<70){ take(k.kind); S.crates.splice(i,1); continue; }
     if(k.z<DESPAWN_Z) S.crates.splice(i,1);
+  }
+
+  /* S.allies — friendly two-ship: join → fight on your wing → scripted death.
+     Doomed by design (the fiction is "you are the only bird in the air", so
+     any company must be temporary). Enemies never target them, their tracers
+     are real player-side shots, and combo/score are untouched by their loss. */
+  for(let i=S.allies.length-1;i>=0;i--){
+    const a=S.allies[i]; a.t+=dt;
+    if(a.state==='join'){
+      /* fast climb-in from behind/below the camera to station on your wing */
+      a.z += (a.stz-a.z)*Math.min(1,dt*2.6);
+      a.y += (a.sty-a.y)*Math.min(1,dt*3.2);
+      const nx=a.x+(S.P.x+a.stx-a.x)*Math.min(1,dt*2.4);
+      a.vx=(nx-a.x)/Math.max(dt,1e-4); a.x=nx;
+      a.thr=1;
+      a.roll = lerp(a.roll, clamp(-a.vx/620,-1.1,1.1), Math.min(1,dt*8));
+      a.pitch= lerp(a.pitch, -.22, Math.min(1,dt*4));
+      if(a.t>1.2) a.state='fight';
+    } else if(a.state==='fight'){
+      /* loose formation: slow weave around station, banking like the player */
+      a.ph+=dt;
+      const tx=S.P.x+a.stx+Math.cos(a.ph*.9)*26;
+      const ty=a.sty+Math.sin(a.ph*1.3)*18;
+      const nx=a.x+(tx-a.x)*Math.min(1,dt*2.2);
+      const ny=a.y+(ty-a.y)*Math.min(1,dt*2.2);
+      a.vx=(nx-a.x)/Math.max(dt,1e-4); a.vy=(ny-a.y)/Math.max(dt,1e-4);
+      a.x=nx; a.y=ny;
+      a.z += (a.stz-a.z)*Math.min(1,dt*1.6);
+      a.roll = lerp(a.roll, clamp(-a.vx/620,-1.1,1.1), Math.min(1,dt*8));
+      a.pitch= lerp(a.pitch, clamp(-a.vy/1500,-.35,.35), Math.min(1,dt*8));
+      a.yaw  = lerp(a.yaw,  clamp(a.vx/2600,-.35,.35), Math.min(1,dt*7));
+      a.thr=.75+.2*Math.sin(S.T*11+a.ph*5)+rnd(-.04,.04);
+      if((a.fireT-=dt)<=0){
+        /* real shots: they ride the S.shots loop and hitScan like the
+           player's, at reduced damage — help a little, light up the sky */
+        a.fireT=rnd(.5,.9);
+        const tgt=nearestAhead(a), V=3400;
+        let vx=0, vy=0;
+        if(tgt){ const tt=Math.max(.05,(tgt.z-a.z)/V); vx=(tgt.x-a.x)/tt; vy=(tgt.y-a.y)/tt; }
+        for(const o of [-16,16])
+          S.shots.push({x:a.x+o,y:a.y+2,z:a.z+30,vx,vy,vz:V,pz:a.z+30,dmg:.8});
+        S.parts.push(mk(a.x,a.y+2,a.z+36, rnd(-20,20),rnd(-20,20),160, COL.cyan, .08, 10));
+      }
+      if(a.t>a.doom){
+        /* the moment it's hit: mayday call, then a staggered string of
+           visible impacts ON the hull (closures track the ally, not a fixed
+           world point — the ally holds station while the world drifts) */
+        a.state='dying'; a.dieT=0; a.thr=.2;
+        AUDIO.mayday && AUDIO.mayday();
+        for(const td of [0,.22,.45])
+          later(td,0,0,0, ()=>{ if(a.state!=='dying') return;
+            sparks(a.x+rnd(-14,14),a.y+rnd(-6,8),a.z, 10, 700, .9, COL.amber, 0,0,0, 0);
+            shock(a.x,a.y,a.z, 6, 60, .3, 4, COL.amber, .8); });
+      }
+    } else {
+      /* dying: catches fire, rolls inverted, noses down, drifts wide — then
+         the airframe lets go */
+      a.dieT+=dt;
+      a.roll = lerp(a.roll, a.side*Math.PI, Math.min(1,dt*2.4));
+      a.pitch= lerp(a.pitch, .7, Math.min(1,dt*1.6));
+      a.vy = Math.max(-460, a.vy-620*dt);
+      a.vx = lerp(a.vx, a.side*130, Math.min(1,dt*2));
+      a.x+=a.vx*dt; a.y+=a.vy*dt; a.z-=120*dt;
+      a.burnT+=dt;
+      /* amber/red flame + smoke trail off the hull, every frame */
+      S.parts.push(mk(a.x+rnd(-8,8),a.y+rnd(-3,5),a.z-20, rnd(-30,30),rnd(30,90),-rnd(300,600),
+        Math.random()<.55?COL.amber:COL.red, rnd(.2,.4), rnd(8,16), 0, .15, 1.2));
+      if(Math.random()<.5)
+        S.parts.push(mk(a.x,a.y,a.z-26, rnd(-40,40),rnd(20,80),-rnd(200,420),
+          COL.smoke, rnd(.4,.8), rnd(14,26), 0, .3, 1.5));
+      if(a.dieT>1.4 || a.y<-260){
+        shock(a.x,a.y,a.z, 10, 220, .55, 7, COL.amber, 1);
+        shock(a.x,a.y,a.z, 6, 130, .4, 5, COL.cyan, .9);
+        sparks(a.x,a.y,a.z, 26, 900, 1.2, COL.amber, 0,0,0, 0);
+        for(let j=0;j<5;j++)
+          shard(a.x,a.y,a.z, rnd(-380,380),rnd(-120,420),rnd(-300,300),
+            rnd(.4,.8), j&1?COL.cyan:COL.amber, rnd(.4,.75));
+        AUDIO.boom(1.2);
+        S.tipMsg=a.cs+' IS DOWN'; S.tipT=2.5;
+        S.allies.splice(i,1); continue;
+      }
+    }
   }
 
   /* player S.shots */

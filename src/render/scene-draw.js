@@ -20,19 +20,23 @@ const KMESH = {
   cruiser: MESH.cruiser,
   striker: mesh(MODELS.striker),
   mine:    mesh(MODELS.mine),
-  lancer:  mesh(MODELS.lancer)
+  lancer:  mesh(MODELS.lancer),
+  wasp:    mesh(MODELS.wasp),
+  ravager: mesh(MODELS.ravager)
 };
-/* boss type → mesh (bosses rotate: mothership / hive carrier / dreadnought) */
+/* boss type → mesh (bosses rotate: mothership / carrier / dreadnought / leviathan) */
 const BOSSMESH = {
   mothership:  MESH.mothership,
   carrier:     mesh(MODELS.carrier),
-  dreadnought: mesh(MODELS.dreadnought)
+  dreadnought: mesh(MODELS.dreadnought),
+  leviathan:   mesh(MODELS.leviathan)
 };
 /* per-type phase tints, same idiom as the old inline mothership pick */
 const BOSSPH = {
   mothership:  [null, [.16,0,.16], [.45,0,0]],
   carrier:     [null, [0,.15,.07], [.35,.06,0]],
-  dreadnought: [null, [.18,.02,0], [.50,0,0]]
+  dreadnought: [null, [.18,.02,0], [.50,0,0]],
+  leviathan:   [null, [.10,.14,0], [.38,.16,0]]
 };
 
 /* ------------------------------------------------------------------ additive batch */
@@ -195,6 +199,12 @@ export function render(){
     compose(model, e.x,e.y,e.z, li*.42, e.yaw, e.roll+li*.8, 1);
     litDraw(KMESH[e.k]||MESH.drone, model, hitTint(e,li), 1);
   }
+  /* friendly wingmen: same airframe and orientation conventions as the
+     player jet (yaw base 0 — they fly with you, not at you) */
+  for(const a of S.allies){
+    compose(model, a.x,a.y,a.z, a.pitch, a.yaw, a.roll, 1);
+    litDraw(MESH.jet, model, a.state==='dying'?[.55,.08,-.05]:null, 1);
+  }
   if(S.boss){
     compose(model, S.boss.x,S.boss.y,S.boss.z, S.boss.list||0, S.boss.yaw, S.boss.roll, 1);
     const type=S.boss.type||'mothership';
@@ -274,6 +284,25 @@ export function buildFX(){
     xform(model,mz,_p3);
     sprite(_p3[0],_p3[1],_p3[2], 9, COL.cyan, 1.0);
   }
+  /* ally engine glow — same nozzle pattern as the player's, cyan and
+     thr-scaled; a dying ship adds flame sprites riding the hull. This loop
+     re-composes `model`, so it must come after everything reading the
+     player's transform above. */
+  for(const a of S.allies){
+    compose(model, a.x,a.y,a.z, a.pitch, a.yaw, a.roll, 1);
+    const ath=.55+a.thr*.85;
+    for(const nz of ATT.jetNozzles){
+      xform(model,nz,_p3);
+      const bx=_p3[0],by=_p3[1],bz=_p3[2];
+      xform(model,[nz[0],nz[1],nz[2]-72*ath],_p3);
+      beam(bx,by,bz,_p3[0],_p3[1],_p3[2], 4.5+2*ath, COL.cyan, .55+ath*.3);
+      sprite(bx,by,bz, 7+3.5*ath, COL.white, .5);
+    }
+    if(a.state==='dying'){
+      sprite(a.x, a.y+2, a.z-8, 26+10*Math.sin(S.T*21), COL.amber, .8);
+      sprite(a.x, a.y+4, a.z-4, 15, COL.red, .7);
+    }
+  }
   for(const s of S.shots){
     beam(s.x,s.y,s.z, s.x-s.vx*.028, s.y-s.vy*.028, s.z-s.vz*.028, 4.5, COL.cyan, 1.35);
     sprite(s.x,s.y,s.z, 12, COL.white, .95);
@@ -336,6 +365,14 @@ export function buildFX(){
       }
       for(const g of ATT.lancerEngines)
         sprite(e.x+g[0],e.y+g[1],e.z+g[2], 10, COL.purple, .9);
+    } else if(e.k==='wasp'){
+      /* single small bio dot pulsing fast */
+      sprite(e.x,e.y,e.z, 8+Math.sin(S.T*9+e.ph)*3, COL.bio, 1.0);
+    } else if(e.k==='ravager'){
+      /* abdomen glow: slow pulse, swelling right before it spits */
+      const bl=ATT.ravagerBelly, sw = e.cd<.4 ? Math.min(1,1-e.cd/.4) : 0;
+      sprite(e.x+bl[0],e.y+bl[1],e.z+bl[2],
+        (16+5*Math.sin(S.T*2.2+e.ph))*(1+sw*.9), COL.bio, .8+sw*.6);
     } else for(const g of ATT.cruiserEngines)
       sprite(e.x+g[0],e.y+g[1],e.z+g[2], 11, COL.red, .95);
   }
@@ -358,6 +395,14 @@ export function buildFX(){
       sprite(b.x+sp[0],b.y+sp[1],b.z+sp[2], 10+80*ch, COL.white, .5+.9*ch);
       for(const g of ATT.dreadGuns)
         sprite(b.x+g[0],b.y+g[1],b.z+g[2], 14, COL.red, .85);
+    } else if(type==='leviathan'){
+      /* maw glow grows with the lance charge and flares on a birth (b.flash);
+         vent glows pulse out of phase with each other */
+      const mw=ATT.levMaw, ch=b.chg||0, fl=Math.max(0,b.flash||0);
+      sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], (40+16*Math.sin(b.t*2.6))*(1+fl*2)+240*ch, COL.bio, .6+1.1*ch+fl);
+      sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], 14+90*ch, COL.white, .4+.9*ch);
+      for(const g of ATT.levVents)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 18+8*Math.sin(b.t*3+g[0]*.07+g[2]*.05), COL.bio, .8);
     } else {
       const c=ATT.bossCore;
       sprite(b.x+c[0],b.y+c[1],b.z+c[2], 120*pl, b.phase===3?COL.red:COL.green, 1.1);

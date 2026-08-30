@@ -42,6 +42,19 @@ export function drawHUD(){
       h2d.textAlign='center'; h2d.fillText('LOCK',p.x,p.y-r-8); }
     h2d.globalAlpha=1;
   }
+  // ally callsign tags — quiet cyan labels, flipping to a red MAYDAY flash
+  for(const a of S.allies||[]){
+    const p=toScreen(a.x,a.y,a.z); if(!p.vis) continue;
+    h2d.textAlign='center'; h2d.font='10px "Courier New",monospace';
+    if(a.state==='dying'){
+      if(Math.floor(S.T*8)%2){ h2d.globalAlpha=.9; h2d.fillStyle=css(COL.red);
+        h2d.fillText(a.dieT<.5?a.cs:'MAYDAY', p.x, p.y-26); }
+    } else {
+      h2d.globalAlpha=.55; h2d.fillStyle=css(COL.cyan);
+      h2d.fillText(a.cs, p.x, p.y-26);
+    }
+    h2d.globalAlpha=1;
+  }
   // S.score popups
   for(const f of S.pops){
     const p=toScreen(f.x,f.y,f.z); if(!p.vis) continue;
@@ -122,7 +135,8 @@ export function drawHUD(){
     h2d.font='bold '+Math.min(60,W*.06)+'px "Courier New",monospace';
     h2d.fillText('WARNING', W/2, H*.28);
     h2d.font='bold '+Math.min(24,W*.026)+'px "Courier New",monospace';
-    h2d.fillText((S.bossWarnName||'MOTHERSHIP')+' INBOUND', W/2, H*.28+34);
+    /* the warn phrase carries its own verb ('… INBOUND' / 'LEVIATHAN RISING') */
+    h2d.fillText(S.bossWarnName||'MOTHERSHIP INBOUND', W/2, H*.28+34);
     h2d.shadowBlur=0; h2d.globalAlpha=1;
   }
   if(S.tipT>0){
