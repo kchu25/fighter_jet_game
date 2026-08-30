@@ -2,7 +2,7 @@
    Frame: +X right, +Y up, +Z forward (nose direction, away from camera).
    Every mesh: non-indexed triangles, 9 floats/vertex -> px,py,pz, nx,ny,nz, r,g,b.
    Normals are flat per-face, derived from winding. Degenerate tris are dropped. */
-const MODELS = (function () {
+export const MODELS = (function () {
   "use strict";
 
   var PI = Math.PI, TAU = PI * 2, sin = Math.sin, cos = Math.cos;

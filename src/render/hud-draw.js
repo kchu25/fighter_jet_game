@@ -1,0 +1,124 @@
+/* ===== render/hud-draw.js — 2D HUD overlay (reticles, bars, banners) ===== */
+import { clamp, css } from '../core/utils.js';
+import { S, COL, FOVY } from '../game/state.js';
+import { h2d, W, H, DPR } from './gl.js';
+import { lockOn } from '../game/combat.js';
+import { toScreen } from './scene-draw.js';
+import { mouse } from '../game/input.js';
+
+/* ------------------------------------------------------------------ hud */
+export function bar(x,y,w,h,v,c){
+  h2d.fillStyle='rgba(255,255,255,.10)'; h2d.fillRect(x,y,w,h);
+  h2d.shadowColor=c; h2d.shadowBlur=10; h2d.fillStyle=c;
+  h2d.fillRect(x,y,w*clamp(v,0,1),h); h2d.shadowBlur=0;
+}
+export function drawHUD(){
+  h2d.setTransform(DPR,0,0,DPR,0,0);
+  h2d.clearRect(0,0,W,H);
+  if(!S.gameOn) return;
+  const m=28, bw=Math.min(300,W*.24), by=H-m;
+
+  // reticles
+  const t=lockOn();
+  const list=S.boss?S.enemies.concat([S.boss]):S.enemies;
+  for(const e of list){
+    if(e.z<260) continue;
+    const p=toScreen(e.x,e.y,e.z); if(!p.vis) continue;
+    if(p.x<-80||p.x>W+80||p.y<-80||p.y>H+80) continue;
+    const r=clamp(e.r*1.5/p.w*(H/(2*Math.tan(FOVY/2)))*1.0, 14, 260);
+    const on=(e===t);
+    h2d.globalAlpha=on?.95:.22;
+    h2d.strokeStyle=on?css(COL.red):css(COL.cyan);
+    h2d.lineWidth=on?2:1;
+    if(on){ h2d.shadowColor=css(COL.red); h2d.shadowBlur=14; }
+    const c=r*.4;
+    h2d.beginPath();
+    h2d.moveTo(p.x-r,p.y-r+c); h2d.lineTo(p.x-r,p.y-r); h2d.lineTo(p.x-r+c,p.y-r);
+    h2d.moveTo(p.x+r-c,p.y-r); h2d.lineTo(p.x+r,p.y-r); h2d.lineTo(p.x+r,p.y-r+c);
+    h2d.moveTo(p.x+r,p.y+r-c); h2d.lineTo(p.x+r,p.y+r); h2d.lineTo(p.x+r-c,p.y+r);
+    h2d.moveTo(p.x-r+c,p.y+r); h2d.lineTo(p.x-r,p.y+r); h2d.lineTo(p.x-r,p.y+r-c);
+    h2d.stroke(); h2d.shadowBlur=0;
+    if(on){ h2d.fillStyle=css(COL.red); h2d.font='11px "Courier New",monospace';
+      h2d.textAlign='center'; h2d.fillText('LOCK',p.x,p.y-r-8); }
+    h2d.globalAlpha=1;
+  }
+  // S.score popups
+  for(const f of S.pops){
+    const p=toScreen(f.x,f.y,f.z); if(!p.vis) continue;
+    h2d.globalAlpha=clamp(f.life/.85,0,1);
+    h2d.fillStyle=css(f.c); h2d.textAlign='center';
+    h2d.font='bold '+clamp(2600/p.w,11,34)+'px "Courier New",monospace';
+    h2d.shadowColor=css(f.c); h2d.shadowBlur=12;
+    h2d.fillText(f.txt,p.x,p.y); h2d.shadowBlur=0; h2d.globalAlpha=1;
+  }
+  // crosshair
+  const mx=mouse.has?mouse.x:W/2, my=mouse.has?mouse.y:H/2;
+  h2d.strokeStyle=css(COL.cyan); h2d.lineWidth=1.6; h2d.globalAlpha=.9;
+  h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=10;
+  h2d.beginPath();
+  h2d.moveTo(mx-22,my); h2d.lineTo(mx-8,my); h2d.moveTo(mx+8,my); h2d.lineTo(mx+22,my);
+  h2d.moveTo(mx,my-22); h2d.lineTo(mx,my-8); h2d.moveTo(mx,my+8); h2d.lineTo(mx,my+22);
+  h2d.stroke(); h2d.beginPath(); h2d.arc(mx,my,3,0,6.3); h2d.stroke();
+  h2d.shadowBlur=0; h2d.globalAlpha=1;
+
+  // bars
+  h2d.textAlign='left'; h2d.font='12px "Courier New",monospace';
+  h2d.fillStyle='#7fa8bd'; h2d.fillText('HULL', m, by-30);
+  bar(m, by-24, bw, 9, S.P.hp/100, S.P.hp<35?css(COL.red):css(COL.green));
+  bar(m, by-11, bw, 5, S.P.shield/100, css(COL.cyan));
+  h2d.textAlign='right';
+  h2d.fillStyle='#7fa8bd'; h2d.fillText('BOOST', W-m, by-30);
+  bar(W-m-bw, by-24, bw, 9, S.P.boost/100, css(COL.amber));
+
+  // S.score / distance
+  h2d.textAlign='left'; h2d.font='bold 30px "Courier New",monospace';
+  h2d.fillStyle='#eaffff'; h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=14;
+  h2d.fillText(String(S.score).padStart(6,'0'), m, m+24); h2d.shadowBlur=0;
+  if(S.combo>1){ h2d.font='bold 17px "Courier New",monospace'; h2d.fillStyle=css(COL.mag);
+    h2d.shadowColor=css(COL.mag); h2d.shadowBlur=12; h2d.fillText('x'+S.combo,m,m+48); h2d.shadowBlur=0; }
+  h2d.textAlign='right'; h2d.font='15px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
+  h2d.fillText((S.dist/1000).toFixed(1)+' KM', W-m, m+16);
+  if(S.P.weapon!=='std'){
+    h2d.fillStyle=S.P.weapon==='rapid'?css(COL.cyan):css(COL.mag);
+    h2d.fillText(S.P.weapon.toUpperCase()+'  '+S.P.wepT.toFixed(1)+'s', W-m, m+38);
+  }
+  // S.boss bar
+  if(S.boss){
+    const w=Math.min(560,W*.55), x=W/2-w/2, y=m+2;
+    h2d.textAlign='center'; h2d.font='12px "Courier New",monospace';
+    h2d.fillStyle=css(COL.purple); h2d.fillText('MOTHERSHIP :: PHASE '+S.boss.phase, W/2, y-4);
+    bar(x,y,w,12, S.boss.hp/S.boss.max, S.boss.phase===3?css(COL.red):css(COL.purple));
+  }
+  if(S.bossWarn>0 && Math.floor(S.T*8)%2){
+    h2d.globalAlpha=clamp(S.bossWarn/2.4,0,1); h2d.textAlign='center'; h2d.fillStyle=css(COL.red);
+    h2d.shadowColor=css(COL.red); h2d.shadowBlur=24;
+    h2d.font='bold '+Math.min(60,W*.06)+'px "Courier New",monospace';
+    h2d.fillText('WARNING', W/2, H*.28);
+    h2d.font='bold '+Math.min(24,W*.026)+'px "Courier New",monospace';
+    h2d.fillText('MOTHERSHIP INBOUND', W/2, H*.28+34);
+    h2d.shadowBlur=0; h2d.globalAlpha=1;
+  }
+  if(S.tipT>0){
+    h2d.globalAlpha=Math.min(1,S.tipT/1.2); h2d.textAlign='center';
+    h2d.font='12px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
+    h2d.fillText(S.tipMsg, W/2, H*.88);
+    h2d.globalAlpha=1;
+  }
+  // damage / pickup S.flash
+  if(S.flash>.002){ h2d.globalAlpha=S.flash; h2d.fillStyle=css(S.flashC); h2d.fillRect(0,0,W,H); h2d.globalAlpha=1; }
+  if(S.hitT>0){ h2d.globalAlpha=S.hitT*.9; h2d.strokeStyle=css(COL.red); h2d.lineWidth=26;
+    h2d.shadowColor=css(COL.red); h2d.shadowBlur=50; h2d.strokeRect(0,0,W,H);
+    h2d.shadowBlur=0; h2d.globalAlpha=1; }
+  if(S.hintT>0){
+    S.hintT-=1/60;
+    const a=Math.min(1,S.hintT)*.9;
+    h2d.globalAlpha=a; h2d.textAlign='center';
+    h2d.font='600 '+Math.round(H*.021)+'px "Courier New",monospace';
+    h2d.fillStyle=css(COL.cyan); h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=14;
+    h2d.fillText('W CLIMB   S DIVE   A/D BANK   CLICK GUNS   SPACE MISSILE   SHIFT BOOST   AA/DD ROLL',
+      W/2, H*.955);
+    h2d.shadowBlur=0; h2d.globalAlpha=1;
+  }
+  if(S.P.hp<35){ h2d.globalAlpha=.08+.13*Math.abs(Math.sin(S.T*6));
+    h2d.strokeStyle=css(COL.red); h2d.lineWidth=44; h2d.strokeRect(0,0,W,H); h2d.globalAlpha=1; }
+}

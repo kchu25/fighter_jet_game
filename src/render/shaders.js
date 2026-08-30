@@ -1,7 +1,7 @@
 /* SKYFALL INTERCEPTOR - GLSL module
    WebGL 1 / GLSL ES 1.00. No textures, everything procedural.
    Defines exactly one global: SHADERS */
-const SHADERS = {
+export const SHADERS = {
 
 /* ============================================================
    lit : low-poly ship meshes.
