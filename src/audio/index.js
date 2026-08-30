@@ -7,7 +7,7 @@ import { A } from './state.js';
 import { STEP, LOOKAHEAD_MS } from './constants.js';
 import { gainNode, lp, now, makeSoftCurve } from './primitives.js';
 import { buildEngine, setEngine } from './engine.js';
-import { laser, missile, boom, thud, pickup, alarm, siren } from './sfx.js';
+import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear } from './sfx.js';
 import { applyIntensity, scheduler, setIntensity } from './scheduler.js';
 import { rumble, sirenLoop, stopCine } from './cine-loops.js';
 import { warp, plasma, explode, helmetOn, breath, beep, cineRiser, jetPass } from './cine-oneshots.js';
@@ -130,6 +130,7 @@ export const AUDIO = {
   pickup: pickup,
   alarm: alarm,
   siren: siren,
+  sectorClear: sectorClear,
   setIntensity: setIntensity,
   toggle: toggle,
   suspend: suspend,

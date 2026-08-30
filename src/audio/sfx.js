@@ -2,7 +2,7 @@
    laser / missile / boom / thud / pickup / alarm / siren. */
 import { A } from './state.js';
 import { MAX_LASER, MAX_BOOM } from './constants.js';
-import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, clamp, fclamp, mtof, budget, voice } from './primitives.js';
+import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, clamp, fclamp, mtof, budget, voice, duckPump } from './primitives.js';
 
 A.laserSide = 1;
 export function laser() {
@@ -237,6 +237,61 @@ export function pickup() {
 
   voice(head, srcs);
   setTimeout(function () { try { send.disconnect(); } catch (e) { } }, 1200);
+}
+
+export function sectorClear() {
+  if (!A.ready || A.muted || !budget(8)) return;
+  var t = now() + 0.002;
+  var head = gainNode(0.3);
+  head.connect(A.sfxGain);
+  var send = gainNode(0.24);
+  head.connect(send); send.connect(A.fxDelay);
+  var srcs = [];
+
+  // rising A-E-A motif (A minor root/fifth/octave), soft plucked pairs
+  var notes = [57, 64, 69], gap = 0.22;
+  for (var i = 0; i < notes.length; i++) {
+    var nt = t + i * gap;
+    var f = mtof(notes[i]);
+    var last = i === notes.length - 1;
+    var g = pluck(nt, 0.34 + i * 0.05, last ? 0.9 : 0.42, 0.008);
+    var flt = lp(f * 4 + 900, 0.9);
+    flt.connect(g); g.connect(head);
+
+    var a = osc('triangle', f, nt);
+    var b = osc('sine', f * 2.002, nt);
+    a.detune.value = -4; b.detune.value = 5;
+    a.connect(flt); b.connect(flt);
+    var end = nt + (last ? 0.95 : 0.46);
+    a.start(nt); a.stop(end);
+    b.start(nt); b.stop(end);
+    srcs.push(a, b);
+  }
+
+  // gentle shimmer: high filtered-noise swell under the last note
+  var sb = bp(6200, 1.4);
+  var sg = A.ctx.createGain();
+  sg.gain.setValueAtTime(0.0001, t);
+  sg.gain.exponentialRampToValueAtTime(0.07, t + 0.55);
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+  sb.connect(sg); sg.connect(head);
+  var ss = noise(t, 1.55, 1.5); ss.connect(sb); srcs.push(ss);
+
+  // soft high sine halo, slow attack (octave above the top A)
+  var ho = osc('sine', mtof(81), t);
+  var hg = A.ctx.createGain();
+  hg.gain.setValueAtTime(0.0001, t);
+  hg.gain.exponentialRampToValueAtTime(0.05, t + 0.7);
+  hg.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+  ho.connect(hg); hg.connect(head);
+  ho.start(t); ho.stop(t + 1.65);
+  srcs.push(ho);
+
+  // let the cue breathe: dip the music's duck bus briefly, recover ~1s
+  duckPump(t, 0.3, 1.0);
+
+  voice(head, srcs);
+  setTimeout(function () { try { send.disconnect(); } catch (e) { } }, 2200);
 }
 
 export function alarm() {

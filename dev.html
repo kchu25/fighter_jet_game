@@ -52,6 +52,11 @@
   #newrec{display:none;margin-top:12px;font-size:clamp(13px,1.9vw,21px);letter-spacing:.34em;
     color:#ffd75e;text-shadow:0 0 18px rgba(255,215,94,.85);animation:pulse .78s infinite}
   #newrec.on{display:block}
+  #paused{background:rgba(4,5,12,.62)}
+  #paused h1{margin:0;font-size:clamp(26px,5vw,60px);letter-spacing:.3em;color:#fff;
+    text-shadow:0 0 14px var(--cyan),0 0 50px var(--cyan)}
+  #paused .sub{margin-top:14px;color:var(--cyan);letter-spacing:.3em;
+    font-size:clamp(10px,1.3vw,14px);opacity:.85;animation:pulse .78s infinite ease-in-out}
   #cine{position:fixed;inset:0;width:100%;height:100%;display:none;z-index:40;background:#000}
   #err{position:fixed;inset:0;z-index:99;display:none;padding:40px;background:#100;color:#f88;
     font-size:14px;white-space:pre-wrap;overflow:auto}
@@ -81,6 +86,11 @@
   <div class="stat">DISTANCE <span id="fDist">0</span> KM &middot; KILLS <span id="fKills">0</span></div>
   <div class="stat">BEST <span id="fBest">0</span></div>
   <button id="again" class="btn on">RE-LAUNCH</button>
+</div>
+
+<div id="paused" class="screen hidden">
+  <h1>PAUSED</h1>
+  <div class="sub">P / ESC TO RESUME</div>
 </div>
 
 <pre id="err"></pre>

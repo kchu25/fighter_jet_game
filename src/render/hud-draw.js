@@ -76,18 +76,44 @@ export function drawHUD(){
   h2d.fillText(String(S.score).padStart(6,'0'), m, m+24); h2d.shadowBlur=0;
   if(S.combo>1){ h2d.font='bold 17px "Courier New",monospace'; h2d.fillStyle=css(COL.mag);
     h2d.shadowColor=css(COL.mag); h2d.shadowBlur=12; h2d.fillText('x'+S.combo,m,m+48); h2d.shadowBlur=0; }
+  if((S.kills||0)>0){ h2d.font='12px "Courier New",monospace'; h2d.fillStyle='#7fa8bd';
+    h2d.globalAlpha=.75; h2d.fillText('K '+S.kills, m, m+(S.combo>1?66:46)); h2d.globalAlpha=1; }
   h2d.textAlign='right'; h2d.font='15px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
   h2d.fillText((S.dist/1000).toFixed(1)+' KM', W-m, m+16);
   if(S.P.weapon!=='std'){
     h2d.fillStyle=S.P.weapon==='rapid'?css(COL.cyan):css(COL.mag);
     h2d.fillText(S.P.weapon.toUpperCase()+'  '+S.P.wepT.toFixed(1)+'s', W-m, m+38);
   }
+  // sector / threat
+  const sy=S.P.weapon!=='std'?m+58:m+38;
+  h2d.font='13px "Courier New",monospace';
+  if((S.lullT||0)>0){
+    h2d.fillStyle=css(COL.green); h2d.globalAlpha=.55+.35*Math.abs(Math.sin(S.T*3));
+    h2d.fillText('SECTOR CLEAR', W-m, sy); h2d.globalAlpha=1;
+  }else{
+    h2d.fillStyle='#8fc9e0'; h2d.globalAlpha=.8;
+    h2d.fillText('SECTOR '+(S.sector||1), W-m, sy); h2d.globalAlpha=1;
+  }
+  if(S.threat!==undefined&&S.threatCap!==undefined){
+    const n=Math.min(8,Math.round(S.threatCap)), lit=clamp(Math.round(S.threat),0,n);
+    for(let i=0;i<n;i++){
+      h2d.globalAlpha=i<lit?.6:.16;
+      h2d.fillStyle=i<lit?css(COL.amber):'#8fc9e0';
+      h2d.fillRect(W-m-(n-i)*7, sy+7, 4, 8);
+    }
+    h2d.globalAlpha=1;
+  }
   // S.boss bar
   if(S.boss){
     const w=Math.min(560,W*.55), x=W/2-w/2, y=m+2;
     h2d.textAlign='center'; h2d.font='12px "Courier New",monospace';
     h2d.fillStyle=css(COL.purple); h2d.fillText('MOTHERSHIP :: PHASE '+S.boss.phase, W/2, y-4);
-    bar(x,y,w,12, S.boss.hp/S.boss.max, S.boss.phase===3?css(COL.red):css(COL.purple));
+    const hit=clamp(S.boss.hit||0,0,1);
+    let c=S.boss.phase===3?css(COL.red):css(COL.purple);
+    if(hit>0){ c='rgba(255,255,255,'+(.4+.6*hit).toFixed(2)+')'; }
+    bar(x,y,w,12, S.boss.hp/S.boss.max, c);
+    h2d.fillStyle='rgba(0,0,0,.55)';
+    h2d.fillRect(x+w*.66-1, y, 2, 12); h2d.fillRect(x+w*.33-1, y, 2, 12);
   }
   if(S.bossWarn>0 && Math.floor(S.T*8)%2){
     h2d.globalAlpha=clamp(S.bossWarn/2.4,0,1); h2d.textAlign='center'; h2d.fillStyle=css(COL.red);

@@ -61,6 +61,9 @@ export function zk(approx) { return Math.round(L * approx / TAU) * TAU / L; }
 var RIP_Z = zk(0.034);      // fine corrugation
 var DUNE_Z = zk(0.0126);    // transverse dune crests, ~500u apart
 var DUNE_Z2 = zk(0.0062);   // long swells, ~1000u apart
+/* tone-drift frequencies: exact integer multiples of TAU/L, so the palette
+   bands wrap seamlessly at the world period like everything else */
+var TONE1 = TAU / L, TONE2 = 2 * TAU / L;
 
 /* -------------------------------------------------------------- terrain */
 /* height above GROUND_Y at a world (x, z). z is taken modulo L implicitly. */
@@ -140,6 +143,16 @@ export function sandCol(h, slope, x, z) {
   /* bleached pan / dry wash floor — a pale ribbon snaking past */
   var w = ss(30, 6, h);
   r = lp(r, 0.80, w); g = lp(g, 0.66, w); b = lp(b, 0.55, w);
+
+  /* long-wavelength tone drift: whole stretches of the run lean rusty-warm,
+     then ashen-cool, then back, on the full world period. Multiplicative and
+     centred on 1 so nothing brightens — it only tilts the existing palette. */
+  var b1 = sin(z * TONE1 + 1.7), b2 = sin(z * TONE2 + 4.2);
+  var wv = 0.06 * b1;
+  r *= 1 + wv; g *= 1 + wv * 0.25; b *= 1 - wv;
+  var ash = ss(0.55, 0.95, 0.5 + 0.5 * b2) * 0.32;
+  var mn = (r + g + b) * 0.31;
+  r = lp(r, mn, ash); g = lp(g, mn, ash); b = lp(b, mn * 1.12, ash);
 
   var j = 0.94 + 0.12 * ih(flr(x / 37), flr(z / 41), 91);
   return [r * j, g * j, b * j];
@@ -418,9 +431,60 @@ export function pButte() {                 /* big flat-topped mesa for the far f
   return { d: M.d, rad: 560, h: 300 };
 }
 
+export function pRockArch() {              /* wind-carved natural rock arch */
+  var M = MB(), i, n = 9, sd = 97;
+  /* boxes marched along a semicircular arc, rolled to follow the tangent —
+     same trick as pArch's span, but rock-hued and left whole */
+  for (i = 0; i < n; i++) {
+    var t = (i + 0.5) / n, a = t * Math.PI;
+    var x = -cos(a) * 168, y = sin(a) * 208;
+    var phi = Math.atan2(cos(a) * 208, sin(a) * 168);
+    var th = 30 + 28 * (1 - sin(a)) + 8 * (ih(i, 1, sd) - 0.5);
+    M.box(x, y, (ih(i, 2, sd) - 0.5) * 16, 44, th, 24 + 14 * (1 - sin(a)),
+          0, phi + (ih(i, 3, sd) - 0.5) * 0.14, i & 1 ? ROCK : ROCK2);
+  }
+  /* buttressed feet + a chunk that already let go */
+  var f1 = blob(sd + 1, 60, 44, 5, ROCK2, ROCK, 0.5);
+  for (i = 0; i < f1.d.length; i += 9) f1.d[i] -= 168;
+  var f2 = blob(sd + 2, 54, 38, 5, ROCK, ROCK3, 0.5);
+  for (i = 0; i < f2.d.length; i += 9) f2.d[i] += 168;
+  for (i = 0; i < f1.d.length; i++) M.d.push(f1.d[i]);
+  for (i = 0; i < f2.d.length; i++) M.d.push(f2.d[i]);
+  M.box(74, 9, 88, 22, 11, 16, 0.8, 0.25, ROCK3);
+  return { d: M.d, rad: 240, h: 250 };
+}
+
+export function pCrash() {                 /* shot-down interceptor, nose in the sand */
+  var M = MB(), i, sd = 57;
+  /* fuselage loft, tail up out of the gouge it dug on the way in */
+  var secs = [[-70, 9, 7], [-20, 16, 12], [34, 20, 14], [86, 15, 11], [128, 9, 8]];
+  var loops = [];
+  for (i = 0; i < secs.length; i++) {
+    var z = secs[i][0], w = secs[i][1], hh = secs[i][2], yy = 4 + i * 12;
+    loops.push([[w, yy - hh, z], [w * 0.5, yy + hh, z],
+                [-w * 0.5, yy + hh, z], [-w, yy - hh, z]]);
+  }
+  for (i = 0; i < loops.length - 1; i++) M.skin(loops[i], loops[i + 1], i & 1 ? METAL2 : DARKS, 0.7);
+  M.cap(loops[loops.length - 1], RUST, 4);
+  /* one wing shorn off and thrown clear, the other planted in the dirt */
+  M.box(64, 30, 42, 58, 3, 24, 0.5, 0.24, METAL2);
+  M.box(-58, 9, 66, 44, 3, 20, -0.9, -0.12, RUST);
+  M.box(0, 56, 116, 3, 22, 15, 0, 0.35, METAL);   /* snapped tail fin */
+  /* gouge berms + debris trail leading back to the impact line */
+  M.box(30, 5, -160, 10, 6, 110, 0.06, 0.3, ROCK2);
+  M.box(-30, 5, -170, 10, 6, 120, -0.05, -0.3, ROCK2);
+  for (i = 0; i < 4; i++)
+    M.box(-40 + 26 * i, 6, -240 - 60 * i, 8 + 6 * ih(i, 1, sd), 5, 7,
+          ih(i, 2, sd) * 3, 0.2, i & 1 ? METAL2 : DARKS);
+  /* cockpit strip still faintly live */
+  M.box(0, 28, 10, 2, 2, 24, 0, 0, NEONM);
+  return { d: M.d, rad: 200, h: 90 };
+}
+
 var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
-                pRubble, pRockA, pRockB, pSpire, pButte];
-var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11;
+                pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash];
+var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11,
+    P_ARCHR = 12, P_CRASH = 13;
 
 /* ------------------------------------------------------------ placement */
 export function lcg(seed) {
@@ -436,16 +500,20 @@ export function makeSpots() {
   var R = lcg(20260829), out = [], z = 0, lastBig = -9999;
   /* small = filler, mid = structures, big = the ones you feel go past,
      far = horizon silhouettes. Gaps are skewed so ruins clump then vanish. */
-  var MID = [0, 1, 2, 3, 4, 5, 6];
-  var BIG = [0, 3, 4, 10, 6, 1];
+  var MID = [0, 1, 2, 3, 4, 5, 6, P_CRASH, P_ARCHR];
+  var BIG = [0, 3, 4, 10, 6, 1, P_ARCHR, P_CRASH];
+  var FIL = [P_RUBBLE, P_ROCKA, P_ROCKB, P_ROCKA, P_SPIRE, P_ROCKA];
   while (z < L - 200) {
     var g = R();
-    z += 60 + g * g * 900;
+    /* regional clumping: the same gap distribution, squeezed and stretched on
+       a long cycle, so ruins come in belts with genuinely empty desert between */
+    var dens = 0.72 + 0.56 * ss(0.25, 0.75, 0.5 + 0.5 * sin(z / L * TAU * 2 + 0.9));
+    z += (60 + g * g * 900) * dens;
     if (z >= L - 200) break;
     var u = R(), side = R() < 0.5 ? -1 : 1, p, s, x, rad;
 
     if (u < 0.44) {                                  /* filler scatter */
-      p = [P_RUBBLE, P_ROCKA, P_ROCKB, P_ROCKA, P_SPIRE][(R() * 5) | 0];
+      p = FIL[(R() * FIL.length) | 0];
       s = 0.55 + R() * 1.05;
       x = side * (200 + pow(R(), 1.6) * 2500);
     } else if (u < 0.70) {                           /* mid-field structure */

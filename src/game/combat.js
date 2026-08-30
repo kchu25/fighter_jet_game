@@ -48,22 +48,28 @@ export function lockOn(){
 }
 
 /* ------------------------------------------------------------------ spawning */
-export function spawnDrone(){
+/* both spawners take an optional overrides bag so the director can place
+   formation members ({x,y,ph,spdMul,ampMul,cdMul,c}); bare calls (volley(),
+   old callers) behave exactly as before */
+export function spawnDrone(o={}){
   /* early drones fly nearly straight — a hard jink is unleadable at a 0.4s
      bullet flight time, so the evasion ramps in with distance */
   const ev=.55+.45*Math.min(1,S.ddist/30000);
   /* on the first-run ramp the early drones close slower and jink less, so a
      new pilot gets targets that hold still long enough to be learned on */
   const soft = S.easeT>0 ? 1-S.easeT/EASE_LEN : 1;
-  S.enemies.push({k:'drone',x:rnd(-250,250),y:rnd(-140,150),z:SPAWN_Z,hp:2,r:32,rz:46,
-    ph:rnd(0,6.28),amp:rnd(90,240)*ev*lerp(.45,1,soft),
-    spd:(rnd(1180,1480)+S.waveN*12)*(.78+.22*ev)*lerp(.66,1,soft),c:COL.mag,roll:0,yaw:0});
+  /* waveN speed bonus is clamped — waves are endless, drone speed must not be */
+  S.enemies.push({k:'drone',x:o.x??rnd(-250,250),y:o.y??rnd(-140,150),z:SPAWN_Z,hp:2,r:32,rz:46,
+    ph:o.ph??rnd(0,6.28),amp:rnd(90,240)*ev*lerp(.45,1,soft)*(o.ampMul||1),
+    spd:(rnd(1180,1480)+Math.min(25,S.waveN)*12)*(.78+.22*ev)*lerp(.66,1,soft)*(o.spdMul||1),
+    c:o.c||COL.mag,roll:0,yaw:0});
 }
-export function spawnCruiser(){
+export function spawnCruiser(o={}){
   const hp = 9+S.waveN*.65;
-  S.enemies.push({k:'cruiser',x:rnd(-240,240),y:rnd(-120,130),z:SPAWN_Z,hp,max:hp,r:64,rz:64,
-    ph:rnd(0,6.28),amp:rnd(40,110),spd:rnd(640,780),c:COL.amber,roll:0,yaw:0,
-    cd:rnd(.4,1.1)+(S.easeT>0?1.5:0)});
+  S.enemies.push({k:'cruiser',x:o.x??rnd(-240,240),y:o.y??rnd(-120,130),z:SPAWN_Z,hp,max:hp,r:64,rz:64,
+    ph:o.ph??rnd(0,6.28),amp:rnd(40,110)*(o.ampMul||1),spd:rnd(640,780)*(o.spdMul||1),
+    c:o.c||COL.amber,roll:0,yaw:0,
+    cd:rnd(.4,1.1)*(o.cdMul||1)+(S.easeT>0?1.5:0)});
 }
 export function spawnCrate(){
   S.crates.push({x:rnd(-220,220),y:rnd(-120,130),z:SPAWN_Z,

@@ -15,13 +15,23 @@ import { drawHUD } from './render/hud-draw.js';
 import { burst, shock, sparks, shard } from './game/fx.js';
 
 /* ------------------------------------------------------------------ loop */
-export let last=0;
+export let last=0, paused=false;
 export function frame(t){
   requestAnimationFrame(frame);
-  const dt=Math.min(.05,(t-last)/1000||.016); last=t;
-  if(S.gameOn) update(dt); else { S.T+=dt; S.shake*=.9; S.flash=Math.max(0,S.flash-dt*2); }
+  const dt=Math.min(.05,(t-last)/1000||.016); last=t;   // last updates even while paused, so dt can't spike on resume
+  if(S.gameOn){ if(!paused) update(dt); }
+  else { S.T+=dt; S.shake*=.9; S.flash=Math.max(0,S.flash-dt*2); }
   render(); drawHUD();
 }
+
+/* ----------------------------------------------------------------- pause */
+export const pausedEl=document.getElementById('paused');
+export function setPaused(on){
+  if(!S.gameOn || on===paused) return;
+  paused=on; pausedEl.classList.toggle('hidden', !on);
+  if(on) AUDIO.suspend(); else AUDIO.resume();
+}
+export function togglePause(){ setPaused(!paused); }
 
 /* ------------------------------------------------------------------ flow */
 export const introEl=document.getElementById('intro'), overEl=document.getElementById('over');
@@ -61,6 +71,7 @@ export function start(){
     S.tipT = 6; S.tipMsg = 'CLEAR AIRSPACE  ·  GET A FEEL FOR HER';
   }
   introEl.classList.add('hidden'); overEl.classList.add('hidden');
+  paused=false; pausedEl.classList.add('hidden');
   S.gameOn=true; S.hintT=firstRun?9:5.5; last=performance.now();
 }
 export function gameOver(){
