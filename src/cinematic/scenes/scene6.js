@@ -49,17 +49,28 @@ export function scene6(u, dt) {
     }
   }
 
-  /* wingmen falling back past the camera */
+  /* what is left of the wing, falling away behind us — stricken,
+     trailing smoke, dropping out of the fight one by one.  They are
+     not escorts anymore: they are the reason the next line is true. */
   for (let i = 0; i < WING.length; i++) {
     const w = WING[i], q = acc * w.k;
     const s = w.s0 * (1 + q * 5.2);
     const x = 800 + (w.x0 - 800) * (1 + q * 3.4);
-    const y = w.y0 + q * 560;
+    const y = w.y0 + q * 560 + q * q * 220;
     if (y > VH + 240 || x < -400 || x > VW + 400) continue;
-    if (A) A.jet(I.c, x, y, s, (w.x0 - 800) * 0.0012, 0.85, [124, 150, 186]);
+    const hurt = i % 3 !== 1;                 // most of them are hit
+    if (A) A.jet(I.c, x, y, s,
+      (w.x0 - 800) * 0.0012 + (hurt ? q * (i % 2 ? 0.9 : -0.9) : 0),
+      hurt ? 0 : 0.85, hurt ? [104, 96, 104] : [124, 150, 186]);
     if (q > 0.1 && i % 2 === 0)
-      part(x, y + 30 * s, rnd(-16, 16), 120 + 260 * q, rnd(0.3, 0.6), rnd(5, 13) * (s + 0.4), C.cyan, { d: 0.92 });
+      part(x, y + 30 * s, rnd(-16, 16), 120 + 260 * q, rnd(0.3, 0.6),
+        rnd(5, 13) * (s + 0.4), hurt ? (Math.random() < 0.35 ? C.orange : C.smoke) : C.cyan,
+        { add: !hurt || Math.random() < 0.35, d: 0.92 });
   }
+  once('c6last', T5 + 1.15, function () {
+    sfx('boom', 1.0); I.shake = Math.max(I.shake, 10);
+    I.flash = Math.max(I.flash, 0.22); I.flashCol = C.orange;
+  });
 
   /* the player's interceptor pulling to the front */
   const pjS = 2.35 - acc * 0.85;
@@ -91,7 +102,7 @@ export function scene6(u, dt) {
 
   if (u > 0.45 && u < 3.0) {
     const a = ramp(0.45, 0.95, u) * (1 - ramp(2.4, 3.0, u));
-    txt('INTERCEPTOR 01  —  YOU HAVE THE LEAD', VW / 2, 820, 26, rgba(C.cyan, a), 8, 'center');
+    txt('INTERCEPTOR 03  —  YOU ARE THE ONLY BIRD IN THE AIR', VW / 2, 820, 26, rgba(C.cyan, a), 8, 'center');
   }
   once('c6flash', T5 + 4.05, function () { I.flash = 0.9; I.flashCol = C.ice; I.shake = 22; });
   vignette(0.55);

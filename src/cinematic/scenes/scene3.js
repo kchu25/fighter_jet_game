@@ -365,6 +365,47 @@ export function scene3(u, dt) {
     }
   }
 
+  /* ---- the strike arrives EARLY: the base takes its first hits while
+     he is still on the rail.  The routine launch becomes a scramble. ---- */
+  const raid = ramp(3.26, 3.52, u);
+  once('c3hit1', T2 + 3.30, function () {
+    sfx('boom', 0.7); sfx('alarm');
+    I.shake = Math.max(I.shake, 15); I.flash = Math.max(I.flash, 0.34); I.flashCol = C.orange;
+    for (let i = 0; i < 12; i++)
+      part(1230 + rnd(-90, 90), 340 + rnd(-60, 60), rnd(-220, 220), rnd(-160, 120),
+        rnd(0.3, 0.7), rnd(3, 8), i % 3 ? C.orange : C.red, { d: 0.94 });
+  });
+  once('c3siren', T2 + 3.46, function () { sfx('siren'); });
+  once('c3hit2', T2 + 3.88, function () {
+    sfx('boom', 1.1); sfx('alarm');
+    I.shake = Math.max(I.shake, 22); I.flash = Math.max(I.flash, 0.42); I.flashCol = C.red;
+    for (let i = 0; i < 14; i++)
+      part(220 + rnd(-100, 100), 260 + rnd(-90, 90), rnd(-260, 260), rnd(-180, 140),
+        rnd(0.3, 0.8), rnd(3, 9), i % 3 ? C.orange : C.red, { d: 0.94 });
+  });
+  if (raid > 0.01) {
+    /* distant impact flares flickering deep in the bay */
+    I.c.save();
+    I.c.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 3; i++) {
+      const fl = raid * Math.max(0, Math.sin(u * (17 + i * 7.3) + i * 2.1)) *
+        (Math.sin(u * (5.1 + i * 1.7)) > 0.55 ? 1 : 0);
+      if (fl < 0.05) continue;
+      I.c.globalAlpha = 0.34 * fl;
+      I.c.drawImage(glow(i ? C.orange : C.red),
+        180 + i * 520 - 140, 200 + (i % 2) * 180 - 140, 280, 280);
+    }
+    /* red-alert wash strobing through the bay lighting */
+    I.c.globalAlpha = raid * (0.05 + 0.09 * pulse(u, 1.5));
+    I.c.fillStyle = rgba(C.red, 1);
+    I.c.fillRect(0, 0, VW, VH);
+    I.c.restore();
+    if (pulse(u, 2.6) > 0.35)
+      txt('⚠ BASE UNDER ATTACK — SCRAMBLE SCRAMBLE SCRAMBLE ⚠', VW / 2, 96, 24,
+        rgba(C.red, 0.9 * raid), 6, 'center', 'bold');
+    I.shake = Math.max(I.shake, 3.5 * raid);
+  }
+
   stepParts(dt, 0); drawParts();
   scanlines(0.13);
   vignette(0.62 + 0.22 * sealed);

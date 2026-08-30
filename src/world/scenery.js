@@ -1,6 +1,9 @@
 /* ===== world/scenery.js — desert scenery module =====
    Streaming ground: dunes, mesas, a meandering dry wash, and scattered ruins
-   that recycle on a fixed world period so the world runs forever.
+   that recycle on a fixed world period so the world runs forever. The period
+   is split into four biome bands (open dune sea, shattered city, canyon-lands,
+   dry seabed) with their own prop pools, palettes and terrain profiles, all
+   cross-faded with wrap-safe periodic weights so the loop never seams.
 
    Frame matches the rest of the game: +X right, +Y up, +Z forward.
    Every mesh is non-indexed triangles, 9 floats/vertex (pos, normal, colour),
@@ -65,6 +68,21 @@ var DUNE_Z2 = zk(0.0062);   // long swells, ~1000u apart
    bands wrap seamlessly at the world period like everything else */
 var TONE1 = TAU / L, TONE2 = 2 * TAU / L;
 
+/* ---- biome bands: the period is split into four ~4km stretches so the
+   player passes through recognizably different country — dune sea, then a
+   shattered city, then canyon-lands, then a dry seabed. Weights use
+   circular distance so band 0 wraps cleanly across z = 0/L, and adjacent
+   weights are exactly complementary through the ~10%-of-a-band blend zone
+   (smoothstep is point-symmetric about its midpoint), so terrain, palette
+   and prop pools all cross-fade without a seam. */
+var BIO_W = L / 4, BIO_HW = BIO_W / 2, BIO_BL = 400;
+export function bioW(z, i) {
+  var dd = z - (i + 0.5) * BIO_W;
+  dd -= L * Math.round(dd / L);
+  return ss(BIO_HW + BIO_BL, BIO_HW - BIO_BL, abs(dd));
+}
+var SEA_Z = zk(0.008);      // seabed ripple ridges, ~780u apart
+
 /* -------------------------------------------------------------- terrain */
 /* height above GROUND_Y at a world (x, z). z is taken modulo L implicitly. */
 export function terr(x, z) {
@@ -73,18 +91,30 @@ export function terr(x, z) {
   var corr = ss(190, 520, abs(x));
   var corr2 = ss(320, 1100, abs(x));
 
+  /* biome weights (wrap-safe). Band 0, the dune sea, is the untinted
+     baseline so it needs no weight of its own. */
+  var wc = bioW(z, 1), wk = bioW(z, 2), wb = bioW(z, 3);
+
   var big = vn(x, z, 2000, 11);
   var mid = vn(x, z,  800, 23);
   var fin = vn(x, z,  400, 37);
   var mic = vn(x, z,  200, 53);
   var dune = big * 0.50 + mid * 0.30 + fin * 0.14 + mic * 0.06;
 
-  /* rolling dunes */
-  var h = (dune - 0.30) * 340 * corr;
+  /* rolling dunes — subdued through the city, flattened on the dry seabed */
+  var h = (dune - 0.30) * 340 * corr * (1 - 0.35 * wc - 0.62 * wb);
 
-  /* mesas: a hard terrace on the low band gives flat tops + steep risers */
+  /* mesas: a hard terrace on the low band gives flat tops + steep risers.
+     The canyon band amps them; city and seabed suppress them. */
   var m = ss(0.52, 0.62, big * 0.70 + mid * 0.30);
-  h += m * (230 + 300 * vn(x + 930, z + 410, 2000, 5)) * corr2;
+  h += m * (230 + 300 * vn(x + 930, z + 410, 2000, 5)) * corr2
+         * (1 + 1.25 * wk - 0.55 * wc - 0.85 * wb);
+
+  /* canyon-lands: continuous flanking walls narrow the visual corridor */
+  h += wk * ss(360, 860, abs(x)) * (140 + 240 * mid);
+
+  /* dry seabed: low ripple ridges are all the relief that is left */
+  h += wb * corr * 15 * abs(sin(z * SEA_Z + x * 0.003 + big * 2));
 
   /* ridged erosion gullies cut into the flanks */
   var rg = 1 - abs(2 * fin - 1);
@@ -153,6 +183,28 @@ export function sandCol(h, slope, x, z) {
   var ash = ss(0.55, 0.95, 0.5 + 0.5 * b2) * 0.32;
   var mn = (r + g + b) * 0.31;
   r = lp(r, mn, ash); g = lp(g, mn, ash); b = lp(b, mn * 1.12, ash);
+
+  /* biome base tint on top of the drift: each ~4km band gets its own cast,
+     cross-faded over the same ~10%-of-a-band zone as the terrain (bioW),
+     so there is never a seam — the dune-sea band keeps the warm sand above.
+     All lerps head toward dark targets; nothing brightens. */
+  var wc = bioW(z, 1), wk = bioW(z, 2), wb = bioW(z, 3);
+  if (wc > 0.002) {                       /* shattered city: cool ash */
+    var am = (r + g + b) * 0.30;
+    r = lp(r, am * 0.94, wc * 0.55); g = lp(g, am, wc * 0.55); b = lp(b, am * 1.24, wc * 0.55);
+  }
+  if (wk > 0.002) {                       /* canyon-lands: red rock */
+    r = lp(r, 0.50, wk * 0.5); g = lp(g, 0.24, wk * 0.5); b = lp(b, 0.15, wk * 0.5);
+  }
+  if (wb > 0.002) {                       /* dry seabed: grey-green bed */
+    r = lp(r, 0.33, wb * 0.6); g = lp(g, 0.37, wb * 0.6); b = lp(b, 0.28, wb * 0.6);
+    /* mudcrack grid on the flats: triangle-wave cell borders. The z cell
+       (250) divides L so the crack pattern wraps with everything else. */
+    var e1 = abs(2 * (x / 230 - flr(x / 230)) - 1);
+    var e2 = abs(2 * (z / 250 - flr(z / 250)) - 1);
+    var ck = ss(0.86, 0.99, e1 > e2 ? e1 : e2) * wb * ss(60, 20, h);
+    r *= 1 - 0.35 * ck; g *= 1 - 0.35 * ck; b *= 1 - 0.35 * ck;
+  }
 
   var j = 0.94 + 0.12 * ih(flr(x / 37), flr(z / 41), 91);
   return [r * j, g * j, b * j];
@@ -481,10 +533,62 @@ export function pCrash() {                 /* shot-down interceptor, nose in the
   return { d: M.d, rad: 200, h: 90 };
 }
 
+export function pBlocks() {                /* gutted tower blocks — city band */
+  var M = MB(), i, sd = 63;
+  var cfg = [[0, 0, 44, 310, 0.12], [112, 76, 36, 205, 0.5], [-100, -58, 30, 140, 0.9]];
+  for (i = 0; i < cfg.length; i++) {
+    var cx = cfg[i][0], cz = cfg[i][1], w = cfg[i][2], H = cfg[i][3], ry = cfg[i][4];
+    M.box(cx, H * 0.5, cz, w, H * 0.5, w, ry, 0, i & 1 ? METAL2 : DARKS);
+    /* ragged parapet: offset slabs jutting past the roofline */
+    M.box(cx + w * 0.5, H + 22, cz, w * 0.45, 24 + 30 * ih(i, 2, sd), w * 0.5, ry, 0.06, DARKS);
+    M.box(cx - w * 0.4, H + 10, cz - w * 0.3, w * 0.4, 14 + 22 * ih(i, 3, sd), w * 0.42, ry, -0.05, METAL2);
+    /* one column of windows still lit — spans the block so both faces glow */
+    M.box(cx, H * 0.52, cz, w * 0.15, H * 0.32, w + 2.5, ry, 0, i ? NEONM : NEON);
+  }
+  /* street rubble heaped between the blocks */
+  for (i = 0; i < 4; i++)
+    M.box(-60 + 50 * i, 7, 40 - 60 * ih(i, 4, sd), 14 + 10 * ih(i, 5, sd), 7, 12,
+          ih(i, 6, sd) * 3, 0.2, i & 1 ? STONE2 : DARKS);
+  return { d: M.d, rad: 170, h: 360 };
+}
+
+export function pShip() {                  /* beached warship, listing on the dry bed */
+  var M = MB(), i, k, roll = 0.22;
+  var secs = [[-330, 26, 30], [-210, 52, 46], [-60, 62, 52], [110, 58, 50], [250, 40, 40], [330, 16, 26]];
+  var loops = [];
+  for (i = 0; i < secs.length; i++) {
+    var z = secs[i][0], w = secs[i][1], hh = secs[i][2], yy = hh * 0.55;
+    var lo = [[w, yy, z], [w * 0.85, yy + hh, z], [-w * 0.85, yy + hh, z],
+              [-w, yy, z], [-w * 0.6, yy - hh * 0.9, z], [w * 0.6, yy - hh * 0.9, z]];
+    for (k = 0; k < 6; k++) {              /* bake the list into the loft */
+      var x0 = lo[k][0], y0 = lo[k][1];
+      lo[k][0] = x0 * cos(roll) - y0 * sin(roll);
+      lo[k][1] = x0 * sin(roll) + y0 * cos(roll) - 4;
+    }
+    loops.push(lo);
+  }
+  for (i = 0; i < loops.length - 1; i++) M.skin(loops[i], loops[i + 1], i & 1 ? METAL2 : RUST, 0.72);
+  M.cap(loops[0], DARKS, -6);
+  M.cap(loops[loops.length - 1], DARKS, -6);
+  /* superstructure + snapped mast + a turret with its barrel askew */
+  M.box(26, 118, -40, 34, 44, 70, 0, roll, METAL2);
+  M.box(34, 178, -56, 20, 24, 30, 0.1, roll, DARKS);
+  M.box(42, 226, -60, 4, 30, 4, 0, roll + 0.12, METAL);
+  M.box(24, 112, 150, 12, 16, 34, 0, roll, METAL2);
+  M.box(52, 126, 152, 34, 4, 5, 0, roll + 0.5, RUST);
+  /* keel breach: spilled plating on the low side */
+  M.box(-96, 12, 60, 30, 10, 44, 0.4, -0.3, RUST);
+  M.box(-118, 8, -120, 26, 8, 30, 1.1, 0.2, METAL2);
+  /* one running-light strip still burning along the hull */
+  M.box(44, 86, 0, 2.5, 2.5, 210, 0, roll, NEON);
+  return { d: M.d, rad: 360, h: 260 };
+}
+
 var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
-                pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash];
+                pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash,
+                pBlocks, pShip];
 var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11,
-    P_ARCHR = 12, P_CRASH = 13;
+    P_ARCHR = 12, P_CRASH = 13, P_BLOCKS = 14, P_SHIP = 15;
 
 /* ------------------------------------------------------------ placement */
 export function lcg(seed) {
@@ -499,38 +603,51 @@ export function ident(o) { o[0] = o[5] = o[10] = o[15] = 1; o[1] = o[2] = o[3] =
 export function makeSpots() {
   var R = lcg(20260829), out = [], z = 0, lastBig = -9999;
   /* small = filler, mid = structures, big = the ones you feel go past,
-     far = horizon silhouettes. Gaps are skewed so ruins clump then vanish. */
-  var MID = [0, 1, 2, 3, 4, 5, 6, P_CRASH, P_ARCHR];
-  var BIG = [0, 3, 4, 10, 6, 1, P_ARCHR, P_CRASH];
-  var FIL = [P_RUBBLE, P_ROCKA, P_ROCKB, P_ROCKA, P_SPIRE, P_ROCKA];
+     far = horizon silhouettes — but every category now draws from the pool
+     of whichever biome band the spot falls in. gap scales the spacing, so
+     the dune sea stays nearly empty (the contrast IS the variety) while
+     the city crowds in. This replaces the old sine-belt clumping. */
+  var POOL = [
+    /* 0 open dune sea      */ { fil: [P_ROCKA, P_RUBBLE, P_ROCKA], mid: [6, P_CRASH, P_ROCKB],
+                                 big: [P_CRASH, 6, 1], horiz: [P_BUTTE, P_SPIRE],
+                                 gap: 2.4, filP: 0.60, midP: 0.78, bigGap: 3400 },
+    /* 1 shattered city     */ { fil: [P_RUBBLE, P_RUBBLE, P_ROCKA], mid: [0, 2, 3, 5, P_BLOCKS, 1, P_BLOCKS],
+                                 big: [P_BLOCKS, 0, 3, 2], horiz: [3, 0],
+                                 gap: 0.5, filP: 0.32, midP: 0.68, bigGap: 1400 },
+    /* 2 canyon-lands       */ { fil: [P_ROCKA, P_ROCKB, P_ROCKB], mid: [P_SPIRE, P_ROCKB, P_ARCHR, 6],
+                                 big: [P_BUTTE, P_ARCHR, P_SPIRE], horiz: [P_BUTTE, P_BUTTE, P_SPIRE],
+                                 gap: 0.85, filP: 0.38, midP: 0.62, bigGap: 1800 },
+    /* 3 dry seabed         */ { fil: [P_RUBBLE, P_ROCKA], mid: [4, P_CRASH, 5],
+                                 big: [P_SHIP, 4], horiz: [P_SPIRE, P_BUTTE],
+                                 gap: 1.6, filP: 0.48, midP: 0.66, bigGap: 2400 },
+  ];
   while (z < L - 200) {
     var g = R();
-    /* regional clumping: the same gap distribution, squeezed and stretched on
-       a long cycle, so ruins come in belts with genuinely empty desert between */
-    var dens = 0.72 + 0.56 * ss(0.25, 0.75, 0.5 + 0.5 * sin(z / L * TAU * 2 + 0.9));
-    z += (60 + g * g * 900) * dens;
+    var B = POOL[flr(z / BIO_W) % 4];
+    z += (60 + g * g * 800) * B.gap;
     if (z >= L - 200) break;
     var u = R(), side = R() < 0.5 ? -1 : 1, p, s, x, rad;
+    var can = B === POOL[2];   /* canyon pulls everything in toward the lane */
 
-    if (u < 0.44) {                                  /* filler scatter */
-      p = FIL[(R() * FIL.length) | 0];
+    if (u < B.filP) {                                /* filler scatter */
+      p = B.fil[(R() * B.fil.length) | 0];
       s = 0.55 + R() * 1.05;
-      x = side * (200 + pow(R(), 1.6) * 2500);
-    } else if (u < 0.70) {                           /* mid-field structure */
-      p = MID[(R() * MID.length) | 0];
+      x = side * (200 + pow(R(), 1.6) * (can ? 1500 : 2500));
+    } else if (u < B.midP) {                         /* mid-field structure */
+      p = B.mid[(R() * B.mid.length) | 0];
       s = 0.8 + R() * 0.9;
       rad = protos ? protos[p].rad : 200;
-      x = side * (430 + rad * s * 0.5 + R() * 1000);
-    } else if (u < 0.82 && z - lastBig > 2300) {     /* close pass */
+      x = side * (430 + rad * s * 0.5 + R() * (can ? 600 : 1000));
+    } else if (u < B.midP + 0.14 && z - lastBig > B.bigGap) {  /* close pass */
       lastBig = z;
-      p = BIG[(R() * BIG.length) | 0];
-      s = 1.35 + R() * 1.25;
+      p = B.big[(R() * B.big.length) | 0];
+      s = (p === P_SHIP ? 1.7 : 1.35) + R() * 1.25;
       rad = protos ? protos[p].rad : 200;
-      x = side * (300 + rad * s + R() * 230);
+      x = side * ((can ? 260 : 300) + rad * s + R() * 230);
     } else {                                          /* horizon silhouette */
-      p = R() < 0.62 ? P_BUTTE : P_SPIRE;
-      s = (p === P_BUTTE ? 1.9 : 2.6) + R() * 2.2;
-      x = side * (1250 + R() * 2600);
+      p = B.horiz[(R() * B.horiz.length) | 0];
+      s = (p === P_BUTTE ? 1.9 : p === P_SPIRE ? 2.6 : 1.5) + R() * 2.2;
+      x = side * (can ? 850 + R() * 1500 : 1250 + R() * 2600);
     }
     /* hard guarantee: nothing tall may reach into the flight envelope
        (|x| <= BX 238 plus the jet's span). Low rubble may sit anywhere. */

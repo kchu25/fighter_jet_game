@@ -20,7 +20,7 @@ export const A = {
   noiseBuf: null,
 
   // voice accounting
-  voices: 0, laserVoices: 0, boomVoices: 0, lastLaserT: -1,
+  voices: 0, laserVoices: 0, boomVoices: 0, lastLaserT: -1, lastMineT: -1,
 
   // music scheduler
   timerId: null, nextNoteTime: 0, stepCount: 0,

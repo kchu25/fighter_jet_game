@@ -9,8 +9,31 @@ import {
   S, COL, FOVY, FOG_NEAR, FOG_FAR, GROUND_Y, CEIL_Y, GRID_STEP, BOLT_TAIL,
   CAM_BACK, CAM_UP
 } from '../game/state.js';
-import { gl, glc, W, H, attribs, upload, Plit, Pspr, Psky, MESH, ATT, skyBuf } from './gl.js';
+import { gl, glc, W, H, attribs, upload, Plit, Pspr, Psky, MESH, ATT, skyBuf, mesh } from './gl.js';
+import { MODELS } from './models.js';
 import { SCENERY } from '../world/scenery.js';
+
+/* enemy kind → mesh. The three newer hulls are uploaded here (gl.js only
+   carries the original set); MESH entries are reused for the rest. */
+const KMESH = {
+  drone:   MESH.drone,
+  cruiser: MESH.cruiser,
+  striker: mesh(MODELS.striker),
+  mine:    mesh(MODELS.mine),
+  lancer:  mesh(MODELS.lancer)
+};
+/* boss type → mesh (bosses rotate: mothership / hive carrier / dreadnought) */
+const BOSSMESH = {
+  mothership:  MESH.mothership,
+  carrier:     mesh(MODELS.carrier),
+  dreadnought: mesh(MODELS.dreadnought)
+};
+/* per-type phase tints, same idiom as the old inline mothership pick */
+const BOSSPH = {
+  mothership:  [null, [.16,0,.16], [.45,0,0]],
+  carrier:     [null, [0,.15,.07], [.35,.06,0]],
+  dreadnought: [null, [.18,.02,0], [.50,0,0]]
+};
 
 /* ------------------------------------------------------------------ additive batch */
 export const SPR_MAX = 4200, FL = 10;
@@ -170,12 +193,13 @@ export function render(){
   for(const e of S.enemies){
     const li=e.list||0;
     compose(model, e.x,e.y,e.z, li*.42, e.yaw, e.roll+li*.8, 1);
-    litDraw(e.k==='drone'?MESH.drone:MESH.cruiser, model, hitTint(e,li), 1);
+    litDraw(KMESH[e.k]||MESH.drone, model, hitTint(e,li), 1);
   }
   if(S.boss){
     compose(model, S.boss.x,S.boss.y,S.boss.z, S.boss.list||0, S.boss.yaw, S.boss.roll, 1);
-    const ph=S.boss.phase===3?[.45,0,0]:S.boss.phase===2?[.16,0,.16]:null;
-    litDraw(MESH.mothership, model, hitTint(S.boss,0)||ph, 1);
+    const type=S.boss.type||'mothership';
+    const ph=(BOSSPH[type]||BOSSPH.mothership)[S.boss.phase-1]||null;
+    litDraw(BOSSMESH[type]||MESH.mothership, model, hitTint(S.boss,0)||ph, 1);
   }
   for(const d of S.debris){
     const a=clamp(d.life/d.max,0,1);
@@ -296,14 +320,50 @@ export function buildFX(){
   for(const e of S.enemies){
     if(e.k==='drone'){ const c=ATT.droneCore;
       sprite(e.x+c[0],e.y+c[1],e.z+c[2], 12+Math.sin(S.T*9+e.ph)*3, COL.red, 1.1);
+    } else if(e.k==='striker'){
+      for(const g of ATT.strikerEngines)
+        sprite(e.x+g[0],e.y+g[1],e.z+g[2], 9, COL.green, .95);
+    } else if(e.k==='mine'){
+      /* blink rate tracks proximity, same thresholds as the arming beep */
+      const rate = e.z<450?9 : e.z<900?4 : 1.6;
+      if(Math.floor(S.T*rate+e.ph)%2===0)
+        sprite(e.x,e.y,e.z, 17, COL.red, 1.15);
+      sprite(e.x,e.y,e.z, 7, COL.red, .55);
+    } else if(e.k==='lancer'){
+      if(e.chg>0){ const n=ATT.lancerNose;
+        sprite(e.x+n[0],e.y+n[1],e.z+n[2], 10+52*e.chg, COL.purple, .45+.8*e.chg);
+        sprite(e.x+n[0],e.y+n[1],e.z+n[2], 4+20*e.chg, COL.white, .5+.6*e.chg);
+      }
+      for(const g of ATT.lancerEngines)
+        sprite(e.x+g[0],e.y+g[1],e.z+g[2], 10, COL.purple, .9);
     } else for(const g of ATT.cruiserEngines)
       sprite(e.x+g[0],e.y+g[1],e.z+g[2], 11, COL.red, .95);
   }
   if(S.boss){
-    const c=ATT.bossCore, pl=.75+.25*Math.sin(S.boss.t*5);
-    sprite(S.boss.x+c[0],S.boss.y+c[1],S.boss.z+c[2], 120*pl, S.boss.phase===3?COL.red:COL.green, 1.1);
-    sprite(S.boss.x+c[0],S.boss.y+c[1],S.boss.z+c[2], 46*pl, COL.white, 1.2);
-    for(const g of ATT.bossGuns) sprite(S.boss.x+g[0],S.boss.y+g[1],S.boss.z+g[2], 16, COL.mag, .9);
+    const b=S.boss, pl=.75+.25*Math.sin(b.t*5), type=b.type||'mothership';
+    if(type==='carrier'){
+      /* bay glows swell hard on a launch beat (b.flash set by carrierLaunch) */
+      const fl=Math.max(0,b.flash||0);
+      for(const g of ATT.carrierBays){
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], (34+18*Math.sin(b.t*4+g[0]))*(1+fl*3), COL.green, .8+fl*1.4);
+        if(fl>0) sprite(b.x+g[0],b.y+g[1],b.z+g[2], 20+70*fl, COL.white, fl*1.2);
+      }
+      const c=ATT.carrierCore;
+      sprite(b.x+c[0],b.y+c[1],b.z+c[2], 70*pl, b.phase===3?COL.amber:COL.green, 1.0);
+      sprite(b.x+c[0],b.y+c[1],b.z+c[2], 26*pl, COL.white, 1.1);
+    } else if(type==='dreadnought'){
+      /* spine glow grows with the lance charge — the whole telegraph */
+      const sp=ATT.dreadSpine, ch=b.chg||0;
+      sprite(b.x+sp[0],b.y+sp[1],b.z+sp[2], 26+220*ch, COL.red, .5+1.1*ch);
+      sprite(b.x+sp[0],b.y+sp[1],b.z+sp[2], 10+80*ch, COL.white, .5+.9*ch);
+      for(const g of ATT.dreadGuns)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 14, COL.red, .85);
+    } else {
+      const c=ATT.bossCore;
+      sprite(b.x+c[0],b.y+c[1],b.z+c[2], 120*pl, b.phase===3?COL.red:COL.green, 1.1);
+      sprite(b.x+c[0],b.y+c[1],b.z+c[2], 46*pl, COL.white, 1.2);
+      for(const g of ATT.bossGuns) sprite(b.x+g[0],b.y+g[1],b.z+g[2], 16, COL.mag, .9);
+    }
   }
   for(const k of S.crates){
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;

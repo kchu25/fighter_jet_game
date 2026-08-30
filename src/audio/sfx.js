@@ -58,6 +58,122 @@ export function laser() {
   if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, 400);
 }
 
+/* striker attack-run flyby: quick doppler whoosh + 3-tap bolt burst */
+export function strafe(p) {
+  if (!A.ready || A.muted || !budget(4)) return;
+  var t = now() + 0.002;
+  var head = gainNode(0.36);
+  var pn = panner(clamp(p == null ? 0 : p, -1, 1));
+  if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
+  var srcs = [];
+  var dur = 0.6;
+
+  // doppler-ish whoosh: bandpassed noise sweeping up then falling away
+  var wb = bp(700, 1.8);
+  wb.frequency.setValueAtTime(fclamp(500), t);
+  wb.frequency.exponentialRampToValueAtTime(fclamp(2200), t + dur * 0.4);
+  wb.frequency.exponentialRampToValueAtTime(fclamp(320), t + dur);
+  var wg = A.ctx.createGain();
+  wg.gain.setValueAtTime(0.0001, t);
+  wg.gain.exponentialRampToValueAtTime(0.32, t + dur * 0.35);
+  wg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  wb.connect(wg); wg.connect(head);
+  var ws = noise(t, dur + 0.02, 1.1); ws.connect(wb); srcs.push(ws);
+
+  // 3-tap rapid bolt burst as it passes the midpoint
+  var bpf = hp(1100);
+  bpf.connect(head);
+  for (var i = 0; i < 3; i++) {
+    var bt = t + 0.14 + i * 0.07;
+    var o = osc('square', 1500 - i * 90, bt);
+    o.frequency.exponentialRampToValueAtTime(fclamp(560 - i * 60), bt + 0.05);
+    var g = pluck(bt, 0.3, 0.06, 0.001);
+    o.connect(g); g.connect(bpf);
+    o.start(bt); o.stop(bt + 0.08);
+    srcs.push(o);
+  }
+
+  voice(head, srcs);
+  if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, (dur + 0.4) * 1000);
+}
+
+/* proximity-mine arming tick: ONE cheap menacing blip per call (looped by game) */
+export function mineArm() {
+  if (!A.ready || A.muted) return;
+  var t = now();
+  if (t - A.lastMineT < 0.1) return;               // rapid-fire guard
+  if (!budget(2)) return;
+  A.lastMineT = t;
+  t += 0.002;
+
+  var head = gainNode(0.22);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // minor-second pair: sine blip + quiet square a semitone up = sour edge
+  var g = pluck(t, 0.5, 0.1, 0.001);
+  g.connect(head);
+  var a = osc('sine', 1244.5, t);                  // ~D#6
+  a.connect(g);
+  a.start(t); a.stop(t + 0.12);
+  var b = osc('square', 1318.5, t);                // ~E6, a semitone above
+  var bg = pluck(t, 0.09, 0.08, 0.001);
+  b.connect(bg); bg.connect(head);
+  b.start(t); b.stop(t + 0.1);
+  srcs.push(a, b);
+
+  voice(head, srcs);
+}
+
+/* lancer sniper bolt: rising charge tail into a piercing crack.
+   Reads opposite to laser(): pitch goes UP, then a bright discharge snap. */
+export function lance(p) {
+  if (!A.ready || A.muted || !budget(4)) return;
+  var t = now() + 0.002;
+  var head = gainNode(0.5);
+  var pn = panner(clamp(p == null ? 0 : p, -1, 1));
+  if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
+  var srcs = [];
+  var charge = 0.22, dur = 0.4;
+
+  // 1. rising charge: two detuned saws sweeping up through an opening bandpass
+  var cb = bp(900, 5);
+  cb.frequency.setValueAtTime(fclamp(500), t);
+  cb.frequency.exponentialRampToValueAtTime(fclamp(3400), t + charge);
+  var cg = A.ctx.createGain();
+  cg.gain.setValueAtTime(0.0001, t);
+  cg.gain.exponentialRampToValueAtTime(0.3, t + charge);
+  cg.gain.exponentialRampToValueAtTime(0.0001, t + charge + 0.05);
+  cb.connect(cg); cg.connect(head);
+  for (var k = 0; k < 2; k++) {
+    var o = osc('sawtooth', 300, t);
+    o.detune.value = k ? 12 : -10;
+    o.frequency.setValueAtTime(fclamp(300), t);
+    o.frequency.exponentialRampToValueAtTime(fclamp(2400), t + charge);
+    o.connect(cb);
+    o.start(t); o.stop(t + charge + 0.06);
+    srcs.push(o);
+  }
+
+  // 2. discharge crack: bright noise snap at the top of the charge
+  var dt = t + charge;
+  var dh = hp(2400);
+  var dg = pluck(dt, 0.6, 0.07, 0.001);
+  dh.connect(dg); dg.connect(head);
+  var dn = noise(dt, 0.08, 1.5); dn.connect(dh); srcs.push(dn);
+
+  // 3. piercing zap tail: high sine falling off fast after the crack
+  var zo = osc('sine', 3600, dt);
+  zo.frequency.exponentialRampToValueAtTime(fclamp(1900), dt + dur - charge);
+  var zg = pluck(dt, 0.28, dur - charge, 0.001);
+  zo.connect(zg); zg.connect(head);
+  zo.start(dt); zo.stop(dt + dur - charge + 0.03);
+  srcs.push(zo);
+
+  voice(head, srcs);
+  if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, (dur + 0.4) * 1000);
+}
+
 export function missile() {
   if (!A.ready || A.muted || !budget(5)) return;
   var t = now() + 0.002;

@@ -3,17 +3,20 @@
    framing furniture. */
 import { I } from './state.js';
 import { VW, VH, T3, C, rgba, rnd, sat, ramp, pulse, once, sfx, glow, txt,
-  part, stepParts, drawParts, burst, scanlines, vignette, art, dawnSky, neonGround } from './engine.js';
+  part, stepParts, drawParts, burst, streakParts, scanlines, vignette, art, dawnSky, neonGround } from './engine.js';
 
 /* ================================================================
-   SCENE 4 — THE CATAPULT.  Straight behind the canopy now.  The
-   shuttle tensions, fires, and drags the whole frame down the tunnel
-   until the deck runs out and the world opens.  Everything here is
-   motion: no panel, no instruments, just the rails going by faster
-   than they should.
+   SCENE 4 — THE CATAPULT, UNDER FIRE.  Straight behind the canopy
+   now.  The base is already taking hits: the shuttle tensions while
+   impacts walk down the deck, fires, and drags the whole frame down
+   the tunnel in a race against the strike — out through the shockwave
+   a beat before the mouth goes up behind us.  Everything here is
+   motion and urgency: rails going by faster than they should, and
+   fire landing closer than it should.
    ================================================================ */
-export const L_SHOT = 0.80;                   /* the catapult releases */
-export const L_OUT = 2.55;                   /* the mouth swallows the frame */
+export const L_SHOT = 1.35;                   /* the catapult releases */
+export const L_OUT = 3.30;                   /* the mouth swallows the frame */
+export const L_END = 4.2;                    /* scene length (== T4 - T3) */
 export const LVPX = 800, LVPY = 396;         /* vanishing point */
 
 /* rounded-rect sub-path, used for the canopy aperture */
@@ -36,27 +39,58 @@ export function scene4(u, dt) {
   const vel = 0.55 + (q > 0 ? 1.6 + 19.2 * q : 0);
   const spd = sat(vel / 34);                 // 0..1 "how pinned are you"
   const tension = ramp(0.08, L_SHOT, u);     // the wind-up before release
-  const open = ramp(1.05, L_OUT, u);         // the far aperture growing
+  const open = ramp(1.75, L_OUT, u);         // the far aperture growing
   const sky = ramp(L_OUT, L_OUT + 0.20, u);  // we are outside
-  const after = sat((u - L_OUT) / (3.2 - L_OUT));
+  const after = sat((u - L_OUT) / (L_END - L_OUT));
   const drive = spd * (1 - 0.45 * after);
+  const raid = 1 - sky;                      // the strike is still landing
 
   /* ---------------------------------------------------- audio ---- */
   once('c4snd', T3 + 0.02, function () {
     sfx('setIntensity', 0.6);
     if (!I.rumbleH) I.rumbleH = sfx('rumble', 0.2);
+    if (!I.sirenH) I.sirenH = sfx('sirenLoop');   // the klaxon rides with us
     sfx('riser', L_SHOT - 0.02);             // lands its impact exactly on the shot
   });
   if (I.rumbleH && I.rumbleH.set) I.rumbleH.set(sat(0.18 + 0.9 * drive));
+  /* the strike walking down the deck while the shuttle tensions */
+  once('c4nm1', T3 + 0.42, function () {
+    sfx('thud'); sfx('alarm');
+    I.shake = Math.max(I.shake, 12); I.flash = Math.max(I.flash, 0.24); I.flashCol = C.orange;
+    burst(LVPX - 220, LVPY - 60, 14, 520, C.orange, 0.5, 6, { d: 0.96 });
+  });
+  once('c4nm2', T3 + 0.94, function () {
+    sfx('boom', 0.85);
+    I.shake = Math.max(I.shake, 20); I.flash = Math.max(I.flash, 0.34); I.flashCol = C.red;
+    burst(LVPX + 260, LVPY + 40, 16, 620, C.red, 0.55, 7, { d: 0.96 });
+  });
   once('c4shot', T3 + L_SHOT, function () {
     sfx('thud'); sfx('setIntensity', 0.8);
     I.shake = Math.max(I.shake, 34); I.flash = Math.max(I.flash, 0.5); I.flashCol = C.ice;
     burst(LVPX, LVPY, 26, 900, C.ice, 0.5, 7, { d: 0.99 });
   });
   once('c4gasp', T3 + L_SHOT + 0.22, function () { sfx('breath', 2); });
+  /* near-misses strobing past the tunnel mouth mid-run */
+  once('c4nm3', T3 + L_SHOT + 0.55, function () {
+    sfx('plasma');
+    I.shake = Math.max(I.shake, 16); I.flash = Math.max(I.flash, 0.28); I.flashCol = C.orange;
+    burst(LVPX + rnd(-180, 180), LVPY + rnd(-90, 90), 14, 800, C.orange, 0.4, 6, { d: 0.98 });
+  });
+  once('c4nm4', T3 + L_SHOT + 1.18, function () {
+    sfx('boom', 1.0);
+    I.shake = Math.max(I.shake, 24); I.flash = Math.max(I.flash, 0.4); I.flashCol = C.red;
+    burst(LVPX + rnd(-160, 160), LVPY + rnd(-80, 80), 18, 950, C.red, 0.42, 7, { d: 0.98 });
+  });
   once('c4out', T3 + L_OUT, function () {
-    sfx('jetPass', 0.25); sfx('setIntensity', 0.86);
-    I.shake = Math.max(I.shake, 15); I.flash = Math.max(I.flash, 0.85); I.flashCol = C.white;
+    sfx('jetPass', 0.25); sfx('boom', 1.5); sfx('setIntensity', 0.86);
+    if (I.sirenH && I.sirenH.stop) { try { I.sirenH.stop(); } catch (e) { } I.sirenH = null; }
+    I.shake = Math.max(I.shake, 26); I.flash = Math.max(I.flash, 0.85); I.flashCol = C.white;
+  });
+  /* the strike lands on the mouth we just cleared */
+  once('c4basehit', T3 + L_OUT + 0.38, function () {
+    sfx('explode');
+    I.shake = Math.max(I.shake, 20); I.flash = Math.max(I.flash, 0.5); I.flashCol = C.orange;
+    if (I.rumbleH && I.rumbleH.set) I.rumbleH.set(1);
   });
 
   /* ---------------------------------------------------- world ---- */
@@ -71,6 +105,28 @@ export function scene4(u, dt) {
     neonGround(hz, I.t * 3.2, 0.5);
     if (A) A.cloudBank(I.c, hz - 210, 92, I.t * 1.4, [120, 40, 130], 0.30);
     I.c.restore();
+  }
+
+  /* ---- the base erupting behind us: firelight climbing up over the
+     frame edges from a blast we are no longer inside of ---- */
+  const erupt = ramp(L_OUT + 0.36, L_OUT + 0.62, u);
+  if (erupt > 0.01) {
+    const flick = erupt * (0.62 + 0.38 * pulse(u, 8.4));
+    I.c.save();
+    I.c.globalCompositeOperation = 'lighter';
+    I.c.globalAlpha = 0.5 * flick;
+    I.c.drawImage(glow(C.orange), -320, VH - 380, 900, 760);
+    I.c.drawImage(glow(C.orange), VW - 580, VH - 380, 900, 760);
+    I.c.globalAlpha = 0.3 * flick;
+    I.c.drawImage(glow(C.red), 380, VH - 260, 840, 620);
+    I.c.restore();
+    /* embers and smoke torn forward past the canopy from behind */
+    if (Math.random() < 0.7) {
+      const sd = Math.random() < 0.5 ? -1 : 1;
+      part(800 + sd * rnd(560, 860), rnd(560, 900), sd * rnd(-60, 60), rnd(-520, -260),
+        rnd(0.3, 0.7), rnd(3, 9), Math.random() < 0.4 ? C.orange : C.dust,
+        { d: 0.985, sq: Math.random() < 0.5, rot: rnd(0, 6.28), vr: rnd(-6, 6) });
+    }
   }
 
   /* ---- the launch tunnel ----
@@ -133,6 +189,25 @@ export function scene4(u, dt) {
       I.c.drawImage(glow(C.cyan), LVPX - 900, LVPY - 560, 1800, 1120);
       I.c.globalAlpha = 1;
     }
+    /* impact flashes strobing somewhere ahead — hits on the deck
+       around the mouth, each one a hard flicker of firelight thrown
+       down the throat toward us */
+    for (let i = 0; i < 3; i++) {
+      const fl = tun * Math.max(0, Math.sin(u * (13 + i * 8.7) + i * 2.4)) *
+        (Math.sin(u * (4.3 + i * 2.1) + i) > 0.62 ? 1 : 0);
+      if (fl < 0.06) continue;
+      const fx = LVPX + Math.sin(i * 5.1 + Math.floor(u * 4)) * (140 + 260 * open);
+      const fy = LVPY + Math.cos(i * 3.7 + Math.floor(u * 4)) * (70 + 130 * open);
+      const fr = 90 + 260 * open;
+      I.c.globalAlpha = 0.5 * fl;
+      I.c.drawImage(glow(i ? C.orange : C.red), fx - fr, fy - fr * 0.7, fr * 2, fr * 1.4);
+      I.c.globalAlpha = 1;
+    }
+    /* red-alert wash strobing off the tunnel walls */
+    I.c.globalAlpha = raid * (0.05 + 0.08 * pulse(u, 1.5));
+    I.c.fillStyle = rgba(C.red, 1);
+    I.c.fillRect(0, 0, VW, VH);
+    I.c.globalAlpha = 1;
     I.c.restore();
   }
 
@@ -150,6 +225,30 @@ export function scene4(u, dt) {
     og.addColorStop(1, 'rgba(0,0,0,0)');
     I.c.fillStyle = og;
     I.c.fillRect(LVPX - ow, LVPY - oh, ow * 2, oh * 2);
+    I.c.restore();
+  }
+
+  /* ---- punching out through the shockwave: a vapour cone snapping
+     over the frame as the mouth spits us into open sky ---- */
+  const shock = (u - L_OUT + 0.02) / 0.48;
+  if (shock > 0 && shock < 1) {
+    I.c.save();
+    I.c.globalCompositeOperation = 'lighter';
+    I.c.lineCap = 'round';
+    for (let i = 0; i < 3; i++) {
+      const k = sat(shock * (1.25 - i * 0.16));
+      const rw = (90 + k * k * 2100) * (1 - i * 0.12);
+      const rh = rw * 0.62;
+      const a = (1 - k) * (0.55 - i * 0.14);
+      if (a <= 0.02) continue;
+      I.c.strokeStyle = rgba(i === 2 ? C.cyan : C.ice, a);
+      I.c.lineWidth = 3 + 26 * (1 - k);
+      I.c.beginPath();
+      I.c.ellipse(LVPX, LVPY, rw, rh, 0, 0, 6.2832);
+      I.c.stroke();
+    }
+    I.c.globalAlpha = (1 - shock) * 0.5;
+    I.c.drawImage(glow(C.white), LVPX - 640, LVPY - 420, 1280, 840);
     I.c.restore();
   }
 
@@ -186,8 +285,19 @@ export function scene4(u, dt) {
         rnd(0.18, 0.42), rnd(1.6, 5), Math.random() < 0.28 ? C.white : C.ice,
         { d: 0.998, gr: 20 });
     }
+    /* burning debris off the strike, tumbling across the canopy —
+       hot square chunks that the streak pass smears into motion */
+    if (raid > 0.1 && Math.random() < 0.25 + 0.5 * spd) {
+      const ang = rnd(0, 6.2832), r0 = rnd(60, 240);
+      const sp2 = (380 + 1700 * spd) * rnd(0.6, 1.2);
+      part(LVPX + Math.cos(ang) * r0, LVPY + Math.sin(ang) * r0 * 0.66,
+        Math.cos(ang) * sp2, Math.sin(ang) * sp2 * 0.66,
+        rnd(0.2, 0.45), rnd(2.5, 6), Math.random() < 0.5 ? C.orange : C.rust,
+        { d: 0.998, sq: true, rot: rnd(0, 6.28), vr: rnd(-14, 14) });
+    }
   }
   stepParts(dt, 0); drawParts();
+  streakParts(sat(spd * 1.2) * (1 - 0.5 * after));
 
   /* ---------------------------------------------- the canopy ----- */
   /* everything outside the aperture is airframe.  This, and nothing
@@ -220,6 +330,11 @@ export function scene4(u, dt) {
   I.c.drawImage(glow(C.amber), 120, 700, 560, 300);
   I.c.globalAlpha = 0.20;
   I.c.drawImage(glow(C.green), 980, 706, 460, 260);
+  /* master-caution wash strobing across the whole coaming, cutting
+     out in ragged flickers as the airframe takes the buffeting */
+  const cwFlick = (spd > 0.3 && Math.random() < 0.12) ? 0.2 : 1;
+  I.c.globalAlpha = raid * (0.14 + 0.20 * pulse(u, 2.6)) * cwFlick;
+  I.c.drawImage(glow(C.red), 460, 680, 700, 340);
   I.c.globalAlpha = 1;
   I.c.restore();
   I.c.restore();
@@ -253,12 +368,17 @@ export function scene4(u, dt) {
   I.c.beginPath(); I.c.moveTo(LVPX, LVPY - 26); I.c.lineTo(LVPX, LVPY - 44); I.c.stroke();
 
   if (u < L_SHOT) {
-    /* the only text before the shot: the tension bar filling */
-    txt('CATAPULT', 236, 262, 20, rgba(C.green, 0.66), 6);
-    I.c.fillStyle = rgba(C.green, 0.18);
+    /* the tension bar filling — but this launch is not routine */
+    txt('EMERG CATAPULT', 236, 262, 20, rgba(C.red, 0.5 + 0.4 * pulse(u, 3.2)), 6, 'left', 'bold');
+    I.c.fillStyle = rgba(C.red, 0.18);
     I.c.fillRect(236, 278, 300, 9);
-    I.c.fillStyle = rgba(C.green, 0.62 + 0.3 * pulse(u, 6));
+    I.c.fillStyle = rgba(C.amber, 0.62 + 0.3 * pulse(u, 6));
     I.c.fillRect(236, 278, 300 * tension, 9);
+    txt('BASE UNDER ATTACK', 1364, 268, 22,
+      rgba(C.red, 0.35 + 0.55 * pulse(u, 2.8)), 6, 'right', 'bold');
+    if (pulse(u, 1.9) > 0.4)
+      txt('⚠ GET AIRBORNE NOW ⚠', LVPX, 560, 26,
+        rgba(C.red, 0.85), 8, 'center', 'bold');
   } else {
     const kts = Math.round(38 + vel * 13.4);
     txt(String(kts), 236, 268, 44, rgba(C.green, 0.80), 6);
@@ -269,12 +389,20 @@ export function scene4(u, dt) {
         rgba(spd > 0.7 ? C.amber : C.green, 0.72), 6, 'right');
     else if (pulse(u, 2.4) > 0.3)
       txt('AIRBORNE', 1364, 268, 26, rgba(C.cyan, 0.85), 8, 'right', 'bold');
+    /* master caution flickering while fire is still landing around us */
+    if (raid > 0.2 && pulse(u, 3.4) > 0.45)
+      txt('⚠ MASTER CAUTION — PROXIMITY DETONATIONS', LVPX, 626, 19,
+        rgba(C.red, 0.75 * raid), 5, 'center', 'bold');
+    /* and the reason we ran: the mouth goes up a beat after we clear it */
+    if (erupt > 0.1 && pulse(u, 2.2) > 0.35)
+      txt('⚠ LAUNCH COMPLEX HIT', LVPX, 626, 22,
+        rgba(C.orange, 0.85 * erupt), 6, 'center', 'bold');
   }
   I.c.restore();
 
   /* --------------------------------------------------- physical -- */
-  if (u < L_SHOT) I.shake = Math.max(I.shake, 1.6 + 4.4 * tension * (0.5 + 0.5 * Math.sin(I.t * 44)));
-  else I.shake = Math.max(I.shake, (3 + 21 * spd) * (0.55 + 0.45 * Math.sin(I.t * 63)) * (1 - 0.8 * after));
+  if (u < L_SHOT) I.shake = Math.max(I.shake, 2.6 + 5.2 * tension * (0.5 + 0.5 * Math.sin(I.t * 44)));
+  else I.shake = Math.max(I.shake, (3 + 25 * spd) * (0.55 + 0.45 * Math.sin(I.t * 63)) * (1 - 0.8 * after));
 
   scanlines(0.10);
   vignette(0.52 + 0.26 * spd);
@@ -282,6 +410,6 @@ export function scene4(u, dt) {
   /* in from scene 3's black, out through white into the mass launch */
   const fi = 1 - ramp(0, 0.22, u);
   if (fi > 0) { I.c.fillStyle = 'rgba(0,0,0,' + fi + ')'; I.c.fillRect(0, 0, VW, VH); }
-  const wo = ramp(2.86, 3.2, u);
+  const wo = ramp(L_END - 0.34, L_END, u);
   if (wo > 0) { I.c.fillStyle = 'rgba(255,255,255,' + wo + ')'; I.c.fillRect(0, 0, VW, VH); }
 }

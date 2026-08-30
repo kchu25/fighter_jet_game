@@ -107,9 +107,10 @@ export function drawHUD(){
   if(S.boss){
     const w=Math.min(560,W*.55), x=W/2-w/2, y=m+2;
     h2d.textAlign='center'; h2d.font='12px "Courier New",monospace';
-    h2d.fillStyle=css(COL.purple); h2d.fillText('MOTHERSHIP :: PHASE '+S.boss.phase, W/2, y-4);
+    const bc=S.boss.c||COL.purple;
+    h2d.fillStyle=css(bc); h2d.fillText((S.boss.name||'MOTHERSHIP')+' :: PHASE '+S.boss.phase, W/2, y-4);
     const hit=clamp(S.boss.hit||0,0,1);
-    let c=S.boss.phase===3?css(COL.red):css(COL.purple);
+    let c=S.boss.phase===3?css(COL.red):css(bc);
     if(hit>0){ c='rgba(255,255,255,'+(.4+.6*hit).toFixed(2)+')'; }
     bar(x,y,w,12, S.boss.hp/S.boss.max, c);
     h2d.fillStyle='rgba(0,0,0,.55)';
@@ -121,7 +122,7 @@ export function drawHUD(){
     h2d.font='bold '+Math.min(60,W*.06)+'px "Courier New",monospace';
     h2d.fillText('WARNING', W/2, H*.28);
     h2d.font='bold '+Math.min(24,W*.026)+'px "Courier New",monospace';
-    h2d.fillText('MOTHERSHIP INBOUND', W/2, H*.28+34);
+    h2d.fillText((S.bossWarnName||'MOTHERSHIP')+' INBOUND', W/2, H*.28+34);
     h2d.shadowBlur=0; h2d.globalAlpha=1;
   }
   if(S.tipT>0){

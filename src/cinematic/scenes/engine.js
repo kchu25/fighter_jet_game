@@ -25,9 +25,9 @@ export const VW = 1600, VH = 900;
 export const T1 = 12.8;              // 0    .. 12.8  incident
 export const T2 = T1 + 2.5;          // 12.8 .. 15.3  the signal (quiet alert)
 export const T3 = T2 + 4.5;          // 15.3 .. 19.8  the pilot
-export const T4 = T3 + 3.2;          // 19.8 .. 23.0  catapult launch, first person
-export const T5 = T4 + 4.4;          // 23.0 .. 27.4  mass launch
-export const T6 = T5 + 5.0;          // 27.4 .. 32.4  encounter
+export const T4 = T3 + 4.2;          // 19.8 .. 24.0  scramble launch under fire, first person
+export const T5 = T4 + 4.4;          // 24.0 .. 28.4  the launch that fails
+export const T6 = T5 + 5.0;          // 28.4 .. 33.4  encounter
 export const HANDOFF = T6 - 0.62;    // gameplay starts under the fading canvas
 const fired = {};                    // one-shot event latches, engine.js-local
 export const C = {

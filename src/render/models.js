@@ -556,6 +556,290 @@ export const MODELS = (function () {
     return M;
   }
 
+  /* ============================================================ HIVE CARRIER
+     Boss #2: a broad, flat flight-deck hulk, green accents. Its silhouette is
+     all horizontals — deck, sponsons, launch bays across the bow — so it reads
+     as "hangar", not "gun platform". Nose at +z; attach points are negated in
+     z (same raw-world-offset convention as the striker/lancer entries). */
+  function buildCarrier() {
+    var M = Mesh();
+    var HULL = [0.060, 0.190, 0.120];
+    var HULL2 = [0.040, 0.130, 0.085];
+    var PLATE = [0.025, 0.075, 0.050];
+    var DECK = [0.100, 0.240, 0.160];
+    var TRIM = [0.24, 1.00, 0.62];
+    var TRIM2 = [0.12, 0.52, 0.32];
+    var DARK = [0.012, 0.035, 0.024];
+    var CORE = [0.50, 1.00, 0.70];
+    var GLOW = [0.20, 0.80, 0.48];
+
+    // broad flat hull, lofted along z
+    var S = [
+      slabLoop(300, 150, 22, 10, 0),
+      slabLoop(160, 290, 34, 14, 0),
+      slabLoop(-40, 310, 38, 16, 0),
+      slabLoop(-200, 260, 34, 14, 0),
+      slabLoop(-300, 170, 26, 10, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], HULL, HULL2);
+    M.capFan(S[0], [0, 4, 348], HULL2);              // wedge prow
+    M.capCenter(S[S.length - 1], DARK);
+
+    // raised flight deck + centreline landing strip + edge lights
+    M.box(0, 44, -10, 560, 10, 540, DECK, HULL);
+    M.quad([-14, 49.3, 250], [14, 49.3, 250], [14, 49.3, -270], [-14, 49.3, -270], TRIM2);
+    [1, -1].forEach(function (s) {
+      M.quad([s * 276, 49.3, 250], [s * 262, 49.3, 250],
+        [s * 262, 49.3, -270], [s * 276, 49.3, -270], TRIM);
+    });
+
+    // three launch bays across the bow: protruding tubes with dark glowing mouths
+    [-170, 0, 170].forEach(function (bx) {
+      M.box(bx, -4, 255, 92, 46, 80, HULL2, PLATE);
+      M.quad([bx - 36, -26, 295.6], [bx + 36, -26, 295.6],
+        [bx + 36, 14, 295.6], [bx - 36, 14, 295.6], DARK);
+      M.quad([bx - 28, -20, 296.2], [bx + 28, -20, 296.2],
+        [bx + 28, 8, 296.2], [bx - 28, 8, 296.2], CORE);
+      // trim lip over the mouth
+      M.quad([bx - 40, 18, 296.0], [bx + 40, 18, 296.0],
+        [bx + 40, 24, 292.0], [bx - 40, 24, 292.0], TRIM);
+    });
+
+    // command island, offset starboard on the deck
+    M.box(180, 70, -120, 70, 42, 110, HULL, DECK);
+    M.box(180, 100, -130, 50, 22, 60, HULL2, DECK);
+    M.quad([158, 106, -101], [202, 106, -101], [202, 96, -99], [158, 96, -99], GLOW);
+    M.box(180, 122, -150, 6, 24, 6, PLATE);          // mast
+
+    // bow reactor housing with a glowing core face (carrierCore attach)
+    M.box(0, 10, 296, 44, 26, 24, PLATE, HULL2);
+    M.quad([-15, 2, 308.4], [15, 2, 308.4], [15, 20, 308.4], [-15, 20, 308.4], CORE);
+
+    // side sponsons + keel fins
+    [1, -1].forEach(function (s) {
+      M.box(s * 300, -6, -40, 40, 26, 300, HULL2, PLATE);
+      M.quad([s * 320.2, 4, 90], [s * 320.2, 4, -160],
+        [s * 320.2, -4, -160], [s * 320.2, -4, 90], TRIM);
+      M.plate([s * 120, -34, 60], [s * 150, -78, -20],
+        [s * 140, -78, -80], [s * 110, -34, -110], [s * 1, 0, 0], 8, HULL2, PLATE);
+    });
+
+    // engine cluster at the stern
+    [-140, 0, 140].forEach(function (x) {
+      var a = ringXY(x, 0, -298, 30, 26, 6, PI / 6);
+      var b = ringXY(x, 0, -330, 24, 20, 6, PI / 6);
+      M.skin(a, b, HULL2, PLATE);
+      M.capCenter(b, GLOW);
+    });
+
+    return M;
+  }
+
+  /* ============================================================= DREADNOUGHT
+     Boss #3: a long red gun-spine warship. One huge central rail cannon runs
+     the length of the hull and out past the prow; flank battery wings carry
+     the wall guns. Nose at +z; attach points negated in z. */
+  function buildDreadnought() {
+    var M = Mesh();
+    var HULL = [0.240, 0.060, 0.080];
+    var HULL2 = [0.170, 0.040, 0.060];
+    var PLATE = [0.100, 0.030, 0.050];
+    var STEEL = [0.300, 0.100, 0.120];
+    var TRIM = [1.00, 0.17, 0.30];
+    var DARK = [0.050, 0.015, 0.022];
+    var GLOW = [1.00, 0.38, 0.32];
+
+    // long armoured hull
+    var S = [
+      slabLoop(300, 40, 34, 12, 0),
+      slabLoop(160, 90, 60, 20, 0),
+      slabLoop(0, 110, 70, 24, 0),
+      slabLoop(-180, 95, 58, 20, 0),
+      slabLoop(-300, 60, 40, 14, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], HULL, HULL2);
+    M.capFan(S[0], [0, 0, 356], HULL2);              // armoured prow
+    M.capCenter(S[S.length - 1], DARK);
+
+    // the spine: one long rail barrel over the bow, glowing emitter at the tip
+    M.box(0, 12, 320, 18, 18, 150, PLATE, STEEL);
+    M.box(0, 12, 400, 28, 28, 12, DARK);
+    M.box(0, 12, 393, 22, 22, 5, GLOW);
+    // spine support pylons
+    M.box(0, 30, 220, 12, 40, 30, HULL2);
+    M.box(0, 30, 290, 10, 34, 22, HULL2);
+    // red trim strips down the spine flanks
+    [1, -1].forEach(function (s) {
+      M.quad([s * 9.2, 18, 380], [s * 9.2, 18, 260], [s * 9.2, 8, 260], [s * 9.2, 8, 380], TRIM);
+    });
+
+    // flank battery wings: pylon, pod, three forward barrels each side
+    [1, -1].forEach(function (s) {
+      M.box(s * 145, 0, -20, 95, 22, 130, HULL2, PLATE);        // pylon
+      M.box(s * 210, 4, -10, 70, 40, 170, HULL, HULL2);         // pod
+      M.box(s * 210, 26.5, -16, 58, 6, 130, PLATE);             // pod armour
+      [-30, 0, 30].forEach(function (ox) {
+        M.box(s * 210 + ox, 10, 82, 8, 8, 46, STEEL);           // barrels
+        M.box(s * 210 + ox, 10, 106, 11, 11, 5, DARK);          // muzzles
+      });
+      // pod flank trim
+      M.quad([s * 245.2, 12, 50], [s * 245.2, 12, -70],
+        [s * 245.2, 4, -70], [s * 245.2, 4, 50], TRIM);
+    });
+
+    // dorsal ridge fin + ventral keel blades
+    M.plate([0.6, 34, -60], [0.6, 86, -110], [0.6, 82, -150], [0.6, 30, -170],
+      [-1, 0, 0], 1.4, HULL2, TRIM);
+    [1, -1].forEach(function (s) {
+      M.plate([s * 40, -32, -120], [s * 66, -78, -170],
+        [s * 60, -78, -220], [s * 36, -32, -230], [s * 1, 0, 0], 6, HULL2, PLATE);
+    });
+
+    // twin main engines
+    [1, -1].forEach(function (s) {
+      var a = ringXY(s * 48, 0, -302, 26, 26, 6, PI / 6);
+      var b = ringXY(s * 48, 0, -338, 20, 20, 6, PI / 6);
+      M.skin(a, b, HULL2, PLATE);
+      M.capCenter(b, GLOW);
+    });
+
+    return M;
+  }
+
+  /* ================================================================= STRIKER
+     Attack-run fighter: a sleek dart, well under the drone's bulk, hard-swept
+     wings and canted twin tails. Green accents — it reads as "fast flanker". */
+  function buildStriker() {
+    var M = Mesh();
+    var HULL = [0.10, 0.20, 0.15];
+    var HULL2 = [0.07, 0.15, 0.11];
+    var STEEL = [0.17, 0.31, 0.23];
+    var TRIM = [0.24, 1.00, 0.62];
+    var TRIM2 = [0.12, 0.50, 0.31];
+    var DARK = [0.03, 0.06, 0.05];
+    var HOT = [0.45, 1.00, 0.68];
+
+    var S = [
+      hexLoop(20, 1.6, 1.0, 1.0, 0),
+      hexLoop(10, 3.2, 2.0, 2.2, 0),
+      hexLoop(-6, 3.8, 2.4, 2.4, 0),
+      hexLoop(-18, 2.6, 1.6, 1.6, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? HULL2 : HULL, STEEL);
+    M.capFan(S[0], [0, -0.2, 34], STEEL);            // needle nose
+    M.capCenter(S[3], DARK);
+
+    // hard-swept main wings, green leading edge
+    [1, -1].forEach(function (s) {
+      var p0 = [s * 3.4, 0.3, 8], p1 = [s * 17.5, -1.4, -14],
+        p2 = [s * 15.5, -1.4, -19], p3 = [s * 3.2, 0.3, -14];
+      if (s < 0) M.plate(p3, p2, p1, p0, [0, -1, 0], 0.9, STEEL, HULL2);
+      else M.plate(p0, p1, p2, p3, [0, -1, 0], 0.9, STEEL, HULL2);
+      M.quad([s * 3.6, 0.48, 8], [s * 17.5, -1.22, -14],
+        [s * 17.1, -1.22, -15.8], [s * 3.8, 0.48, 6.2], TRIM);
+    });
+
+    // canted twin tail fins
+    [1, -1].forEach(function (s) {
+      M.plate([s * 2.4, 1.2, -12], [s * 6.0, 6.4, -17],
+        [s * 5.5, 6.2, -20], [s * 2.2, 1.1, -20], [s * 1, 0, 0], 0.7, HULL2, TRIM2);
+    });
+
+    // twin engines with hot caps
+    [1, -1].forEach(function (s) {
+      M.box(s * 2.8, 0.4, -19, 2.6, 2.6, 7, HULL2);
+      M.box(s * 2.8, 0.4, -22.9, 1.7, 1.7, 0.8, HOT);
+    });
+    // ventral sensor strake
+    M.plate([0.4, -2.2, 6], [0.4, -4.6, -4], [0.4, -4.4, -8], [0.4, -2.0, -10],
+      [-1, 0, 0], 0.8, HULL2, TRIM2);
+
+    return M;
+  }
+
+  /* ==================================================================== MINE
+     Proximity mine: a tumbling spiky octahedron, red accents. Kept simple —
+     32 tris — because there can be four of them drifting at once. */
+  function buildMine() {
+    var M = Mesh();
+    var HULL = [0.26, 0.06, 0.09];
+    var HULL2 = [0.18, 0.04, 0.07];
+    var TRIM = [1.00, 0.17, 0.30];
+
+    var R = 11;
+    var eq = [[R, 0, 0], [0, 0, R], [-R, 0, 0], [0, 0, -R]];
+    var top = [0, R, 0], bot = [0, -R, 0];
+    for (var i = 0; i < 4; i++) {
+      var j = (i + 1) % 4;
+      M.tri(eq[j], eq[i], top, i & 1 ? HULL2 : HULL);
+      M.tri(eq[i], eq[j], bot, i & 1 ? HULL : HULL2);
+    }
+
+    // six axis spikes, red tips
+    var AX = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    AX.forEach(function (d, k) {
+      var u = d[0] ? [0, 1, 0] : [1, 0, 0];
+      var v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+      var h = 2.6, b = [], sgn = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+      for (var q = 0; q < 4; q++)
+        b.push([d[0] * 7 + (sgn[q][0] * u[0] + sgn[q][1] * v[0]) * h,
+                d[1] * 7 + (sgn[q][0] * u[1] + sgn[q][1] * v[1]) * h,
+                d[2] * 7 + (sgn[q][0] * u[2] + sgn[q][1] * v[2]) * h]);
+      M.capFan(b, [d[0] * 24, d[1] * 24, d[2] * 24], k & 1 ? TRIM : HULL2);
+    });
+
+    return M;
+  }
+
+  /* ================================================================== LANCER
+     Telegraphed sniper: a mid-size angular gunship built around one long rail
+     barrel. Purple accents; charge glow attaches at the muzzle. */
+  function buildLancer() {
+    var M = Mesh();
+    var HULL = [0.16, 0.09, 0.26];
+    var HULL2 = [0.11, 0.06, 0.19];
+    var PLATE = [0.07, 0.04, 0.12];
+    var TRIM = [0.64, 0.29, 1.00];
+    var DARK = [0.04, 0.02, 0.07];
+    var GLOW = [0.55, 0.22, 0.85];
+
+    var S = [
+      slabLoop(26, 4, 3.4, 1.4, 0),
+      slabLoop(12, 8, 6, 2.4, 0),
+      slabLoop(-8, 9, 6.6, 2.6, 0),
+      slabLoop(-24, 6.5, 5, 2, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], HULL, HULL2);
+    M.capCenter(S[0], PLATE);
+    M.capCenter(S[3], DARK);
+
+    // the rail: one long central barrel with a glowing emitter collar
+    M.box(0, 0, 26, 2.4, 2.4, 30, PLATE, HULL2);
+    M.box(0, 0, 40.5, 3.4, 3.4, 2.4, DARK);
+    M.box(0, 0, 38.6, 2.9, 2.9, 1.0, GLOW);
+
+    // flank rail pods + purple trim strips
+    [1, -1].forEach(function (s) {
+      M.box(s * 10.5, 0, -2, 4, 5.4, 22, HULL2, PLATE);
+      M.quad([s * 12.55, 1.4, 7], [s * 12.55, 1.4, -11],
+        [s * 12.55, 0.4, -11], [s * 12.55, 0.4, 7], TRIM);
+    });
+
+    // dorsal fin
+    M.plate([0.5, 3.4, 2], [0.5, 9.6, -8], [0.5, 9.2, -12], [0.5, 3.0, -16],
+      [-1, 0, 0], 1.0, HULL2, TRIM);
+
+    // twin engine nozzles
+    [1, -1].forEach(function (s) {
+      var a = ringXY(s * 10.5, 0, -13, 2.6, 2.6, 6, PI / 6);
+      var b = ringXY(s * 10.5, 0, -19, 2.1, 2.1, 6, PI / 6);
+      M.skin(a, b, PLATE, HULL2);
+      M.capCenter(b, GLOW);
+    });
+
+    return M;
+  }
+
   /* =================================================================== CRATE */
   function buildCrate() {
     var M = Mesh();
@@ -692,19 +976,32 @@ export const MODELS = (function () {
 
   /* ==================================================================== emit */
   var jet = buildJet(), drone = buildDrone(), cruiser = buildCruiser(),
-    boss = buildBoss(), crate = buildCrate(), shard = buildShard();
+    boss = buildBoss(), crate = buildCrate(), shard = buildShard(),
+    striker = buildStriker(), mine = buildMine(), lancer = buildLancer(),
+    carrier = buildCarrier(), dreadnought = buildDreadnought();
 
   return {
     jet: jet.build(),
     drone: drone.build(),
     cruiser: cruiser.build(),
+    striker: striker.build(),
+    mine: mine.build(),
+    lancer: lancer.build(),
     mothership: boss.build(),
+    carrier: carrier.build(),
+    dreadnought: dreadnought.build(),
     crate: crate.build(),
     shard: shard.build(),
     attach: {
       jetNozzles: [[7.8, 5.6, -30.5], [-7.8, 5.6, -30.5]],
       jetMuzzles: [[9.4, -4.2, 27.2], [-9.4, -4.2, 27.2]],
       droneCore: [0, 0, 8.8],
+      /* enemy hulls fly yaw≈PI, so mesh +z is world -z; these offsets are
+         applied raw in world space (same convention as cruiserEngines) */
+      strikerEngines: [[2.8, 0.4, 23], [-2.8, 0.4, 23]],
+      mineCore: [0, 0, 0],
+      lancerNose: [0, 0, -42],
+      lancerEngines: [[10.5, 0, 19], [-10.5, 0, 19]],
       cruiserGuns: [[46, 0, 42], [54, 0, 42], [-46, 0, 42], [-54, 0, 42]],
       cruiserEngines: [[0, -1, -60], [11, -1, -60], [-11, -1, -60]],
       bossCore: [0, 50, 143],
@@ -712,6 +1009,17 @@ export const MODELS = (function () {
         [262, 46, 166], [-262, 46, 166],
         [262, 46, -44], [-262, 46, -44],
         [70, -34, 233], [-70, -34, 233]
+      ],
+      /* carrier/dreadnought hulls fly yaw≈PI, so their mesh +z (nose) is world
+         -z — these are the mesh points with z negated, applied raw like the
+         striker/lancer entries */
+      carrierBays: [[-170, -6, -296], [0, -6, -296], [170, -6, -296]],
+      carrierCore: [0, 11, -309],
+      dreadSpine: [0, 12, -400],
+      dreadGuns: [
+        [180, 10, -108], [-180, 10, -108],
+        [210, 10, -108], [-210, 10, -108],
+        [240, 10, -108], [-240, 10, -108]
       ]
     }
   };

@@ -10,9 +10,10 @@
 import { AUDIO } from '../audio/index.js';
 import { rnd, lerp } from '../core/utils.js';
 import { S, COL, EASE_CALM } from './state.js';
-import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate } from './combat.js';
+import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate,
+         spawnStriker, spawnMine, spawnLancer } from './combat.js';
 
-const COST = { drone: 1, cruiser: 2.5 };
+const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2 };
 function aliveCost(){ let c=0; for(const e of S.enemies) c+=COST[e.k]||1; return c; }
 
 /* per-sector quality multipliers, all hard-capped so nothing grows forever */
@@ -56,6 +57,23 @@ const FORMS = [
       spawnDrone({x:x+110,y:y+30,spdMul:m.ds,ampMul:m.da}); } },
   { w:.7, cost:1.5, drones:1, ok:q=>q>.6,          // ace: fast hard-jinking single
     go:m=> spawnDrone({spdMul:m.ds*1.25,ampMul:m.da*1.6,c:COL.red}) },
+  /* the new kinds all carry drones:3 so the first-run-ramp filter
+     (f.drones<=1|2 && f.cost<=2.5) keeps every one of them out until easeT
+     has burned off — a new pilot only ever ramps on plain drones */
+  { w:.9, cost:3,   drones:3, ok:q=>q>.35,         // striker flank pair
+    go:m=>{ const y=rnd(-90,110);
+      spawnStriker({side:-1,y,spdMul:m.ds});
+      spawnStriker({side: 1,y:y+rnd(-50,50),spdMul:m.ds}); } },
+  { w:.9, cost:2.6, drones:3, ok:q=>q>.25,         // mine field of 3-4, scattered
+    go:m=>{ const n=3+(Math.random()<.5?1:0), x=rnd(-120,120), y=rnd(-70,80);
+      for(let i=0;i<n;i++) spawnMine({x:x+rnd(-170,170),y:y+rnd(-90,90)}); } },
+  { w:.8, cost:2,   drones:3, ok:q=>q>.5,          // lancer solo
+    go:m=> spawnLancer({cdMul:m.cc}) },
+  { w:.7, cost:4,   drones:3, ok:q=>q>.7,          // lancer behind a drone screen
+    go:m=>{ const x=rnd(-140,140), y=rnd(-80,90);
+      spawnLancer({x,y,cdMul:m.cc});
+      spawnDrone({x:x-100,y:y+40,spdMul:m.ds,ampMul:m.da});
+      spawnDrone({x:x+100,y:y+40,spdMul:m.ds,ampMul:m.da}); } },
 ];
 
 /* ------------------------------------------------------------------ director */

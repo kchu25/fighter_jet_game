@@ -71,6 +71,30 @@ export function spawnCruiser(o={}){
     c:o.c||COL.amber,roll:0,yaw:0,
     cd:rnd(.4,1.1)*(o.cdMul||1)+(S.easeT>0?1.5:0)});
 }
+export function spawnStriker(o={}){
+  /* attack-run fighter: enters from a flank, cuts toward the centre, fires
+     one aimed burst, then breaks off laterally (update.js owns the run) */
+  const side = o.side ?? (Math.random()<.5?-1:1);
+  S.enemies.push({k:'striker',x:o.x??side*420,y:o.y??rnd(-100,120),z:SPAWN_Z,hp:3,r:36,rz:50,
+    ph:o.ph??rnd(0,6.28),amp:0,spd:rnd(1600,1800)*(o.spdMul||1),
+    vx:-side*rnd(260,360),vy:rnd(-40,40),side,fired:false,
+    c:o.c||COL.green,roll:0,yaw:Math.PI});
+}
+export function spawnMine(o={}){
+  /* proximity mine: slow drifting fuse, easy to shoot (generous r) */
+  S.enemies.push({k:'mine',x:o.x??rnd(-260,260),y:o.y??rnd(-140,150),z:SPAWN_Z,hp:1,r:40,rz:40,
+    ph:o.ph??rnd(0,6.28),amp:0,spd:rnd(480,560)*(o.spdMul||1),
+    vx:0,vy:0,beepT:0,
+    c:o.c||COL.red,roll:rnd(0,6.28),yaw:rnd(0,6.28)});
+}
+export function spawnLancer(o={}){
+  /* telegraphed sniper: has max so the wounded list/smoke behaviour applies */
+  const hp = 6+S.waveN*.4;
+  S.enemies.push({k:'lancer',x:o.x??rnd(-220,220),y:o.y??rnd(-110,120),z:SPAWN_Z,hp,max:hp,r:52,rz:56,
+    ph:o.ph??rnd(0,6.28),amp:rnd(25,60)*(o.ampMul||1),spd:rnd(560,640)*(o.spdMul||1),
+    cd:rnd(1.2,2.2)*(o.cdMul||1)+(S.easeT>0?1.5:0),chg:0,
+    c:o.c||COL.purple,roll:0,yaw:0});
+}
 export function spawnCrate(){
   S.crates.push({x:rnd(-220,220),y:rnd(-120,130),z:SPAWN_Z,
     kind:['shield','rapid','spread'][(Math.random()*3)|0],spin:0});
@@ -79,11 +103,27 @@ export function spawnBoss(){
   /* keyed off S.bossN (bosses defeated this run), not S.waveN (trash-mob waves,
      never resets) — see the S.bossN declaration above for why. 440 base is
      ~20-30s of sustained accurate fire for a first-time S.boss encounter;
-     +150/S.boss keeps later encounters escalating without runaway growth. */
-  const hp = 440+S.bossN*150;
-  S.boss={k:'boss',x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r:210,rz:150,c:COL.purple,
-        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0};
-  S.bossWarn=2.4; AUDIO.siren();
+     +150/S.boss keeps later encounters escalating without runaway growth.
+
+     Boss TYPE rotates with bossN: mothership (bolt volleys), hive carrier
+     (summons trash from its bays), dreadnought (telegraphed lance + bolt
+     walls). All three stay ONE S.boss object — lockOn/hitScan/missiles/HUD
+     concat [S.boss] and must keep working unchanged. The carrier runs 0.9x
+     HP (its escorts soak your fire), the dreadnought 1.1x. */
+  const type = ['mothership','carrier','dreadnought'][S.bossN%3];
+  const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT' : 'MOTHERSHIP';
+  const c    = type==='carrier'?COL.green : type==='dreadnought'?COL.red : COL.purple;
+  const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1 : 1));
+  const r  = type==='carrier'?240 : type==='dreadnought'?170 : 210;
+  const rz = type==='carrier'?140 : type==='dreadnought'?210 : 150;
+  /* every field ANY type's update branch reads is initialised here, so a
+     branch can never touch an undefined on its first frame:
+     chg/mode = dreadnought lance state, alt = carrier wave alternator,
+     flash = carrier bay-launch glow, fcd = carrier phase-3 direct-fire cd */
+  S.boss={k:'boss',type,name,x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r,rz,c,
+        phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0,
+        chg:0,mode:'lance',alt:false,flash:0,fcd:2.4};
+  S.bossWarn=2.4; S.bossWarnName=name; AUDIO.siren();
 }
 
 export function nearestAhead(m){
@@ -104,6 +144,62 @@ export function volley(b){
     else if(b.phase===2){ vx=(S.P.x-gx)/t*.8+a*320; vy=(S.P.y-gy)/t*.8+a*110; }
     else { vx=a*760; vy=(S.P.y-gy)/t*.45; }
     S.foes.push({x:gx,y:gy,z:b.z,vx,vy,vz:-V,dmg:11,c:COL.purple,r:30});
+  }
+  AUDIO.thud();
+}
+/* ----------------------------------------------------- hive carrier attacks */
+export function carrierLaunch(b){
+  /* the carrier's threat is SUMMONS: a small wave out of its bays each cycle.
+     Hard cap: never push the arena past ~7 live enemies — the director is idle
+     during a boss, but the whole game was redesigned away from spam and a
+     summoner must not be the way it sneaks back in. Returns false when capped
+     so update() can retry on a short cd instead of eating the whole cycle. */
+  const wave = b.phase===1? ['drone','drone']
+    : b.phase===2? ['drone','drone','striker']
+    : (b.alt=!b.alt)? ['striker','striker','mine'] : ['drone','drone','drone'];
+  if(S.enemies.length+wave.length>7) return false;
+  const bays=ATT.carrierBays;
+  const off=(Math.random()*bays.length)|0;
+  for(let i=0;i<wave.length;i++){
+    const g=bays[(i+off)%bays.length];
+    const x=clamp(b.x+g[0],-300,300), y=clamp(b.y+g[1],-140,150);
+    if(wave[i]==='striker') spawnStriker({x,y});
+    else if(wave[i]==='mine') spawnMine({x,y});
+    else spawnDrone({x,y});
+  }
+  b.flash=.4; AUDIO.thud();
+  return true;
+}
+export function carrierVolley(b){
+  /* phase-3 only: a sparse 5-bolt aimed spread, pressure while the bays cycle */
+  const V=2000, t=b.z/V;
+  for(let i=0;i<5;i++){
+    const a=i/4-.5, gx=b.x+a*300, gy=b.y-20;
+    S.foes.push({x:gx,y:gy,z:b.z,vx:(S.P.x-gx)/t*.75+a*240,vy:(S.P.y-gy)/t*.75,
+      vz:-V,dmg:9,c:COL.green,r:26});
+  }
+  AUDIO.thud();
+}
+/* ------------------------------------------------------ dreadnought attacks */
+export function dreadLance(b){
+  /* the lancer pattern scaled up: fired at the END of a 1.1s visible charge,
+     aimed at the player's position AT FIRE TIME — dodged by moving after */
+  const sp=ATT.dreadSpine, gx=b.x+sp[0], gy=b.y+sp[1], gz=b.z+sp[2];
+  const V=3600, t=gz/V;
+  S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t,vy:(S.P.y-gy)/t,vz:-V,dmg:16,c:COL.red,r:36});
+  AUDIO.lance && AUDIO.lance();
+}
+export function dreadWall(b){
+  /* a slow flat lattice spanning most of the arena, with 1-2 gaps ~180 wide —
+     the dodge puzzle is finding and threading a gap before the wall lands */
+  const gaps=[rnd(-170,170)];
+  if(b.phase===1 || Math.random()<.55) gaps.push(rnd(-170,170));
+  for(let gx=-320;gx<=320;gx+=64){
+    let open=false;
+    for(const g of gaps) if(Math.abs(gx-g)<90){ open=true; break; }
+    if(open) continue;
+    for(let gy=-130;gy<=130;gy+=65)
+      S.foes.push({x:gx,y:gy,z:b.z,vx:0,vy:0,vz:-1300,dmg:9,c:COL.red,r:26});
   }
   AUDIO.thud();
 }
@@ -131,7 +227,7 @@ export function impact(e,dmg,x,y,z,big,s){
   if(s){ const l=Math.hypot(s.vx,s.vy,s.vz)||1; dx=-s.vx/l; dy=-s.vy/l; dz=-s.vz/l; }
   /* spray back down the shot line so the spark cone opens toward the camera */
   sparks(x,y,z, big?30:Math.min(20,9+(dmg*3|0)), (big?2100:1500)*(.65+pw*.45),
-    big?1.5:1.25, e===S.boss?COL.purple:COL.cyan, dx,dy,dz, 1);
+    big?1.5:1.25, e===S.boss?e.c:COL.cyan, dx,dy,dz, 1);
   shock(x,y,z, heavy?16:9, (heavy?170:100)*(.55+pw*.6), big?.34:.25,
     heavy?9:6.5, COL.white, big?1.5:1.35);
   S.parts.push(mk(x,y,z, dx*120,dy*120,dz*120, COL.white, big?.14:.10,
@@ -151,10 +247,11 @@ export function explode(e,x,y,z){
   const k = e===S.boss?'boss' : e.k;
   const c = e.c, R = e.r;
   if(k==='boss'){
+    /* each boss type dies in its own colour — c is e.c (purple/green/red) */
     shock(x,y,z, 40,1600, .95, 26, COL.white, 1);
-    shock(x,y,z, 20, 820, .55, 34, COL.purple, 1);
+    shock(x,y,z, 20, 820, .55, 34, c, 1);
     S.parts.push(mk(x,y,z, 0,0,0, COL.white, .26, 190, 0, 0, 1.5));
-    sparks(x,y,z, 70, 2600, 1.9, COL.purple, 0,0,0, 0);
+    sparks(x,y,z, 70, 2600, 1.9, c, 0,0,0, 0);
     for(let i=0;i<15;i++)
       shard(x+rnd(-R,R), y+rnd(-70,70), z+rnd(-140,140),
         rnd(-1100,1100), rnd(-300,820), rnd(-1100,1100), rnd(.55,1.1), i&1?c:COL.mag, rnd(.45,.85));
@@ -169,8 +266,8 @@ export function explode(e,x,y,z){
           S.parts.push(mk(fx,fy,fz, rnd(-190,190),rnd(-120,190),rnd(-190,190),
             j&1?COL.amber:COL.red, rnd(.4,.75), rnd(66,112), 0, .3, 1.9));
         sparks(fx,fy,fz, 26, 1700, 1.4, COL.amber, 0,0,0, 0);
-        for(let j=0;j<2;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.4,.8), COL.purple, rnd(.4,.75));
-        S.shake=Math.min(38,S.shake+15); S.flash=Math.min(.22,S.flash+.08); S.flashC=i&1?COL.amber:COL.purple;
+        for(let j=0;j<2;j++) shard(fx,fy,fz, rnd(-760,760),rnd(-160,640),rnd(-760,760), rnd(.4,.8), c, rnd(.4,.75));
+        S.shake=Math.min(38,S.shake+15); S.flash=Math.min(.22,S.flash+.08); S.flashC=i&1?COL.amber:c;
         AUDIO.boom(1.5);
       });
     }
@@ -212,7 +309,7 @@ export function damage(e,dmg,x,y,z,big,s){
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=S.enemies.indexOf(e); if(i>=0) S.enemies.splice(i,1);
-    const pts=(e.k==='cruiser'?250:100)*S.combo; S.score+=pts;
+    const pts=(e.k==='cruiser'?250:e.k==='lancer'?300:e.k==='striker'?150:e.k==='mine'?60:100)*S.combo; S.score+=pts;
     pop(e.x,e.y,e.z,'+'+pts,e.c);
     S.combo=Math.min(9,S.combo+1); S.comboT=2.6;
     if(Math.random()<.07) spawnCrate();

@@ -5,7 +5,8 @@ import { S, COL, SPAWN_Z, DESPAWN_Z, BX, BY, FLOW, EASE_LEN, EASE_CALM } from '.
 import { ATT } from '../render/gl.js';
 import { keys, mouse } from './input.js';
 import { mk, sparks, shard } from './fx.js';
-import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take } from './combat.js';
+import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, explode,
+         carrierLaunch, carrierVolley, dreadLance, dreadWall } from './combat.js';
 import { directorTick } from './director.js';
 import { gameOver } from '../main.js';
 
@@ -85,12 +86,47 @@ export function update(dt){
   for(let i=S.enemies.length-1;i>=0;i--){
     const e=S.enemies[i];
     e.z -= (e.spd+drift)*dt;
-    e.ph += dt*(e.k==='drone'?4.2:1.6);
-    const sx=Math.cos(e.ph)*e.amp*(e.k==='drone'?3.0:1.1);
-    const sy=Math.sin(e.ph*1.6)*e.amp*(e.k==='drone'?1.7:.6);
-    e.x+=sx*dt; e.y+=sy*dt;
-    e.roll = lerp(e.roll, clamp(-sx/380,-1.2,1.2), Math.min(1,dt*6));
-    e.yaw  = lerp(e.yaw,  clamp(sx/900,-.5,.5)+Math.PI, Math.min(1,dt*6));
+    if(e.k==='striker'){
+      /* attack run: bank across toward the centre, fire one burst at ~1900,
+         then break off hard to the side and climb out */
+      if(!e.fired && e.z<1900){
+        e.fired=true;
+        const V=2200, t=e.z/V;
+        for(let j=-1;j<=1;j++)
+          S.foes.push({x:e.x,y:e.y,z:e.z,
+            vx:(S.P.x-e.x)/t*.85+j*130, vy:(S.P.y-e.y)/t*.85+j*40,
+            vz:-V,dmg:7,c:COL.green,r:24});
+        AUDIO.strafe && AUDIO.strafe();
+        e.vx=(e.x>=0?1:-1)*rnd(720,900); e.vy=rnd(90,150);
+      }
+      e.x+=e.vx*dt; e.y+=e.vy*dt;
+      e.roll = lerp(e.roll, clamp(-e.vx/420,-1.3,1.3), Math.min(1,dt*7));
+      e.yaw  = lerp(e.yaw,  clamp(e.vx/900,-.6,.6)+Math.PI, Math.min(1,dt*6));
+      /* breaking off is the striker's normal exit — never a combo penalty */
+      if(e.fired && Math.abs(e.x)>700){ S.enemies.splice(i,1); continue; }
+    } else if(e.k==='mine'){
+      /* tumbling proximity fuse: drifts weakly onto the player's line */
+      e.vx = lerp(e.vx, clamp((S.P.x-e.x)*.9,-150,150), Math.min(1,dt*1.3));
+      e.vy = lerp(e.vy, clamp((S.P.y-e.y)*.9,-120,120), Math.min(1,dt*1.3));
+      e.x+=e.vx*dt; e.y+=e.vy*dt;
+      e.roll+=dt*1.9; e.yaw+=dt*1.2; e.ph+=dt;
+      if(e.z<900 && (e.beepT-=dt)<=0){
+        e.beepT = e.z<450?.28:.55;
+        AUDIO.mineArm && AUDIO.mineArm();
+      }
+      if(e.z<220 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<110){
+        hurt(16,null); explode(e,e.x,e.y,e.z); S.enemies.splice(i,1); continue;
+      }
+    } else {
+      e.ph += dt*(e.k==='drone'?4.2:1.6);
+      let sx=Math.cos(e.ph)*e.amp*(e.k==='drone'?3.0:1.1);
+      const sy=Math.sin(e.ph*1.6)*e.amp*(e.k==='drone'?1.7:.6);
+      /* a charging lancer holds its lateral line — that IS the telegraph */
+      if(e.k==='lancer' && e.chg>0) sx=0;
+      e.x+=sx*dt; e.y+=sy*dt;
+      e.roll = lerp(e.roll, clamp(-sx/380,-1.2,1.2), Math.min(1,dt*6));
+      e.yaw  = lerp(e.yaw,  clamp(sx/900,-.5,.5)+Math.PI, Math.min(1,dt*6));
+    }
     if(e.hit>0) e.hit=Math.max(0,e.hit-dt*7);
     if(e.max){
       const w=e.hp/e.max;
@@ -115,25 +151,98 @@ export function update(dt){
         S.foes.push({x:gx,y:gy,z:e.z,vx:(S.P.x-gx)/t*.8,vy:(S.P.y-gy)/t*.8,vz:-V,dmg:8,c:COL.amber,r:26});
       }
     }
+    if(e.k==='lancer' && e.z>460 && e.z<3000){
+      /* hold → 0.9s visible charge → one fast bolt aimed at the player's
+         position AT FIRE TIME: dodgeable by moving after the shot */
+      if(e.chg>0){
+        e.chg=Math.min(1,e.chg+dt/.9);
+        if(e.chg>=1){
+          const V=3400, t=e.z/V;
+          S.foes.push({x:e.x,y:e.y,z:e.z,vx:(S.P.x-e.x)/t,vy:(S.P.y-e.y)/t,vz:-V,dmg:13,c:COL.purple,r:30});
+          AUDIO.lance && AUDIO.lance();
+          e.chg=0; e.cd=2.6;
+        }
+      } else if((e.cd-=dt)<=0) e.chg=1e-4;
+    }
     if(e.z<70){
-      if(e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:22,e); continue; }
-      if(e.z<DESPAWN_Z){ S.enemies.splice(i,1); S.combo=1; }
+      if(e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:e.k==='mine'?16:22,e); continue; }
+      /* a striker slipping out the back is not an "escape" — no combo reset */
+      if(e.z<DESPAWN_Z){ S.enemies.splice(i,1); if(e.k!=='striker') S.combo=1; }
     }
   }
 
-  /* S.boss */
+  /* S.boss — one object, three behaviour sets keyed by b.type. The shared
+     skeleton (approach to a hold depth, phase from hp thirds, listing, rage
+     smoke, hit decay) is identical for all; only movement + attack cycles
+     branch. Every field a branch reads is initialised in spawnBoss(). */
   if(S.boss){
     const b=S.boss; b.t+=dt;
-    if(!b.here){ b.z-=1500*dt; if(b.z<=1500){ b.z=1500; b.here=true; } }
+    const type=b.type||'mothership';
+    /* the carrier hangs deeper — its threat launches at you, it doesn't */
+    const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : 1500;
+    if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true; } }
     else{
       const rage=1-b.hp/b.max;
-      b.x += b.dir*(190+180*rage)*dt;
-      if(Math.abs(b.x)>300) b.dir*=-1;
-      b.y = 40+Math.sin(b.t*.9)*70;
-      b.z = 1500+Math.sin(b.t*.6)*300;
       b.phase = b.hp/b.max>.66?1 : b.hp/b.max>.33?2:3;
-      b.yaw = Math.PI + Math.sin(b.t*.5)*.18;
-      b.roll = Math.sin(b.t*.7)*.10 + rage*.20*Math.sin(b.t*3.4);
+      if(type==='carrier'){
+        /* slow broad sweep; the launch cycle is the whole fight */
+        b.x += b.dir*(120+90*rage)*dt;
+        if(Math.abs(b.x)>260) b.dir*=-1;
+        b.y = 40+Math.sin(b.t*.7)*55;
+        b.z = holdZ+Math.sin(b.t*.5)*220;
+        b.yaw = Math.PI + Math.sin(b.t*.4)*.12;
+        b.roll = Math.sin(b.t*.6)*.06 + rage*.14*Math.sin(b.t*3.1);
+        if(b.flash>0) b.flash-=dt;
+        if((b.cd-=dt)<=0){
+          /* capped launch (7 live enemies max) returns false — retry soon
+             rather than banking a whole missed cycle */
+          b.cd = carrierLaunch(b) ? (b.phase===1?4.5 : b.phase===2?3.4 : 2.6) : .8;
+        }
+        if(b.phase===3 && (b.fcd-=dt)<=0){ b.fcd=2.2; carrierVolley(b); }
+      } else if(type==='dreadnought'){
+        /* slow menacing drift, mostly centred; alternates two telegraphed
+           patterns — SPINE LANCE (1.1s charge, then one fast thick bolt) and
+           WALL (slow lattice with gaps). A charge freezes the x-drift: that
+           stillness IS the tell, same language as the lancer. */
+        if(b.chg>0){
+          b.chg=Math.min(1,b.chg+dt/1.1);
+          if(b.chg>=1){
+            dreadLance(b);
+            b.chg=0; b.mode='wall';
+            b.cd = b.phase===3?1.2 : b.phase===2?1.7 : 2.2;
+          }
+        } else {
+          b.x += b.dir*(60+40*rage)*dt;
+          if(Math.abs(b.x)>130) b.dir*=-1;
+          if((b.cd-=dt)<=0){
+            if(b.mode==='lance'){
+              b.chg=1e-4;
+              /* phase 3: the patterns interleave — the wall launches as the
+                 charge begins, so it lands while the lance bolt is inbound */
+              if(b.phase===3) dreadWall(b);
+            } else {
+              dreadWall(b); b.mode='lance';
+              b.cd = b.phase===3?1.4 : b.phase===2?2.0 : 2.6;
+            }
+          }
+        }
+        b.y = 30+Math.sin(b.t*.6)*40;
+        b.z = holdZ+Math.sin(b.t*.35)*140;
+        b.yaw = Math.PI + Math.sin(b.t*.4)*.08;
+        b.roll = Math.sin(b.t*.5)*.05 + rage*.12*Math.sin(b.t*3.0);
+      } else {
+        /* mothership — unchanged */
+        b.x += b.dir*(190+180*rage)*dt;
+        if(Math.abs(b.x)>300) b.dir*=-1;
+        b.y = 40+Math.sin(b.t*.9)*70;
+        b.z = holdZ+Math.sin(b.t*.6)*300;
+        b.yaw = Math.PI + Math.sin(b.t*.5)*.18;
+        b.roll = Math.sin(b.t*.7)*.10 + rage*.20*Math.sin(b.t*3.4);
+        if((b.cd-=dt*(b.phase===3?1.8:b.phase===2?1.35:1))<=0){
+          b.cd = b.phase===1?1.15 : b.phase===2?.85 : .62;
+          volley(b);
+        }
+      }
       b.list = rage*.26*Math.sin(b.t*2.1);
       if(rage>.25 && (b.smk-=dt)<=0){
         b.smk = .07-rage*.045;
@@ -141,11 +250,7 @@ export function update(dt){
         S.parts.push(mk(hx,hy,hz, rnd(-70,70),rnd(30,150),-rnd(260,620),
           rage>.66?COL.red:COL.amber, rnd(.7,1.5), rnd(56,100), 0, .35, 1.6));
         sparks(hx,hy,hz, 4, 900, 1.1, COL.amber, 0,0,0, 0);
-        if(rage>.6 && Math.random()<.11) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.4,.7), COL.purple, rnd(.4,.75));
-      }
-      if((b.cd-=dt*(b.phase===3?1.8:b.phase===2?1.35:1))<=0){
-        b.cd = b.phase===1?1.15 : b.phase===2?.85 : .62;
-        volley(b);
+        if(rage>.6 && Math.random()<.11) shard(hx,hy,hz, rnd(-220,220),rnd(60,300),-rnd(200,500), rnd(.4,.7), b.c, rnd(.4,.75));
       }
     }
     if(b.hit>0) b.hit=Math.max(0,b.hit-dt*7);

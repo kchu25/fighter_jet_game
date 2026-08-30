@@ -41,7 +41,7 @@ export const S = {
   dist: 0, ddist: 0, score: 0, kills: 0, combo: 1, comboT: 0, shake: 0, flash: 0,
   flashC: [1,1,1], speed: 1, flow: 0,
   gameOn: false, T: 0, spawnT: 0, waveN: 0, nextBoss: 0, alarmT: 0, tipT: 0, hitT: 0,
-  bossWarn: 0, bossFx: 0, hintT: 0,
+  bossWarn: 0, bossWarnName: 'MOTHERSHIP', bossFx: 0, hintT: 0,
   bossN: 0,
   /* director pacing: sector counts fights this run, lullT is the between-sector
      breather, sectorKills snapshots S.kills at sector start, threat/threatCap
@@ -66,7 +66,7 @@ export function reset(){
   S.debris=[]; S.rings=[]; S.evq=[];
   S.dist=0; S.ddist=0; S.score=0; S.kills=0; S.combo=1; S.comboT=0; S.shake=0; S.flash=0; S.flashC=COL.white;
   S.speed=1; S.flow=FLOW; S.spawnT=.25; S.waveN=0; S.bossN=0; S.nextBoss=2800; S.alarmT=0; S.tipT=4.5; S.hitT=0;
-  S.bossWarn=0; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
+  S.bossWarn=0; S.bossWarnName='MOTHERSHIP'; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
