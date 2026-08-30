@@ -2,7 +2,7 @@
    laser / missile / boom / thud / pickup / alarm / siren. */
 import { A } from './state.js';
 import { MAX_LASER, MAX_BOOM } from './constants.js';
-import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, fclamp, mtof, budget, voice } from './primitives.js';
+import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, clamp, fclamp, mtof, budget, voice } from './primitives.js';
 
 A.laserSide = 1;
 export function laser() {
