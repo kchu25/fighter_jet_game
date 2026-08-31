@@ -7,6 +7,18 @@ import { camP, toScreen } from '../render/scene-draw.js';
 import { mouse } from './input.js';
 import { mk, shock, shard, later, sparks, burst, pop } from './fx.js';
 
+/* ------------------------------------------------------------------ comms
+   Radio traffic: short attributed lines stacked bottom-left on the HUD
+   (hud-draw.js renders, update.js ages). Every push keys a garbled radio
+   voice burst — urgency u (0..1) drives both the voice and the red tint
+   maydays get on screen (u>=.9). */
+export function pushComms(who,txt,u){
+  if(!S.comms) S.comms=[];
+  S.comms.push({who,txt,t:0,u:u||.5});
+  while(S.comms.length>4) S.comms.shift();
+  AUDIO.radio && AUDIO.radio(u||.5);
+}
+
 export function aimAt(depth){
   // world point under the crosshair at a given forward depth
   const sx = mouse.has? mouse.x : W/2, sy = mouse.has? mouse.y : H/2;
@@ -113,25 +125,50 @@ export function spawnRavager(o={}){
     cd:rnd(2.2,3.0)*(o.cdMul||1)+(S.easeT>0?1.5:0),
     c:o.c||COL.bio,roll:0,yaw:Math.PI});
 }
+export function spawnSwarm(o={}){
+  /* fly-swarm: one entity rendered as a seething cloud of ~24 sprites
+     (scene-draw.js branches on the kind — there is deliberately NO mesh).
+     Hunts the player harder than anything else airborne and ENGULFS on
+     contact: continuous chip damage instead of a ram (update.js owns it).
+     hp0 (not max) tracks the full pool so the wounded-hull list/smoke path
+     never runs on it — a cloud can't list; it thins instead. */
+  const hp=Math.min(14, 7+S.waveN*.3);
+  S.enemies.push({k:'swarm',x:o.x??rnd(-230,230),y:o.y??rnd(-120,130),z:o.z??SPAWN_Z,
+    hp,hp0:hp,r:55,rz:55,seed:rnd(0,100),
+    ph:o.ph??rnd(0,6.28),amp:0,spd:rnd(1000,1200)*(o.spdMul||1),
+    vx:0,vy:0,eng:0,engulf:false,
+    c:o.c||[0.35,0.62,0.20],roll:0,yaw:Math.PI});
+}
 export function spawnCrate(){
   S.crates.push({x:rnd(-220,220),y:rnd(-120,130),z:SPAWN_Z,
     kind:['shield','rapid','spread'][(Math.random()*3)|0],spin:0});
 }
-/* friendly two-ship: spawns behind/below the player view and climbs to a
-   station beside them. Every ally is doomed — doom is the seconds until it is
-   hit and goes down in front of you; the second ship dies after the first
-   (staggered dread). update.js owns the whole lifecycle. */
+/* friendly flight: spawns behind/below the player view and climbs to a
+   station beside them, topping the formation up to 2 ships total (surviving
+   'wing' ships from earlier flights count toward the cap). Each new ship
+   carries a fate rolled here: at its doom time it either goes down on-screen
+   ('die') or shakes the hit and stays as a permanent wingman ('wing').
+   The FIRST ally event of a run guarantees exactly one survivor — the other
+   still dies, because the death spectacle is the point — later events roll
+   ~45% per ship. update.js owns the whole lifecycle. */
 export function spawnAllies(){
+  const pool=[['VIPER 2',-1],['VIPER 5',1],['VIPER 3',-1],['VIPER 6',1]]
+    .filter(([cs])=>!S.allies.some(a=>a.cs===cs));
+  const need=Math.min(pool.length, Math.max(0, 2-S.allies.length));
+  if(need<=0) return;
+  const first=S.allyFirst; S.allyFirst=false;
   const d0=rnd(5.5,7.5);
-  let n=0;
-  for(const [cs,side] of [['VIPER 2',-1],['VIPER 5',1]]){
+  for(let n=0;n<need;n++){
+    const [cs,side]=pool[n];
+    const fate = (first&&need>1) ? (n===need-1?'wing':'die')
+               : (Math.random()<.45?'wing':'die');
     S.allies.push({cs,side,
       x:S.P.x+side*170, y:-120, z:-150, vx:0, vy:0,
       stx:side*rnd(160,200), sty:rnd(-20,30), stz:rnd(750,950),
       ph:rnd(0,6.28), t:0, doom:n===0?d0:d0+rnd(1.5,2.5),
-      state:'join', roll:0, yaw:0, pitch:0, thr:.8,
+      state:'join', fate, joinSector:0, hazT:0,
+      roll:0, yaw:0, pitch:0, thr:.8,
       fireT:rnd(.8,1.4), burnT:0, dieT:0, hitN:0});
-    n++;
   }
 }
 export function spawnBoss(){
@@ -165,6 +202,7 @@ export function spawnBoss(){
         chg:0,mode:'lance',alt:false,flash:0,fcd:2.4,scr3:false};
   /* hud prints the warn phrase raw — the leviathan's carries its own verb */
   S.bossWarn=2.4; S.bossWarnName = type==='leviathan'?'LEVIATHAN RISING' : name+' INBOUND';
+  pushComms('CONTROL','ALL BIRDS — HEAVY SIGNATURE INBOUND',.9);
   AUDIO.siren();
 }
 
@@ -305,7 +343,7 @@ export function hitScan(s,dmg,big){
 /* --------------------------------------------------------------- violence */
 /* organic kinds burst in ichor, not sparks — checked by kind (the leviathan
    boss is caught through e.type since its e.k is 'boss') */
-export const BIOK = { wasp:1, ravager:1, leviathan:1 };
+export const BIOK = { wasp:1, ravager:1, leviathan:1, swarm:1 };
 function isBio(e){ return !!(BIOK[e.k] || (e.type && BIOK[e.type])); }
 export function impact(e,dmg,x,y,z,big,s){
   const heavy = e===S.boss || e.k==='cruiser';
@@ -342,6 +380,8 @@ export function explode(e,x,y,z){
         rnd(-70,70), rnd(-30,90), rnd(-70,70),
         COL.bio, rnd(.9,1.5), rnd(30,52)*bg, 0, .5, 1.6));
     AUDIO.squish && AUDIO.squish(k==='boss'?2 : k==='ravager'?1 : .5);
+    /* a killed swarm bursts: the whole cloud blows outward as green ichor */
+    if(k==='swarm') sparks(x,y,z, 40, 1400, 1.3, COL.bio, 0,0,0, 0);
   }
   if(k==='boss'){
     /* each boss type dies in its own colour — c is e.c (purple/green/red) */
@@ -406,7 +446,7 @@ export function damage(e,dmg,x,y,z,big,s){
     for(let i=0;i<3;i++) spawnCrate();
   } else {
     const i=S.enemies.indexOf(e); if(i>=0) S.enemies.splice(i,1);
-    const pts=(e.k==='cruiser'?250:e.k==='ravager'?250:e.k==='lancer'?300:e.k==='striker'?150:e.k==='mine'?60:e.k==='wasp'?40:100)*S.combo; S.score+=pts;
+    const pts=(e.k==='cruiser'?250:e.k==='ravager'?250:e.k==='lancer'?300:e.k==='swarm'?180:e.k==='striker'?150:e.k==='mine'?60:e.k==='wasp'?40:100)*S.combo; S.score+=pts;
     pop(e.x,e.y,e.z,'+'+pts,e.c);
     S.combo=Math.min(9,S.combo+1); S.comboT=2.6;
     if(Math.random()<.07) spawnCrate();

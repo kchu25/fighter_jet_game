@@ -11,9 +11,10 @@ import { AUDIO } from '../audio/index.js';
 import { rnd, lerp } from '../core/utils.js';
 import { S, COL, EASE_CALM } from './state.js';
 import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate, spawnAllies,
-         spawnStriker, spawnMine, spawnLancer, spawnWasp, spawnRavager } from './combat.js';
+         spawnStriker, spawnMine, spawnLancer, spawnWasp, spawnRavager,
+         spawnSwarm, pushComms } from './combat.js';
 
-const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2, wasp: .5, ravager: 2.5 };
+const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2, wasp: .5, ravager: 2.5, swarm: 1.25 };
 function aliveCost(){ let c=0; for(const e of S.enemies) c+=COST[e.k]||1; return c; }
 
 /* per-sector quality multipliers, all hard-capped so nothing grows forever */
@@ -88,6 +89,16 @@ const FORMS = [
     go:m=>{ const x=rnd(-130,130), y=rnd(-70,80);
       spawnRavager({x,y,cdMul:m.cc});
       for(let i=0;i<4;i++) spawnWasp({x:x+rnd(-130,130),y:y+rnd(-110,110)}); } },
+  /* fly-swarm — distance-gated on top of quality: the deep-run horror kind,
+     revealed only once the world has already started to turn (same corruption
+     arc the scenery creep rides). drones:3 keeps it off the first-run ramp. */
+  { w:.7, cost:1.25, drones:3, ok:q=>q>.5 && S.ddist>15000,   // lone swarm
+    go:m=> spawnSwarm({spdMul:m.ds}) },
+  { w:.6, cost:5,    drones:3, ok:q=>q>.75 && S.ddist>15000,  // pair escorting a ravager
+    go:m=>{ const x=rnd(-120,120), y=rnd(-60,70);
+      spawnRavager({x,y,cdMul:m.cc});
+      spawnSwarm({x:x-150,y:y+rnd(-40,40),spdMul:m.ds});
+      spawnSwarm({x:x+150,y:y+rnd(-40,40),spdMul:m.ds}); } },
 ];
 
 /* ------------------------------------------------------------------ director */
@@ -112,16 +123,17 @@ export function directorTick(dt, easeP){
          joins on your wing — the intro's premise, made to happen beside you. */
       if((S.lullT-=dt)<=0){
         S.lullT=0;
-        if(S.sector>=S.allyNext && S.allies.length===0){
+        if(S.sector>=S.allyNext && S.allies.length<2){
           spawnAllies();
           S.allyNext=S.sector+2+((Math.random()*2)|0);
-          S.tipMsg='VIPER FLIGHT  ·  ON YOUR WING'; S.tipT=2.5;
+          pushComms('VIPER FLIGHT','ON YOUR WING',.5);
         } else { S.tipMsg='HOSTILES INBOUND'; S.tipT=2; }
       }
     }
     else if(!calm && S.easeT<=0 && prog>=1 && alive<=1){
       /* sector clear: enough kills AND the sky nearly empty — reward + rest */
       S.tipMsg='SECTOR '+S.sector+' CLEAR'; S.tipT=3;
+      pushComms('CONTROL','SECTOR CLEAR',.3);
       S.sector++; S.sectorKills=S.kills; S.lullT=7;
       spawnCrate();
       AUDIO.sectorClear && AUDIO.sectorClear();

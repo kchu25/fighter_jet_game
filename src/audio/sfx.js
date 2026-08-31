@@ -2,7 +2,7 @@
    laser / missile / boom / thud / pickup / alarm / siren. */
 import { A } from './state.js';
 import { MAX_LASER, MAX_BOOM } from './constants.js';
-import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, clamp, fclamp, mtof, budget, voice, duckPump } from './primitives.js';
+import { now, gainNode, panner, pluck, osc, noise, hp, lp, bp, clamp, fclamp, mtof, budget, voice, duckPump, makeSoftCurve } from './primitives.js';
 
 A.laserSide = 1;
 export function laser() {
@@ -599,6 +599,302 @@ export function mayday() {
   }
 
   voice(head, srcs);
+}
+
+/* wingman radio chatter: garbled wordless voice-like transmission.
+   u=0..1 urgency (faster syllables, higher pitch, more clipped).
+   Squelch pop -> syllabic voice burble through a telephone band -> squelch cut. */
+export function radio(u) {
+  if (!A.ready || A.muted) return;
+  var t = now();
+  if (t - A.lastRadioT < 0.35) return;             // rapid-fire guard
+  if (!budget(5)) return;
+  A.lastRadioT = t;
+  t += 0.002;
+  u = clamp(u == null ? 0.5 : u, 0, 1);
+
+  var head = gainNode(0.3);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // everything speaks through one radio band: hp -> bp -> lp -> mild clip
+  var rh = hp(300);
+  var rb = bp(1300, 0.8);
+  var rl = lp(2800);
+  var shp = A.ctx.createWaveShaper();
+  shp.curve = makeSoftCurve(2.2 + 2.5 * u);        // more clipped when urgent
+  rh.connect(rb); rb.connect(rl); rl.connect(shp); shp.connect(head);
+
+  // opening squelch pop
+  var sqg = pluck(t, 0.5, 0.03, 0.001);
+  sqg.connect(rh);
+  var sqs = noise(t, 0.04, 1.5); sqs.connect(sqg); srcs.push(sqs);
+
+  // syllabic amplitude gate - all voiced material passes through this
+  var syl = A.ctx.createGain();
+  syl.gain.setValueAtTime(0.0001, t);
+  syl.connect(rh);
+
+  // carrier: saw + quiet square an octave up, pitch stepping per syllable
+  var base = 110 + 50 * u + Math.random() * 20;
+  var car = osc('sawtooth', base, t);
+  var car2 = osc('square', base * 2, t);
+  var c2g = gainNode(0.3);
+  car.connect(syl);
+  car2.connect(c2g); c2g.connect(syl);
+
+  // 3-6 'syllable' pitches to step between
+  var nPitch = 3 + Math.floor(Math.random() * 4);
+  var pitches = [];
+  for (var i = 0; i < nPitch; i++) pitches.push(base * (0.85 + Math.random() * 0.5));
+
+  var nSyl = 5 + Math.floor(Math.random() * 3 + u * 2);    // 5-9 bursts
+  if (nSyl > 9) nSyl = 9;
+  var speed = 1 + 0.6 * u;
+  var st = t + 0.05, endT = st;
+  for (var j = 0; j < nSyl; j++) {
+    var sd = (0.06 + Math.random() * 0.08) / speed;        // 60-140ms, faster w/ u
+    var gap = (0.025 + Math.random() * 0.055) / speed;
+    var p = pitches[Math.floor(Math.random() * nPitch)];
+    // pitch step + a slow wobble across the syllable
+    car.frequency.setValueAtTime(fclamp(p), st);
+    car.frequency.linearRampToValueAtTime(fclamp(p * (0.92 + Math.random() * 0.16)), st + sd);
+    car2.frequency.setValueAtTime(fclamp(p * 2), st);
+    // amplitude gate: snap open, hold, snap shut (more clipped at high u)
+    var pk = 0.5 + Math.random() * 0.25 + 0.2 * u;
+    syl.gain.setValueAtTime(0.0001, st);
+    syl.gain.linearRampToValueAtTime(pk, st + 0.012);
+    syl.gain.setValueAtTime(pk, st + sd * (0.55 + 0.25 * u));
+    syl.gain.linearRampToValueAtTime(0.0001, st + sd);
+    endT = st + sd;
+    st = endT + gap;
+  }
+  var dur = endT - t;
+  car.start(t); car.stop(endT + 0.03);
+  car2.start(t); car2.stop(endT + 0.03);
+  srcs.push(car, car2);
+
+  // a touch of breath noise under the voice, gated by the same envelope
+  var vng = gainNode(0.06);
+  vng.connect(syl);
+  var vns = noise(t, dur + 0.05, 1.2); vns.connect(vng); srcs.push(vns);
+
+  // closing squelch click
+  var cqg = pluck(endT + 0.02, 0.4, 0.025, 0.001);
+  cqg.connect(rh);
+  var cqs = noise(endT + 0.02, 0.035, 1.6); cqs.connect(cqg); srcs.push(cqs);
+
+  voice(head, srcs);
+}
+
+/* distant colossal monster groan: low sweep 55->38Hz with slow vibrato,
+   3 staggered decaying copies = cheap cavernous reverb, breath layer under. */
+export function groan() {
+  if (!A.ready || A.muted) return;
+  var t = now();
+  if (t - A.lastGroanT < 6) return;                // far-away beast, rare
+  if (!budget(6)) return;
+  A.lastGroanT = t;
+  t += 0.002;
+
+  var head = gainNode(0.3);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // distance: the tonal body speaks through a dull lowpass
+  var df = lp(260, 0.8);
+  df.connect(head);
+
+  // shared slow vibrato
+  var lfo = osc('sine', 2.6, t);
+  var lg = gainNode(1.6);
+  lfo.connect(lg);
+  lfo.start(t); lfo.stop(t + 3.4);
+  srcs.push(lfo);
+
+  // 3 staggered copies at decreasing gain
+  var dur = 1.6;
+  var kg = [0.5, 0.24, 0.11];
+  for (var k = 0; k < 3; k++) {
+    var kt = t + k * 0.26;
+    var o = osc(k === 1 ? 'triangle' : 'sine', 55, kt);
+    o.frequency.setValueAtTime(fclamp(55), kt);
+    o.frequency.exponentialRampToValueAtTime(fclamp(38), kt + dur);
+    lg.connect(o.frequency);
+    var g = A.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, kt);
+    g.gain.exponentialRampToValueAtTime(kg[k], kt + 0.35);
+    g.gain.setValueAtTime(kg[k], kt + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, kt + dur);
+    o.connect(g); g.connect(df);
+    o.start(kt); o.stop(kt + dur + 0.05);
+    srcs.push(o);
+  }
+
+  // breathy exhale under the first copy
+  var nf = lp(320, 1.2);
+  var ng = A.ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t);
+  ng.gain.exponentialRampToValueAtTime(0.1, t + 0.5);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur * 1.2);
+  nf.connect(ng); ng.connect(head);
+  var ns = noise(t, dur * 1.2 + 0.05, 0.6); ns.connect(nf); srcs.push(ns);
+
+  voice(head, srcs);
+}
+
+/* ---------------------------------------------------------------
+   persistent ambient loops: swarm buzz + horror creep bed.
+   Long-lived like the engine drone, so deliberately outside the
+   budget()/voice() one-shot accounting. A watchdog interval fades
+   either loop out if gameplay stops calling (game over / reset) -
+   timestamps use ctx.currentTime, which freezes while suspended,
+   so a paused game never falsely expires them.
+   --------------------------------------------------------------- */
+function ambWatch() {
+  if (!A.ready) return;
+  var t;
+  try { t = A.ctx.currentTime; } catch (e) { return; }
+  if (A.swarm && A.swarmOn && t - A.swarmLastT > 1.0) swarm(false);
+  if (A.creep && A.creepLevel > 0 && t - A.creepLastT > 2.5) creep(0);
+}
+function ambTimerStart() {
+  if (A.ambTimer === null) A.ambTimer = setInterval(ambWatch, 500);
+}
+
+function buildSwarm() {
+  var t = now();
+  var s = {};
+  s.head = gainNode(0.0001);
+  s.head.connect(A.sfxGain);
+
+  // slow amplitude wander so the cloud breathes
+  s.wander = gainNode(0.85);
+  s.wander.connect(s.head);
+  s.wlfo = osc('sine', 0.31, t);
+  s.wamt = gainNode(0.13);
+  s.wlfo.connect(s.wamt); s.wamt.connect(s.wander.gain);
+  s.wlfo.start(t);
+
+  // fast small random FM jitter: looped noise -> tight lowpass -> osc freqs
+  s.jn = A.ctx.createBufferSource();
+  s.jn.buffer = A.noiseBuf; s.jn.loop = true;
+  s.jf = lp(28, 0.7);
+  s.jg = gainNode(9);
+  s.jn.connect(s.jf); s.jf.connect(s.jg);
+  s.jn.start(t);
+
+  // 3 detuned saws = the classic fly buzz
+  s.oscs = [];
+  var fs = [146, 171, 193];
+  for (var i = 0; i < 3; i++) {
+    var o = osc('sawtooth', fs[i], t);
+    o.detune.value = (i - 1) * 7;
+    s.jg.connect(o.frequency);
+    var og = gainNode(i === 2 ? 0.05 : 0.08);
+    o.connect(og); og.connect(s.wander);
+    o.start(t);
+    s.oscs.push(o);
+  }
+
+  // wing shimmer: filtered noise up top
+  s.sn = A.ctx.createBufferSource();
+  s.sn.buffer = A.noiseBuf; s.sn.loop = true; s.sn.playbackRate.value = 1.4;
+  s.sf = bp(3800, 1.8);
+  s.sg = gainNode(0.03);
+  s.sn.connect(s.sf); s.sf.connect(s.sg); s.sg.connect(s.wander);
+  s.sn.start(t);
+
+  A.swarm = s;
+}
+
+/* insect-swarm loop: on=true starts (idempotent, safe every frame),
+   on=false fades out ~0.3s. Lazy persistent graph on A.swarm. */
+export function swarm(on) {
+  if (!A.ready) return;
+  if (!on && !A.swarm) return;
+  if (!A.swarm) buildSwarm();
+  ambTimerStart();
+  var t = now();
+  var g = A.swarm.head.gain;
+  if (on) {
+    A.swarmLastT = t;
+    if (A.swarmOn) return;                         // redundant call, no-op
+    A.swarmOn = true;
+    try {
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(Math.max(0.0001, g.value), t);
+      g.linearRampToValueAtTime(0.14, t + 0.5);
+    } catch (e) { }
+  } else {
+    if (!A.swarmOn) return;
+    A.swarmOn = false;
+    try {
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(Math.max(0.0001, g.value), t);
+      g.linearRampToValueAtTime(0.0001, t + 0.3);
+    } catch (e) { }
+  }
+}
+
+function buildCreep() {
+  var t = now();
+  var c = {};
+  c.head = gainNode(0.0);                          // silent at level 0
+  c.head.connect(A.sfxGain);
+
+  // dissonant drone: two detuned low sines a tritone apart
+  c.a = osc('sine', 50, t);
+  c.b = osc('sine', 70.7, t);
+  c.b.detune.value = 6;
+  c.dg = gainNode(0.5);
+  c.a.connect(c.dg); c.b.connect(c.dg); c.dg.connect(c.head);
+  c.a.start(t); c.b.start(t);
+
+  // very slow pitch drift on one sine keeps the pair uneasy
+  c.lfo = osc('sine', 0.11, t);
+  c.lamt = gainNode(1.3);
+  c.lfo.connect(c.lamt); c.lamt.connect(c.a.frequency);
+  c.lfo.start(t);
+
+  // bus for the sparse insect ticks
+  c.tick = hp(3200);
+  c.tick.connect(c.head);
+
+  A.creep = c;
+}
+
+/* horror-ambience bed intensity, 0..1. Called ~1/sec by gameplay; the
+   ~1s linear ramp makes the swell imperceptible. Sits UNDER the music. */
+export function creep(level) {
+  if (!A.ready) return;
+  level = clamp(level == null ? 0 : level, 0, 1);
+  if (level <= 0 && !A.creep) return;
+  if (!A.creep) buildCreep();
+  ambTimerStart();
+  var t = now();
+  A.creepLevel = level;
+  if (level > 0) A.creepLastT = t;
+
+  var g = A.creep.head.gain;
+  try {
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(Math.max(0, g.value), t);
+    g.linearRampToValueAtTime(0.085 * level, t + 1.0);
+  } catch (e) { }
+
+  // sparse random high 'insect ticks'; rate scales with level.
+  // They pass through head so they scale (and vanish) with the bed.
+  if (level > 0.05 && !A.muted) {
+    var n = Math.random() < 0.35 + 0.6 * level ? (Math.random() < level ? 2 : 1) : 0;
+    for (var i = 0; i < n; i++) {
+      var tt = t + Math.random() * 0.9;
+      var o = osc('square', 4200 + Math.random() * 2600, tt);
+      var og = pluck(tt, 0.25 + 0.3 * level, 0.018, 0.001);
+      o.connect(og); og.connect(A.creep.tick);
+      o.start(tt); o.stop(tt + 0.03);
+    }
+  }
 }
 
 export function alarm() {

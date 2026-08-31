@@ -7,9 +7,50 @@ import { keys, mouse } from './input.js';
 import { mk, sparks, shard, shock, later } from './fx.js';
 import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, explode,
          carrierLaunch, carrierVolley, dreadLance, dreadWall,
-         sporeBarrage, levBirth, levLance } from './combat.js';
+         sporeBarrage, levBirth, levLance, pushComms } from './combat.js';
 import { directorTick } from './director.js';
 import { gameOver } from '../main.js';
+
+/* ------------------------------------------------------------------ allies
+   Shared by the doomed 'fight' state and the surviving 'wing' state — the
+   two must fly and shoot identically, so the movement/fire code lives once. */
+function allyFly(a,dt){
+  /* loose formation: slow weave around station, banking like the player */
+  a.ph+=dt;
+  const tx=S.P.x+a.stx+Math.cos(a.ph*.9)*26;
+  const ty=a.sty+Math.sin(a.ph*1.3)*18;
+  const nx=a.x+(tx-a.x)*Math.min(1,dt*2.2);
+  const ny=a.y+(ty-a.y)*Math.min(1,dt*2.2);
+  a.vx=(nx-a.x)/Math.max(dt,1e-4); a.vy=(ny-a.y)/Math.max(dt,1e-4);
+  a.x=nx; a.y=ny;
+  a.z += (a.stz-a.z)*Math.min(1,dt*1.6);
+  a.roll = lerp(a.roll, clamp(-a.vx/620,-1.1,1.1), Math.min(1,dt*8));
+  a.pitch= lerp(a.pitch, clamp(-a.vy/1500,-.35,.35), Math.min(1,dt*8));
+  a.yaw  = lerp(a.yaw,  clamp(a.vx/2600,-.35,.35), Math.min(1,dt*7));
+  a.thr=.75+.2*Math.sin(S.T*11+a.ph*5)+rnd(-.04,.04);
+  if((a.fireT-=dt)<=0){
+    /* real shots: they ride the S.shots loop and hitScan like the
+       player's, at reduced damage — help a little, light up the sky */
+    a.fireT=rnd(.5,.9);
+    const tgt=nearestAhead(a), V=3400;
+    let vx=0, vy=0;
+    if(tgt){ const tt=Math.max(.05,(tgt.z-a.z)/V); vx=(tgt.x-a.x)/tt; vy=(tgt.y-a.y)/tt; }
+    for(const o of [-16,16])
+      S.shots.push({x:a.x+o,y:a.y+2,z:a.z+30,vx,vy,vz:V,pz:a.z+30,dmg:.8});
+    S.parts.push(mk(a.x,a.y+2,a.z+36, rnd(-20,20),rnd(-20,20),160, COL.cyan, .08, 10));
+  }
+}
+/* the moment an ally is hit: mayday call, then a staggered string of visible
+   impacts ON the hull (closures track the ally, not a fixed world point) */
+function allyDown(a){
+  a.state='dying'; a.dieT=0; a.thr=.2;
+  pushComms(a.cs,"MAYDAY MAYDAY — I'M HIT",1.0);
+  AUDIO.mayday && AUDIO.mayday();
+  for(const td of [0,.22,.45])
+    later(td,0,0,0, ()=>{ if(a.state!=='dying') return;
+      sparks(a.x+rnd(-14,14),a.y+rnd(-6,8),a.z, 10, 700, .9, COL.amber, 0,0,0, 0);
+      shock(a.x,a.y,a.z, 6, 60, .3, 4, COL.amber, .8); });
+}
 
 export function update(dt){
   S.T+=dt;
@@ -84,6 +125,7 @@ export function update(dt){
   directorTick(dt, easeP);
   /* S.enemies */
   const drift = S.flow-FLOW;
+  let swarmNear=false;   // any fly-swarm engulfing or close → buzz loop on
   for(let i=S.enemies.length-1;i>=0;i--){
     const e=S.enemies[i];
     e.z -= (e.spd+drift)*dt;
@@ -118,6 +160,24 @@ export function update(dt){
       if(e.z<220 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<110){
         hurt(16,null); explode(e,e.x,e.y,e.z); S.enemies.splice(i,1); continue;
       }
+    } else if(e.k==='swarm'){
+      /* fly-swarm: hunts the player harder than anything else but wobbles,
+         and slows to a crawl once close so it hangs there instead of blowing
+         past — the threat is being ENGULFED, not rammed. */
+      e.ph+=dt;
+      if(e.z<360) e.z += (e.spd+drift)*dt*.92;   // net ~8% closing speed up close
+      e.vx = lerp(e.vx, clamp((S.P.x-e.x)*1.1,-190,190), Math.min(1,dt*1.7));
+      e.vy = lerp(e.vy, clamp((S.P.y-e.y)*1.1,-160,160), Math.min(1,dt*1.7));
+      const wx=Math.cos(e.ph*1.4)*70, wy=Math.sin(e.ph*2.1)*50;
+      e.x+=(e.vx+wx)*dt; e.y+=(e.vy+wy)*dt;
+      const lat=Math.hypot(e.x-S.P.x,e.y-S.P.y);
+      e.engulf = e.z<420 && e.z>-100 && lat<130;
+      if(e.engulf){
+        /* continuous chip damage ~5/s: the tick clears the .65s post-hit
+           invulnerability window so every tick actually lands */
+        if((e.eng-=dt)<=0){ e.eng=.7; hurt(3.5,null); S.hitT=Math.max(S.hitT,.3); }
+      } else e.eng=Math.min(e.eng,.25);
+      if(e.engulf || e.z<600) swarmNear=true;
     } else if(e.k==='wasp'){
       /* flutter: faster, tighter jink than a drone, PLUS a weak homing pull
          onto the player's line (same idiom as the mine, but stronger) */
@@ -191,11 +251,13 @@ export function update(dt){
       } else if((e.cd-=dt)<=0) e.chg=1e-4;
     }
     if(e.z<70){
-      if(e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:e.k==='mine'?16:e.k==='wasp'?8:22,e); continue; }
+      /* the swarm never rams — its engulf tick above is its whole attack */
+      if(e.k!=='swarm' && e.z>-70 && Math.hypot(e.x-S.P.x,e.y-S.P.y)<e.r+24){ hurt(e.k==='drone'?12:e.k==='mine'?16:e.k==='wasp'?8:22,e); continue; }
       /* a striker slipping out the back is not an "escape" — no combo reset */
       if(e.z<DESPAWN_Z){ S.enemies.splice(i,1); if(e.k!=='striker') S.combo=1; }
     }
   }
+  AUDIO.swarm && AUDIO.swarm(swarmNear);
 
   /* S.boss — one object, three behaviour sets keyed by b.type. The shared
      skeleton (approach to a hold depth, phase from hp thirds, listing, rage
@@ -324,10 +386,12 @@ export function update(dt){
     if(k.z<DESPAWN_Z) S.crates.splice(i,1);
   }
 
-  /* S.allies — friendly two-ship: join → fight on your wing → scripted death.
-     Doomed by design (the fiction is "you are the only bird in the air", so
-     any company must be temporary). Enemies never target them, their tracers
-     are real player-side shots, and combo/score are untouched by their loss. */
+  /* S.allies — friendly flight: join → fight on your wing → at doom time,
+     either the scripted on-screen death or (per the fate rolled at spawn) a
+     promotion to permanent 'wing' — a survivor that flies formation across
+     sectors and bosses until it either loses a hazard roll or completes two
+     full sectors and banks away home. Enemies never target them, their
+     tracers are real player-side shots, combo/score untouched by their loss. */
   for(let i=S.allies.length-1;i>=0;i--){
     const a=S.allies[i]; a.t+=dt;
     if(a.state==='join'){
@@ -341,41 +405,38 @@ export function update(dt){
       a.pitch= lerp(a.pitch, -.22, Math.min(1,dt*4));
       if(a.t>1.2) a.state='fight';
     } else if(a.state==='fight'){
-      /* loose formation: slow weave around station, banking like the player */
-      a.ph+=dt;
-      const tx=S.P.x+a.stx+Math.cos(a.ph*.9)*26;
-      const ty=a.sty+Math.sin(a.ph*1.3)*18;
-      const nx=a.x+(tx-a.x)*Math.min(1,dt*2.2);
-      const ny=a.y+(ty-a.y)*Math.min(1,dt*2.2);
-      a.vx=(nx-a.x)/Math.max(dt,1e-4); a.vy=(ny-a.y)/Math.max(dt,1e-4);
-      a.x=nx; a.y=ny;
-      a.z += (a.stz-a.z)*Math.min(1,dt*1.6);
-      a.roll = lerp(a.roll, clamp(-a.vx/620,-1.1,1.1), Math.min(1,dt*8));
-      a.pitch= lerp(a.pitch, clamp(-a.vy/1500,-.35,.35), Math.min(1,dt*8));
-      a.yaw  = lerp(a.yaw,  clamp(a.vx/2600,-.35,.35), Math.min(1,dt*7));
-      a.thr=.75+.2*Math.sin(S.T*11+a.ph*5)+rnd(-.04,.04);
-      if((a.fireT-=dt)<=0){
-        /* real shots: they ride the S.shots loop and hitScan like the
-           player's, at reduced damage — help a little, light up the sky */
-        a.fireT=rnd(.5,.9);
-        const tgt=nearestAhead(a), V=3400;
-        let vx=0, vy=0;
-        if(tgt){ const tt=Math.max(.05,(tgt.z-a.z)/V); vx=(tgt.x-a.x)/tt; vy=(tgt.y-a.y)/tt; }
-        for(const o of [-16,16])
-          S.shots.push({x:a.x+o,y:a.y+2,z:a.z+30,vx,vy,vz:V,pz:a.z+30,dmg:.8});
-        S.parts.push(mk(a.x,a.y+2,a.z+36, rnd(-20,20),rnd(-20,20),160, COL.cyan, .08, 10));
-      }
+      allyFly(a,dt);
       if(a.t>a.doom){
-        /* the moment it's hit: mayday call, then a staggered string of
-           visible impacts ON the hull (closures track the ally, not a fixed
-           world point — the ally holds station while the world drifts) */
-        a.state='dying'; a.dieT=0; a.thr=.2;
-        AUDIO.mayday && AUDIO.mayday();
-        for(const td of [0,.22,.45])
-          later(td,0,0,0, ()=>{ if(a.state!=='dying') return;
-            sparks(a.x+rnd(-14,14),a.y+rnd(-6,8),a.z, 10, 700, .9, COL.amber, 0,0,0, 0);
-            shock(a.x,a.y,a.z, 6, 60, .3, 4, COL.amber, .8); });
+        if(a.fate==='wing'){
+          /* the survivor moment: shakes the hit and stays for good */
+          a.state='wing'; a.joinSector=S.sector; a.hazT=0;
+          pushComms(a.cs,'STILL WITH YOU — PRESS THE ATTACK',.6);
+        } else allyDown(a);
       }
+    } else if(a.state==='wing'){
+      allyFly(a,dt);
+      /* not immortal: under a boss or a high-threat peak it takes a small
+         hazard roll every 10s — losing one sends it down the existing
+         scripted-death path, mayday and all */
+      if(S.boss || S.threat>0.8*S.threatCap){
+        a.hazT+=dt;
+        if(a.hazT>=10){ a.hazT=0; if(Math.random()<.12){ allyDown(a); continue; } }
+      }
+      /* two full sectors survived after joining → it exits ALIVE */
+      if(!S.boss && S.sector>=a.joinSector+2){
+        a.state='rtb'; a.rtbT=0;
+        pushComms(a.cs,'WINCHESTER — RTB. GOOD HUNTING.',.5);
+      }
+    } else if(a.state==='rtb'){
+      /* banks away climbing on afterburner — never exploded, just gone */
+      a.rtbT=(a.rtbT||0)+dt; a.thr=1.6;
+      a.vx = lerp(a.vx, a.side*560, Math.min(1,dt*2.2));
+      a.vy = lerp(a.vy, 340, Math.min(1,dt*1.8));
+      a.x+=a.vx*dt; a.y+=a.vy*dt; a.z+=260*dt;
+      a.roll = lerp(a.roll, a.side*1.1, Math.min(1,dt*3));
+      a.pitch= lerp(a.pitch, -.4, Math.min(1,dt*2.5));
+      a.yaw  = lerp(a.yaw, a.side*.5, Math.min(1,dt*2.5));
+      if(a.rtbT>5 || Math.abs(a.x)>950 || a.y>520){ S.allies.splice(i,1); continue; }
     } else {
       /* dying: catches fire, rolls inverted, noses down, drifts wide — then
          the airframe lets go */
@@ -400,7 +461,7 @@ export function update(dt){
           shard(a.x,a.y,a.z, rnd(-380,380),rnd(-120,420),rnd(-300,300),
             rnd(.4,.8), j&1?COL.cyan:COL.amber, rnd(.4,.75));
         AUDIO.boom(1.2);
-        S.tipMsg=a.cs+' IS DOWN'; S.tipT=2.5;
+        pushComms('CONTROL',a.cs+' IS DOWN',.8);
         S.allies.splice(i,1); continue;
       }
     }
@@ -473,6 +534,29 @@ export function update(dt){
     if(f.life<=0||f.z<40) S.pops.splice(i,1);
   }
 
+  /* radio comms age out (~6s each; hud-draw fades on the same clock) */
+  if(S.comms) for(let i=S.comms.length-1;i>=0;i--){
+    if((S.comms[i].t+=dt)>6) S.comms.splice(i,1);
+  }
+  /* creep — the shared corruption curve (same formula as the scenery bands,
+     so sight and sound corrupt together). Ambience bed refreshed ~1x/sec;
+     past .2 the distance starts to groan, roughly once per 20-40s at full
+     creep (AUDIO.groan self-throttles on top of this). */
+  if(S.gameOn){
+    const creep = clamp((S.dist-10000)/50000, 0, 1);
+    if((S.creepT-=dt)<=0){ S.creepT=1; AUDIO.creep && AUDIO.creep(creep); }
+    if(creep>.2 && Math.random()<dt*creep/22) AUDIO.groan && AUDIO.groan();
+    /* one-time unsettling transmissions as the world crosses each threshold */
+    const CREEPLINES=[
+      [.15,'READINGS OFF THE SCALE OUT THERE… WHAT IS THAT?',.7],
+      [.45,'YOUR SIGNAL IS BREAKING UP. SOMETHING IS MOVING IN THE CLOUD LAYER',.8],
+      [.75,'WE HEAR IT TOO NOW. IT KNOWS YOUR NAME. COME HOME',.95],
+    ];
+    if(S.creepStage<CREEPLINES.length && creep>CREEPLINES[S.creepStage][0]){
+      const L=CREEPLINES[S.creepStage++];
+      pushComms('CONTROL',L[1],L[2]);
+    }
+  }
   if((S.comboT-=dt)<=0 && S.combo>1){ S.combo=Math.max(1,S.combo-1); S.comboT=1.1; }
   /* superlinear decay: a big S.flash strobes and clears instead of washing the frame */
   S.shake*=Math.pow(.03,dt); S.flash=Math.max(0,S.flash-dt*(2.4+S.flash*14));

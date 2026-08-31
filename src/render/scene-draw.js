@@ -195,6 +195,10 @@ export function render(){
     litDraw(MESH.jet, model, S.hitT>0?[S.hitT*1.6,0,0]:null, 1);
   }
   for(const e of S.enemies){
+    /* the fly-swarm has no hull at all — it is drawn entirely as a sprite
+       cloud in buildFX(); the KMESH fallback would wrongly hang a drone
+       mesh at its centre, so it is skipped here explicitly */
+    if(e.k==='swarm') continue;
     const li=e.list||0;
     compose(model, e.x,e.y,e.z, li*.42, e.yaw, e.roll+li*.8, 1);
     litDraw(KMESH[e.k]||MESH.drone, model, hitTint(e,li), 1);
@@ -365,6 +369,26 @@ export function buildFX(){
       }
       for(const g of ATT.lancerEngines)
         sprite(e.x+g[0],e.y+g[1],e.z+g[2], 10, COL.purple, .9);
+    } else if(e.k==='swarm'){
+      /* the whole enemy: ~24 dark flies seething around a drifting centre,
+         each on its own pseudo-random lissajous of S.T (seeded per fly, so
+         the paths are stable frame-to-frame). Hits thin the cloud — sprite
+         count scales with the hp fraction — and a couple of brighter green
+         glints sell the wet-carapace shimmer. */
+      const frac=clamp(e.hp/(e.hp0||10),0,1);
+      const n=Math.max(5,(24*frac)|0);
+      for(let i=0;i<n;i++){
+        const s1=Math.sin(i*12.9898+e.seed)*43758.5453, r1=s1-Math.floor(s1);
+        const s2=Math.sin(i*78.233 +e.seed)*24634.6345, r2=s2-Math.floor(s2);
+        const s3=Math.sin(i*39.425 +e.seed)*15731.7431, r3=s3-Math.floor(s3);
+        const fx=e.x+Math.sin(S.T*(1.7+r1*2.8)+r2*6.28)*e.r*(.3+r3*.75);
+        const fy=e.y+Math.sin(S.T*(2.2+r2*2.3)+r1*6.28)*e.r*.8*(.3+r1*.7);
+        const fz=e.z+Math.cos(S.T*(1.4+r3*2.5)+r2*6.28)*e.r*.7;
+        sprite(fx,fy,fz, 3.5+r2*3, [0.25,0.30,0.12], .95);
+        if(i%5===0) sprite(fx,fy,fz, 2.2, [0.42,0.90,0.30], .9);
+      }
+      /* faint sickly haze so the cloud reads as one mass, not confetti */
+      sprite(e.x,e.y,e.z, e.r*1.4, [0.10,0.14,0.05], .35);
     } else if(e.k==='wasp'){
       /* single small bio dot pulsing fast */
       sprite(e.x,e.y,e.z, 8+Math.sin(S.T*9+e.ph)*3, COL.bio, 1.0);

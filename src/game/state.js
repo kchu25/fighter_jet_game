@@ -51,7 +51,10 @@ export const S = {
   /* friendly wingmen: short-lived ally flight that joins, fights, and is shot
      down on-screen — the "only bird in the air" premise made visible in-run.
      allyNext is the sector the next flight may appear at. */
-  allies: null, allyNext: 2,
+  allies: null, allyNext: 2, allyFirst: true,
+  /* radio comms stack (bottom-left HUD): {who,txt,t,u} — pushComms() in
+     combat.js owns pushing, update.js ages them out */
+  comms: null, creepStage: 0, creepT: 0,
   tipMsg: TIP_DEFAULT,
   easeT: 0, easeStage: 0, runNo: 0, everDied: false
 };
@@ -73,7 +76,8 @@ export function reset(){
   S.speed=1; S.flow=FLOW; S.spawnT=.25; S.waveN=0; S.bossN=0; S.nextBoss=2800; S.alarmT=0; S.tipT=4.5; S.hitT=0;
   S.bossWarn=0; S.bossWarnName='MOTHERSHIP INBOUND'; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
-  S.allies=[]; S.allyNext=2;
+  S.allies=[]; S.allyNext=2; S.allyFirst=true;
+  S.comms=[]; S.creepStage=0; S.creepT=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
 }

@@ -82,6 +82,7 @@ export function bioW(z, i) {
   return ss(BIO_HW + BIO_BL, BIO_HW - BIO_BL, abs(dd));
 }
 var SEA_Z = zk(0.008);      // seabed ripple ridges, ~780u apart
+var RIVW = zk(0.013);       // toxic-river width wobble (wrap-safe)
 
 /* -------------------------------------------------------------- terrain */
 /* height above GROUND_Y at a world (x, z). z is taken modulo L implicitly. */
@@ -584,6 +585,114 @@ export function pShip() {                  /* beached warship, listing on the dr
   return { d: M.d, rad: 360, h: 260 };
 }
 
+/* ================================================================ creep
+   The desert corrupts with distance. creepAt() maps total distance flown
+   to a 0..1 dread level: nothing before 10 km, saturated by 60 km. This
+   exact formula is a shared contract with the gameplay/audio side. */
+export function creepAt(d) { return cl((d - 10000) / 50000, 0, 1); }
+
+/* darken-only horror palette — bone, necrotic flesh, one toxic accent */
+var BONE = [0.55, 0.52, 0.44], BONE2 = [0.42, 0.39, 0.33];
+var FLESH = [0.35, 0.30, 0.26], FLESH2 = [0.26, 0.22, 0.19];
+var CHITIN = [0.20, 0.17, 0.15], CHITIN2 = [0.13, 0.11, 0.10];
+var TOXIC = [0.15, 0.85, 0.30];
+
+/* ------------------------------------------------- creep proto builders */
+
+export function pHand() {                  /* fossilized arm clawing out of the sand */
+  var M = MB(), f, s2, sd = 113;
+  /* forearm: two tilted segments rising out of the ground */
+  M.box(0, 40, 0, 30, 52, 26, 0.15, 0.22, BONE2);
+  M.box(14, 120, 4, 25, 46, 22, 0.15, 0.12, BONE);
+  /* palm, tipped back so the fingers splay skyward */
+  M.box(24, 176, 6, 34, 20, 28, 0.15, -0.10, BONE);
+  /* five crooked fingers: tapered 3-segment box chains walking outward */
+  for (f = 0; f < 5; f++) {
+    var splay = (f - 2) * 0.42 + 0.15;             /* yaw fan around the palm */
+    var crook = 0.18 + 0.5 * ih(f, 1, sd);         /* per-finger curl */
+    var fx = 24 + (f - 2) * 15, fy = 192, fz = 6 + (f - 2) * 9;
+    var lean = -0.15 + (f - 2) * 0.14;             /* base roll of the chain */
+    var ln = (f === 0 || f === 4) ? 0.78 : 1.0;    /* thumb+pinky shorter */
+    for (s2 = 0; s2 < 3; s2++) {
+      var hl = (26 - s2 * 6) * ln, hw = 7 - s2 * 1.6;
+      var rz2 = lean + crook * s2;
+      /* walk the chain tip-to-base along its own roll */
+      fx += -sin(rz2) * hl; fy += cos(rz2) * hl;
+      M.box(fx, fy, fz, hw, hl, hw, splay, rz2, s2 & 1 ? BONE2 : BONE);
+      fx += -sin(rz2) * hl; fy += cos(rz2) * hl;
+    }
+  }
+  /* half-buried knuckle boulders heaped round the wrist */
+  var kb = blob(sd + 3, 44, 26, 5, BONE2, sh(BONE2, 0.8), 0.5);
+  for (f = 0; f < kb.d.length; f += 9) { kb.d[f] -= 46; kb.d[f + 2] += 30; }
+  for (f = 0; f < kb.d.length; f++) M.d.push(kb.d[f]);
+  M.box(52, 12, -38, 20, 12, 16, 0.8, 0.3, BONE2);
+  return { d: M.d, rad: 130, h: 300 };
+}
+
+export function pGiantBody() {             /* one-eyed giant — hips at y=0, legs separate */
+  var M = MB();
+  M.box(0, 16, 0, 42, 24, 30, 0, 0, FLESH2);              /* pelvis */
+  M.box(0, 78, -2, 50, 46, 34, 0, 0.03, FLESH);           /* hunched torso */
+  M.box(0, 128, -10, 58, 16, 30, 0, -0.06, FLESH2);       /* shoulder yoke */
+  M.box(0, 158, -16, 26, 22, 24, 0, 0.10, FLESH);         /* stooped head */
+  M.box(0, 160, 6, 9, 9, 6, 0, 0, TOXIC);                 /* THE EYE — sole glow */
+  /* long arms hanging past the knees, 2 segments each */
+  M.box(56, 92, -6, 11, 40, 11, 0, -0.14, FLESH2);
+  M.box(66, 22, -2, 9, 34, 9, 0, -0.06, FLESH);
+  M.box(-56, 92, -6, 11, 40, 11, 0, 0.14, FLESH2);
+  M.box(-66, 22, -2, 9, 34, 9, 0, 0.06, FLESH);
+  return { d: M.d, rad: 90, h: 180 };
+}
+
+export function pGiantLeg() {              /* hip at origin, extends DOWN — swung at draw */
+  var M = MB();
+  M.box(0, -34, 0, 14, 36, 14, 0, 0, FLESH);              /* thigh */
+  M.box(0, -96, 4, 11, 30, 11, 0, 0, FLESH2);             /* shin */
+  M.box(0, -124, 12, 14, 8, 22, 0, 0, FLESH2);            /* foot */
+  return { d: M.d, rad: 30, h: 132 };
+}
+
+export function pSpiderBody() {            /* low wide crawler body, belly at y=0 */
+  var M = MB();
+  M.box(0, 16, 6, 26, 12, 20, 0, 0, CHITIN);              /* abdomen */
+  M.box(0, 14, -20, 14, 9, 10, 0, 0, CHITIN2);            /* cephalothorax */
+  M.box(0, 16, -30, 4, 3, 3, 0, 0, TOXIC);                /* eye cluster glint */
+  return { d: M.d, rad: 40, h: 30 };
+}
+
+export function pSpiderLegs(pose) {        /* 8 legs baked in one of 2 gait poses */
+  var M = MB(), i, side, sd = 131 + pose;
+  for (side = -1; side <= 1; side += 2) for (i = 0; i < 4; i++) {
+    /* alternating tetrapod gait: opposite pairs lift on opposite poses */
+    var up = ((i + (side > 0 ? 0 : 1) + pose) & 1) ? 10 : 0;
+    var az = -26 + i * 17, reach = up ? 8 : 0;
+    var kx = side * 34, ky = 26 + up;                     /* raised knee */
+    M.box(side * 20, ky * 0.72, az, 14, 3.5, 3.5, side * 0.2, side * 0.55, CHITIN);
+    M.box(kx + side * 8, (ky - up) * 0.4, az + reach, 3, 13, 3, 0, side * (0.28 - (up ? 0.14 : 0)), CHITIN2);
+  }
+  return { d: M.d, rad: 52, h: 34 };
+}
+
+export function pHorde() {                 /* shambling mob — 8 humanoids in one mesh */
+  var M = MB(), i, sd = 149;
+  for (i = 0; i < 8; i++) {
+    var a = ih(i, 1, sd) * TAU, r = 14 + 58 * ih(i, 2, sd);
+    var cx = cos(a) * r, cz = sin(a) * r * 0.8;
+    var hh = 0.8 + 0.5 * ih(i, 3, sd);                    /* height variance */
+    var ry = a + (ih(i, 4, sd) - 0.5) * 1.2;
+    var rz = (ih(i, 5, sd) - 0.5) * 0.30;                 /* baked-in stagger lean */
+    var c = i & 1 ? FLESH2 : FLESH;
+    M.box(cx, 26 * hh, cz, 6.5, 20 * hh, 4.5, ry, rz, c); /* body+legs slab */
+    M.box(cx - sin(rz) * 14 * hh, 52 * hh, cz, 4, 5, 4, ry, rz * 1.6, sh(c, 0.8));
+    /* arms raised, groping forward */
+    var fx = sin(ry), fz = cos(ry);
+    M.box(cx + fx * 9 - fz * 6, 40 * hh, cz + fz * 9 + fx * 6, 2.5, 12, 2.5, ry, 0.9 + rz, sh(c, 0.9));
+    M.box(cx + fx * 9 + fz * 6, 38 * hh, cz + fz * 9 - fx * 6, 2.5, 11, 2.5, ry, -(0.8 - rz), sh(c, 0.7));
+  }
+  return { d: M.d, rad: 90, h: 78 };
+}
+
 var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
                 pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash,
                 pBlocks, pShip];
@@ -597,6 +706,7 @@ export function lcg(seed) {
 }
 
 var protos = null, bands = null, dust = null, spots = null, apron = null, ready = false;
+var cP = null, creepSpots = null, creepBuf = null, creepArr = null;
 var _m = new Float32Array(16), _mv = new Float32Array(16), _vis = [];
 export function ident(o) { o[0] = o[5] = o[10] = o[15] = 1; o[1] = o[2] = o[3] = o[4] = o[6] = o[7] = o[8] = o[9] = o[11] = o[12] = o[13] = o[14] = 0; return o; }
 
@@ -656,6 +766,46 @@ export function makeSpots() {
     if (abs(x) < need) x = side * need;
     out.push({ p: p, x: x, z: z, s: s, y: 0,
                ry: R() * TAU, rx: (R() - 0.5) * 0.05, rz: (R() - 0.5) * 0.05 });
+  }
+  return out;
+}
+
+/* creep spots: corruption is placed over the whole L period — it spreads
+   across every biome band. Each spot carries a reveal threshold th; it only
+   exists once creepAt(S.dist) passes th, and scales in over the next 0.12
+   of creep, so hands literally rise out of the sand as you fly deeper.
+   Hands get low thresholds (the first, lone omens); walkers and hordes
+   arrive later as the corruption thickens. */
+export function makeCreepSpots() {
+  var R = lcg(66600017), out = [], z = 0;
+  while (z < L - 200) {
+    z += 340 + R() * 880;
+    if (z >= L - 200) break;
+    var u = R(), side = R() < 0.5 ? -1 : 1, k, s, x, th, need;
+    if (u < 0.32) {                                  /* giant hand */
+      k = 0; s = 0.9 + R() * 0.9;
+      th = pow(R(), 1.7) * 0.9;                      /* skew low: hands come first */
+      x = side * (340 + R() * 560);
+      need = 300 + 130 * s;                          /* tall: lane guarantee */
+    } else if (u < 0.52) {                           /* walking cyclops */
+      k = 1; s = 0.9 + R() * 0.5;
+      th = 0.25 + R() * 0.60;
+      x = side * (430 + R() * 470);
+      need = 300 + 90 * s + 130;                     /* + patrol amplitude */
+    } else if (u < 0.74) {                           /* spider crawler */
+      k = 2; s = 0.6 + R() * 0.6;
+      th = 0.15 + R() * 0.70;
+      x = side * (230 + R() * 520);
+      need = 150 + 90;                               /* low, but it skitters */
+    } else {                                         /* zombie horde */
+      k = 3; s = 0.8 + R() * 0.5;
+      th = 0.20 + R() * 0.68;
+      x = side * (240 + R() * 560);
+      need = 150 + 50;
+    }
+    if (abs(x) < need) x = side * need;
+    out.push({ k: k, x: x, z: z, s: s, th: th, y: 0,
+               sd: R() * 100, ry: (k === 1 || k === 3) ? (R() - 0.5) * 1.2 : R() * TAU });
   }
   return out;
 }
@@ -761,7 +911,63 @@ export function init() {
   apron = mesh(new Float32Array(A.d));
 
   dust = buildDust(0);
+
+  /* ---- creep assets ---- */
+  function mk(p) { return { m: mesh(new Float32Array(p.d)), rad: p.rad, h: p.h, tris: p.d.length / 27 }; }
+  cP = {
+    hand: mk(pHand()),
+    gBody: mk(pGiantBody()), gLeg: mk(pGiantLeg()),
+    sBody: mk(pSpiderBody()), sLegA: mk(pSpiderLegs(0)), sLegB: mk(pSpiderLegs(1)),
+    horde: mk(pHorde())
+  };
+  creepSpots = makeCreepSpots();
+  for (i = 0; i < creepSpots.length; i++) {
+    var cs = creepSpots[i];
+    cs.y = gy(cs.x, cs.z) - 6 * cs.s;   /* baked base; walkers resample per frame */
+  }
+  /* dynamic sprite buffer for the toxic river / smoke / motes — rebuilt
+     each frame (~70 quads max), 10 floats per vertex like every Pspr batch */
+  creepBuf = gl.createBuffer();
+  creepArr = new Float32Array(80 * 6 * 10);
+
   ready = true;
+}
+
+/* push one additive quad into creepArr; returns new float offset.
+   Corners as [x,y,z,u,v] — uv chooses the shader shape (kind 0 dot / 1 beam). */
+var _cqv = [null, null, null, null, null, null];
+function cq(o, a, b, c, e, cr, cg, cb, al, kind) {
+  var A = creepArr, i, p;
+  if (o + 60 > A.length) return o;
+  _cqv[0] = a; _cqv[1] = b; _cqv[2] = c; _cqv[3] = a; _cqv[4] = c; _cqv[5] = e;
+  for (i = 0; i < 6; i++) {
+    p = _cqv[i];
+    A[o] = p[0]; A[o + 1] = p[1]; A[o + 2] = p[2]; A[o + 3] = p[3]; A[o + 4] = p[4];
+    A[o + 5] = cr; A[o + 6] = cg; A[o + 7] = cb; A[o + 8] = al; A[o + 9] = kind;
+    o += 10;
+  }
+  return o;
+}
+/* axis-aligned camera-facing-ish sprite (same trick as the dust motes) —
+   writes straight into creepArr, no per-call allocation */
+var _CS = [[-1, -1, 0, 0], [1, -1, 1, 0], [1, 1, 1, 1], [-1, -1, 0, 0], [1, 1, 1, 1], [-1, 1, 0, 1]];
+function cspr(o, x, y, z, sz, cr, cg, cb, al, kind) {
+  var A = creepArr, i, c;
+  if (o + 60 > A.length) return o;
+  for (i = 0; i < 6; i++) {
+    c = _CS[i];
+    A[o] = x + c[0] * sz; A[o + 1] = y + c[1] * sz; A[o + 2] = z;
+    A[o + 3] = c[2]; A[o + 4] = c[3];
+    A[o + 5] = cr; A[o + 6] = cg; A[o + 7] = cb; A[o + 8] = al; A[o + 9] = kind;
+    o += 10;
+  }
+  return o;
+}
+/* the wash centreline — must match terr()'s dry-wash meander exactly */
+function riverX(zw) {
+  return 980 * sin(zw / L * TAU * 3)
+       + 430 * sin(zw / L * TAU * 7 + 1.3)
+       + 250 * sin(zw / L * TAU * 11 + 2.7);
 }
 
 /* ------------------------------------------------------------------ draw */
@@ -811,6 +1017,59 @@ export function draw(d) {
     litDraw(protos[sp.p].m, _m, null, 1);
   }
 
+  /* ---- creep: the horror fades in with distance flown ----
+     Each spot exists only past its threshold and scales in over the next
+     0.12 of creep — hands rise out of the sand, giants stride in from
+     nothing. Walkers are animated purely with per-frame compose() calls. */
+  var creep = creepAt(d), T = S.T || 0;
+  if (creep > 0 && creepSpots) {
+    for (i = 0; i < creepSpots.length; i++) {
+      var cs = creepSpots[i];
+      if (creep <= cs.th) continue;
+      var se = cs.s * ss(cs.th, cs.th + 0.12, creep);
+      if (se < 0.02) continue;
+      wz = (cs.z - d) % L; if (wz < 0) wz += L;
+      if (wz > ZFAR) wz -= L;
+      if (wz < ZNEAR - 200 || wz > ZFAR) continue;
+      var sd2 = cs.sd, g2, xw, yw, hip;
+
+      if (cs.k === 0) {                            /* giant hand: the rise IS the show */
+        compose(_m, cs.x, GY + cs.y, wz, 0, cs.ry, 0, se);
+        litDraw(cP.hand.m, _m, null, 1);
+
+      } else if (cs.k === 1) {                     /* striding cyclops */
+        g2 = T * 1.6 + sd2;
+        xw = cs.x + sin(T * 0.13 + sd2) * 120;     /* slow patrol drift */
+        hip = 132 * se;
+        yw = GY + gy(xw, cs.z) - 4 * se + hip + abs(sin(g2)) * 8 * se;
+        var gry = cs.ry + sin(T * 0.21 + sd2) * 0.25;
+        var grz = sin(g2) * 0.06;
+        compose(_m, xw, yw, wz, 0, gry, grz, se);
+        litDraw(cP.gBody.m, _m, null, 1);
+        /* legs: hip sockets offset along the body's local x, swung about x */
+        var hx = 24 * se, cg = cos(gry), sg = sin(gry);
+        compose(_m, xw + hx * cg, yw, wz - hx * sg, sin(g2) * 0.5, gry, 0, se);
+        litDraw(cP.gLeg.m, _m, null, 1);
+        compose(_m, xw - hx * cg, yw, wz + hx * sg, -sin(g2) * 0.5, gry, 0, se);
+        litDraw(cP.gLeg.m, _m, null, 1);
+
+      } else if (cs.k === 2) {                     /* skittering spider */
+        xw = cs.x + sin(T * 0.9 + sd2) * 80;
+        yw = GY + gy(xw, cs.z) - 2 * se + abs(sin(T * 5 + sd2)) * 3 * se;
+        var sry = cs.ry + sin(T * 0.6 + sd2) * 0.8;
+        compose(_m, xw, yw, wz, 0, sry, 0, se);
+        litDraw(cP.sBody.m, _m, null, 1);
+        litDraw(((flr(T * 6 + sd2) & 1) ? cP.sLegB : cP.sLegA).m, _m, null, 1);
+
+      } else {                                     /* shambling horde */
+        xw = cs.x + sin(T * 0.07 + sd2) * 40;
+        yw = GY + gy(xw, cs.z) - 3 * se;
+        compose(_m, xw, yw, wz, 0, cs.ry, sin(T * 0.9 + sd2) * 0.04, se);
+        litDraw(cP.horde.m, _m, null, 1);
+      }
+    }
+  }
+
   gl.uniform1f(Plit.u.uMatte, 0.0);
 
   /* ---- additive: low dust hanging over the desert ---- */
@@ -824,6 +1083,73 @@ export function draw(d) {
   gl.bindBuffer(gl.ARRAY_BUFFER, dust.buf);
   sprPointers();
   gl.drawArrays(gl.TRIANGLES, 0, dust.n);
+
+  /* ---- additive creep FX: toxic river, base smoke, rising motes ----
+     Built fresh each frame into one small dynamic buffer (~70 quads max).
+     Positions are computed in camera space (wrapped z), so the transform
+     is just the ground lift — uVP gets the raw view-projection. */
+  if (creep > 0.001 && creepBuf) {
+    var o = 0, zc, zw2, j2;
+    /* green polluted river: a glowing ribbon laid in the dry wash. The
+       centreline is terr()'s exact meander so it always sits in the bed.
+       kind-1 beam shading across the width gives it a hot toxic core. */
+    var ra = 0.05 + 0.25 * creep;
+    var px = 0, py = 0, pw = 0, first = true;
+    for (zc = -400; zc <= 3200; zc += 150) {
+      zw2 = (zc + d) % L; if (zw2 < 0) zw2 += L;
+      var rx2 = riverX(zw2);
+      var ry2 = GROUND_Y + gy(rx2, zw2) + 4;
+      var rw2 = 150 + 30 * sin(zw2 * RIVW);   /* wrap-safe width wobble */
+      if (!first)
+        o = cq(o, [px - pw, py, zc - 150, 0, 0.5], [px + pw, py, zc - 150, 1, 0.5],
+                  [rx2 + rw2, ry2, zc, 1, 0.5], [rx2 - rw2, ry2, zc, 0, 0.5],
+               TOXIC[0], TOXIC[1], TOXIC[2], ra, 1);
+      px = rx2; py = ry2; pw = rw2; first = false;
+    }
+    /* toxic bubbles drifting up off the surface at deep creep */
+    var bub = ss(0.5, 0.8, creep);
+    if (bub > 0.01) for (j2 = 0; j2 < 8; j2++) {
+      zc = 150 + j2 * 380;
+      zw2 = (zc + d) % L; if (zw2 < 0) zw2 += L;
+      var bx = riverX(zw2) + sin(T * 0.7 + j2 * 2.1) * 40;
+      var rise = (T * 30 + j2 * 77) % 90;
+      o = cspr(o, bx, GROUND_Y + gy(bx, zw2) + 8 + rise, zc, 5 + rise * 0.12,
+               TOXIC[0], TOXIC[1], TOXIC[2], 0.22 * bub * (1 - rise / 90), 0);
+    }
+    /* smoke over destroyed bases: smouldering columns above city ruins.
+       Additive can't do dark grey, so it reads as low-alpha ember-lit haze
+       climbing off the block, with a flickering red smolder at the roots. */
+    var smk = ss(0.25, 0.5, creep);
+    if (smk > 0.01) {
+      var cols = 0;
+      for (i = 0; i < spots.length && cols < 5; i++) {
+        var sp2 = spots[i];
+        if (sp2.p !== P_BLOCKS && sp2.p !== P_TOWER) continue;
+        wz = (sp2.z - d) % L; if (wz < 0) wz += L;
+        if (wz > ZFAR) wz -= L;
+        if (wz < ZNEAR || wz > ZFAR - 400) continue;
+        cols++;
+        var topY = GROUND_Y + sp2.y + protos[sp2.p].h * sp2.s * 0.72;
+        var ph2 = sp2.z * 0.37;
+        for (j2 = 0; j2 < 4; j2++) {
+          var hgt2 = (T * 26 + j2 * 55 + ph2 * 60) % 220;
+          var sx2 = sp2.x + sin(T * 0.5 + j2 * 1.7 + ph2) * 14 + hgt2 * 0.2;
+          o = cspr(o, sx2, topY + hgt2, wz, 26 + hgt2 * 0.32,
+                   0.4, 0.25, 0.15, 0.10 * smk * (1 - hgt2 / 220), 0);
+        }
+        o = cspr(o, sp2.x, topY - 10, wz, 46, 0.5, 0.10, 0.05,
+                 smk * (0.06 + 0.05 * abs(sin(T * 7 + ph2))), 0);
+      }
+    }
+    if (o > 0) {
+      ident(_m); M4.mul(_mv, vp, _m);
+      gl.uniformMatrix4fv(Pspr.u.uVP, false, _mv);
+      gl.bindBuffer(gl.ARRAY_BUFFER, creepBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, creepArr.subarray(0, o), gl.DYNAMIC_DRAW);
+      sprPointers();
+      gl.drawArrays(gl.TRIANGLES, 0, o / 10);
+    }
+  }
 
   /* ---- restore what we changed ---- */
   gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
@@ -841,7 +1167,8 @@ export function stats() {
   if (!ready) return null;
   var t = 0, i;
   for (i = 0; i < protos.length; i++) t += protos[i].tris;
-  return { bands: NB, bandTris: bands[0].n / 3, protoTris: t, spots: spots.length, period: L };
+  return { bands: NB, bandTris: bands[0].n / 3, protoTris: t, spots: spots.length,
+           creepSpots: creepSpots ? creepSpots.length : 0, period: L };
 }
 
 export const SCENERY = { init: init, draw: draw, groundAt: groundAt, stats: stats, PERIOD: L };

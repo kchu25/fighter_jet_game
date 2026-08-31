@@ -6,11 +6,12 @@ import { VW, VH, T4, T5, C, rgba, rnd, sat, ramp, pulse, once, sfx, glow, txt,
   part, stepParts, drawParts, burst, vignette, art, dawnSky, neonGround } from './engine.js';
 
 /* ================================================================
-   SCENE 5 — the launch that fails.  Four depth planes, each with its
+   SCENE 5 — the launch that bleeds.  Four depth planes, each with its
    own scale, contrast, haze and rate — but this is not a triumphant
-   mass launch anymore.  The strike that chased us out of the tunnel
-   is cutting the rest of the wing down as fast as the silos can
-   throw them up.  By the cut, one bird is still climbing.  Ours.
+   mass launch anymore.  The swarm that chased us out of the tunnel
+   is cutting the wing down as fast as the silos can throw them up.
+   By the cut, three birds are still climbing: ours, and the two
+   VIPERs who punched through.
    ================================================================ */
 export const SILOS = [
   { x: 300, w: 210, at: 0.26 }, { x: 690, w: 250, at: 0.38 },
@@ -93,7 +94,17 @@ export function scene5(u, dt) {
     A.jet(I.c, x, y, f.s, f.rot, 0.45, [188, 128, 168]);
     I.c.restore();
   }
+  /* ---- the living half of the strike: bio-wasps pouring across the
+     sky in two counter-streaming bands, high over the launch field ---- */
+  if (A && A.waspSwarm) {
+    A.waspSwarm(I.c, -pan * 0.08 - 100, hz - 470, VW + 200, 90, I.t, 0.45, -1, 0.8);
+    A.waspSwarm(I.c, -pan * 0.12 - 100, hz - 336, VW + 200, 130, I.t * 1.25, 0.6, 1, 1.0);
+  }
   hazeVeil(hz, 0.40);
+
+  /* the thing the swarm is pouring out of: a colossal tentacled bulk
+     looming in the smoke on the horizon, never fully lit */
+  if (A && A.leviathan) A.leviathan(I.c, 1230 - pan * 0.18, hz - 44, 0.85, ramp(1.3, 3.3, u) * 0.55, I.t);
 
   /* a cloud deck between the far and middle distance, so aircraft
      genuinely pass behind something */
@@ -180,6 +191,11 @@ export function scene5(u, dt) {
   drawParts(false); drawParts(true);
   hazeVeil(hz, 0.07);
 
+  /* a nearer ribbon of the swarm sweeping across the middle air — the
+     climbers are punching up through this */
+  if (A && A.waspSwarm)
+    A.waspSwarm(I.c, -pan * 0.4 - 150, 296, VW + 300, 190, I.t * 1.5, 0.32, 1, 1.6);
+
   /* ---- PLANE 3 (z~0.8): near.  Dark, saturated, and gone in a
      second — they overtake and cross in front of everything. ---- */
   for (let i = 0; i < L_NEAR.length; i++) {
@@ -251,8 +267,15 @@ export function scene5(u, dt) {
 
   if (u > 0.45 && u < 2.2) {
     const a = ramp(0.45, 0.95, u) * (1 - ramp(1.7, 2.2, u));
-    txt('SILO CLUSTER 7  —  EMERGENCY SCRAMBLE UNDER FIRE', VW / 2, 118, 24,
+    txt('SILO CLUSTER 7  —  SCRAMBLE THROUGH THE SWARM', VW / 2, 118, 24,
       rgba(C.cyan, a * 0.9), 7, 'center');
+  }
+  /* one of them does not make it — heard, not just seen */
+  once('c5mayday', T4 + 2.55, function () { sfx('radio', 1.0); });
+  if (u > 2.55 && u < 4.1) {
+    const a = ramp(2.55, 2.80, u) * (1 - ramp(3.75, 4.10, u));
+    txt("» VIPER 5: MAYDAY MAYDAY — I'M HIT, I'M—", VW / 2, 756, 21,
+      rgba(C.orange, a * 0.9), 5, 'center');
   }
   /* the tally that sets up the whole game: everyone else is dying on
      the way up.  By the cut it reads like what it is — you are next,
@@ -264,7 +287,7 @@ export function scene5(u, dt) {
   }
   if (u > 3.55) {
     const a = ramp(3.55, 3.95, u);
-    txt('INTERCEPTOR 03 — STILL CLIMBING', VW / 2, 806, 22,
+    txt('INTERCEPTOR 03 +2 — STILL CLIMBING', VW / 2, 806, 22,
       rgba(C.cyan, a * 0.85), 7, 'center');
   }
   vignette(0.62);

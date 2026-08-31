@@ -74,6 +74,22 @@ export function drawHUD(){
   h2d.stroke(); h2d.beginPath(); h2d.arc(mx,my,3,0,6.3); h2d.stroke();
   h2d.shadowBlur=0; h2d.globalAlpha=1;
 
+  // radio comms — stacked bottom-left just above the HULL readout; newest at
+  // the bottom, each line fading out over its ~6s life (update.js ages t).
+  // Cyan for routine traffic, red tint for maydays (u>=.9).
+  if(S.comms && S.comms.length){
+    h2d.textAlign='left'; h2d.font='11px "Courier New",monospace';
+    let cy=by-52;
+    for(let i=S.comms.length-1;i>=0;i--){
+      const c=S.comms[i];
+      h2d.globalAlpha=clamp((6-c.t)/1.5,0,1)*.85;
+      h2d.fillStyle=c.u>=.9?css(COL.red):css(COL.cyan);
+      h2d.fillText('» '+c.who+': '+c.txt, m, cy);
+      cy-=15;
+    }
+    h2d.globalAlpha=1;
+  }
+
   // bars
   h2d.textAlign='left'; h2d.font='12px "Courier New",monospace';
   h2d.fillStyle='#7fa8bd'; h2d.fillText('HULL', m, by-30);

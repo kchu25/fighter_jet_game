@@ -7,7 +7,7 @@ import { A } from './state.js';
 import { STEP, LOOKAHEAD_MS } from './constants.js';
 import { gainNode, lp, now, makeSoftCurve } from './primitives.js';
 import { buildEngine, setEngine } from './engine.js';
-import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance, spit, squish, screech, mayday } from './sfx.js';
+import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance, spit, squish, screech, mayday, radio, groan, swarm, creep } from './sfx.js';
 import { applyIntensity, scheduler, setIntensity } from './scheduler.js';
 import { rumble, sirenLoop, stopCine } from './cine-loops.js';
 import { warp, plasma, explode, helmetOn, breath, beep, cineRiser, jetPass } from './cine-oneshots.js';
@@ -107,6 +107,9 @@ export function toggle() {
 
 export function suspend() {
   if (!A.ready) return;
+  // fold the ambient beds down so nothing buzzes on resume until
+  // gameplay explicitly asks for them again
+  try { swarm(false); creep(0); } catch (e) { }
   try { if (A.ctx.state === 'running') A.ctx.suspend(); } catch (e) { }
 }
 
@@ -138,6 +141,10 @@ export const AUDIO = {
   squish: squish,
   screech: screech,
   mayday: mayday,
+  radio: radio,
+  groan: groan,
+  swarm: swarm,
+  creep: creep,
   setIntensity: setIntensity,
   toggle: toggle,
   suspend: suspend,

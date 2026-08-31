@@ -21,6 +21,12 @@ export const A = {
 
   // voice accounting
   voices: 0, laserVoices: 0, boomVoices: 0, lastLaserT: -1, lastMineT: -1, lastSpitT: -1,
+  lastRadioT: -1, lastGroanT: -1,
+
+  // persistent ambient loops (built lazily by sfx.js swarm()/creep())
+  swarm: null, swarmOn: false, swarmLastT: 0,
+  creep: null, creepLevel: 0, creepLastT: 0,
+  ambTimer: null,
 
   // music scheduler
   timerId: null, nextNoteTime: 0, stepCount: 0,

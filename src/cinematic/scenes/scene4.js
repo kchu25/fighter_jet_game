@@ -70,6 +70,8 @@ export function scene4(u, dt) {
     burst(LVPX, LVPY, 26, 900, C.ice, 0.5, 7, { d: 0.99 });
   });
   once('c4gasp', T3 + L_SHOT + 0.22, function () { sfx('breath', 2); });
+  /* the flight lead on the net, mid-shot — garbled, urgent */
+  once('c4radio', T3 + L_SHOT + 0.85, function () { sfx('radio', 0.8); });
   /* near-misses strobing past the tunnel mouth mid-run */
   once('c4nm3', T3 + L_SHOT + 0.55, function () {
     sfx('plasma');
@@ -397,6 +399,11 @@ export function scene4(u, dt) {
     if (erupt > 0.1 && pulse(u, 2.2) > 0.35)
       txt('⚠ LAUNCH COMPLEX HIT', LVPX, 626, 22,
         rgba(C.orange, 0.85 * erupt), 6, 'center', 'bold');
+    /* the scramble call riding with us down the rail */
+    const ra = ramp(L_SHOT + 0.85, L_SHOT + 1.10, u) * (1 - ramp(L_OUT + 0.45, L_OUT + 0.80, u));
+    if (ra > 0.01)
+      txt('» VIPER LEAD: ALL VIPERS — LAUNCH LAUNCH LAUNCH', LVPX, 692, 19,
+        rgba(C.ice, 0.85 * ra), 4, 'center');
   }
   I.c.restore();
 
