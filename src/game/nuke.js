@@ -241,9 +241,13 @@ export function nukeTick(dt){
    never overlap each other, because two live columns is a corridor with no
    clean lane left in it. */
 export function nukeSchedule(dt){
+  /* The clock runs on wall time and the gates only hold back the RELEASE. If
+     the countdown itself were gated it would barely advance: bosses alone eat
+     most of a run, so a strike armed behind them lands minutes late, or never.
+     Once it is armed it stays armed and fires the moment the sky is its own. */
+  if(S.nukeT>0 && (S.nukeT-=dt)>0) return;
   if(S.boss || S.easeT>0 || S.sector<3 || S.lullT>0){ return; }
   if(S.nukes && S.nukes.length){ return; }
-  if((S.nukeT-=dt)>0) return;
   S.nukeT = rnd(30,46);
   nukeStrike(S.sector>=8 ? 3 : S.sector>=5 ? 2 : 1);
 }
