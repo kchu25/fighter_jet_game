@@ -85,9 +85,10 @@ export function reset(){
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
   S.allies=[]; S.allyNext=2; S.allyFirst=true;
   S.comms=[]; S.creepStage=0; S.creepT=0;
-  /* first strike is never in the opening minute — nukeSchedule also gates on
-     sector>=3, this just stops the timer being already expired when it does */
-  S.nukes=[]; S.nukeT=rnd(34,50); S.nukeWarn=0; S.rad=0; S.nukeFl=0;
+  /* nukeSchedule also gates on sector>=2, so this is only the floor on how
+     early the first strike can arrive: long enough to have flown a little,
+     short enough that even a brief run sees one */
+  S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
 }

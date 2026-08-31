@@ -48,6 +48,17 @@ const WAVE_SPD = 2400;  // blast front, faster than the world scrolls
    this makes strikes undodgeable, not harder. */
 const MAX_OFF = 175;
 
+/* z gap between successive warheads in a walk, and therefore the time you get
+   to reverse the break. DO NOT SHRINK THIS. There is a hard cliff just under
+   1900 and it is not where the raw numbers suggest: the jet crosses the full
+   corridor in 0.92s and 1500 buys 1.30s, which looks like plenty, but each
+   detonation also shoves you ~500/s AWAY from its ground zero — and because a
+   walk alternates sides, that shove throws you straight at the next column.
+   Below ~1900 you cannot both absorb the shove and reverse in time. Measured
+   against an optimal dodger: 1900 costs 0% core hits, 1500 costs 71%.
+   To make a walk harder, add warheads (more reversals) — never close the gap. */
+const WALK_Z = [1900, 2350];
+
 export function coreR(k){
   /* eased so the fireball punches out fast and then settles */
   const g = k.g||0, e = 1-(1-g)*(1-g);
@@ -62,13 +73,17 @@ export function falloutR(k){ return coreR(k)*FALL_MUL; }
 export function nukeStrike(n){
   if(!S.nukes) S.nukes=[];
   let side = Math.random()<.5?-1:1;
+  let z = SPAWN_Z+REL_Z;
   for(let i=0;i<n;i++){
     S.nukes.push({
-      x: side*rnd(115,MAX_OFF), y: REL_Y, z: SPAWN_Z+REL_Z+i*1900,
+      x: side*rnd(115,MAX_OFF), y: REL_Y, z: z,
       vy: REL_VY, spin: rnd(0,6.28), seed: rnd(0,100),
       state:'fall', t:0, g:0, hitT:0, radT:0,
       wave:0, waveHit:false, trailT:0
     });
+    /* gaps are jittered rather than uniform so a walk cannot be dodged on a
+       metronome — you have to keep reading the corridor, not count beats */
+    z += rnd(WALK_Z[0], WALK_Z[1]);
     side = -side;
   }
   S.nukeWarn = 4.2;
@@ -238,16 +253,25 @@ export function nukeTick(dt){
 /* --------------------------------------------------------------- schedule */
 /* Called from the director. Strikes are an EVENT, not a spawn channel: they
    only land in open sky (never mid-boss, never on the first-run ramp) and
-   never overlap each other, because two live columns is a corridor with no
-   clean lane left in it. */
+   never overlap each other, because two live WALKS in the corridor at once
+   leaves no clean lane anywhere in it. */
 export function nukeSchedule(dt){
   /* The clock runs on wall time and the gates only hold back the RELEASE. If
      the countdown itself were gated it would barely advance: bosses alone eat
      most of a run, so a strike armed behind them lands minutes late, or never.
      Once it is armed it stays armed and fires the moment the sky is its own. */
   if(S.nukeT>0 && (S.nukeT-=dt)>0) return;
-  if(S.boss || S.easeT>0 || S.sector<3 || S.lullT>0){ return; }
+  if(S.boss || S.easeT>0 || S.sector<2 || S.lullT>0){ return; }
   if(S.nukes && S.nukes.length){ return; }
-  S.nukeT = rnd(30,46);
-  nukeStrike(S.sector>=8 ? 3 : S.sector>=5 ? 2 : 1);
+  const s = S.sector;
+  /* Uneven on purpose. A third of the time the next strike is already on its
+     way before the last column is off the screen; the rest of the time you get
+     a breather that shortens as the run goes on. A fixed interval would let
+     you park in a lane and count, which is exactly the autopilot this hazard
+     exists to break. */
+  S.nukeT = Math.random()<.34 ? rnd(6,11)
+                              : rnd(15,26) - Math.min(8, s*.7);
+  /* Warheads walk across the corridor on alternating sides, so n is literally
+     how many times you are made to reverse the break. */
+  nukeStrike(s>=9 ? 5 : s>=6 ? 4 : s>=4 ? 3 : 2);
 }
