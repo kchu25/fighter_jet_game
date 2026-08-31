@@ -1093,6 +1093,146 @@ export const MODELS = (function () {
     return M;
   }
 
+  /* ================================================================== WARDEN
+     Boss #5: an orbital gun platform, deliberately NOT a ship — no prow, no
+     engines, no direction at all. A broad flat ring carried on six radial arms
+     around a recessed iris, hanging face-on. update.js drives its roll from
+     b.spin, so the whole silhouette turns: the arms ARE the pinwheel's tell,
+     which only works because the ring reads as a clock face rather than a
+     hull. Iris faces +z; attach points negated in z like every other hull. */
+  function buildWarden() {
+    var M = Mesh();
+    var HULL = [0.230, 0.130, 0.040];
+    var HULL2 = [0.160, 0.090, 0.028];
+    var PLATE = [0.090, 0.050, 0.016];
+    var STEEL = [0.300, 0.190, 0.070];
+    var TRIM = [1.00, 0.60, 0.17];
+    var DARK = [0.040, 0.022, 0.008];
+    var GLOW = [1.00, 0.74, 0.34];
+
+    var N = 12, RO = 342, RI = 268, i;
+    function rr(r, z) { return ringXY(0, 0, z, r, r, N, PI / N); }
+
+    // the ring: a flat annulus. Front face first, then back, then the two
+    // walls — the hole through the middle is most of the read.
+    var oF = rr(RO, 34), oB = rr(RO, -34), iF = rr(RI, 26), iB = rr(RI, -26);
+    M.skin(oF, iF, HULL, HULL2);
+    M.skin(iB, oB, HULL2, PLATE);
+    M.skin(oB, oF, STEEL, HULL);
+    M.skin(iF, iB, PLATE, DARK);
+    // bright band standing proud of the outer wall
+    M.skin(rr(348, -9), rr(348, 9), TRIM, shade(TRIM, 0.55));
+
+    // six radial arms, hub to ring, each capped by a forward-poking muzzle pod
+    for (i = 0; i < 6; i++) {
+      var a = i / 6 * TAU, cx = cos(a), cy = sin(a), tx = -sin(a), ty = cos(a);
+      var r0 = 86, r1 = 302, w = 30;
+      M.plate(
+        [cx * r0 - tx * w, cy * r0 - ty * w, 20],
+        [cx * r1 - tx * w * 0.7, cy * r1 - ty * w * 0.7, 20],
+        [cx * r1 + tx * w * 0.7, cy * r1 + ty * w * 0.7, 20],
+        [cx * r0 + tx * w, cy * r0 + ty * w, 20],
+        [0, 0, -1], 40, i & 1 ? HULL : HULL2, PLATE);
+      var pA = ringXY(cx * 298, cy * 298, 30, 34, 34, 6, PI / 6);
+      var pB = ringXY(cx * 298, cy * 298, 84, 24, 24, 6, PI / 6);
+      M.skin(pA, pB, STEEL, HULL);
+      M.capCenter(pB, GLOW);
+    }
+
+    // central hub: a stepped drum funnelling back into the iris throat
+    M.skin(rr(112, -46), rr(98, 40), HULL, HULL2);
+    M.capCenter(rr(112, -46), PLATE);
+    M.skin(rr(98, 40), rr(76, 64), STEEL, HULL);
+    M.skin(rr(76, 64), rr(30, 30), DARK);
+    M.capCenter(rr(30, 30), GLOW);
+    // iris shutter blades around the throat, alternating value so the hub
+    // still reads as a turning aperture when the glow sprite is dim
+    for (i = 0; i < 8; i++) {
+      var ia = i / 8 * TAU, ja = ia + TAU / 8;
+      M.tri([cos(ia) * 68, sin(ia) * 68, 42], [cos(ja) * 68, sin(ja) * 68, 42],
+        [cos(ia) * 24, sin(ia) * 24, 36], i & 1 ? TRIM : STEEL);
+    }
+
+    // one marked arm. Six identical arms on a spinning disc strobe into a
+    // static shape at the wrong rate — a single asymmetric blaze is what makes
+    // the direction of rotation (and its reversal on a phase change) readable.
+    M.plate([214, -22, 56], [300, -26, 56], [300, 26, 56], [214, 22, 56],
+      [0, 0, -1], 8, TRIM, GLOW);
+
+    return M;
+  }
+
+  /* =========================================================== HUNTER-KILLER
+     Boss #6: a predator, not a capital ship. Lean deep fuselage, a long
+     jutting sensor snout (the pounce charge sits at its tip), forward-SWEPT
+     wings so the leading edges rake toward the camera, and engines sized for
+     the dive. Nose at +z; attach points negated in z. */
+  function buildHunter() {
+    var M = Mesh();
+    var HULL = [0.220, 0.055, 0.200];
+    var HULL2 = [0.150, 0.035, 0.140];
+    var PLATE = [0.080, 0.020, 0.075];
+    var STEEL = [0.300, 0.090, 0.270];
+    var TRIM = [1.00, 0.24, 0.94];
+    var DARK = [0.045, 0.010, 0.040];
+    var GLOW = [1.00, 0.55, 0.95];
+
+    var S = [
+      hexLoop(150, 26, 20, 18, 0),
+      hexLoop(60, 54, 40, 38, 0),
+      hexLoop(-40, 62, 46, 44, 0),
+      hexLoop(-150, 40, 30, 26, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? HULL2 : HULL, STEEL);
+    M.capFan(S[0], [0, -8, 252], STEEL);             // snout
+    M.capCenter(S[3], DARK);
+    // snout collar + emitter ring at the tip (hunterNose attach)
+    M.box(0, -6, 200, 26, 26, 60, PLATE, STEEL);
+    M.box(0, -6, 236, 34, 34, 10, DARK);
+    M.box(0, -6, 231, 26, 26, 4, GLOW);
+
+    // forward-swept wings: tip chord sits AHEAD of the root chord
+    [1, -1].forEach(function (s) {
+      var p0 = [s * 46, 4, 44], p1 = [s * 152, -12, 104],
+        p2 = [s * 148, -12, 46], p3 = [s * 44, 4, -70];
+      if (s < 0) M.plate(p3, p2, p1, p0, [0, -1, 0], 11, STEEL, HULL2);
+      else M.plate(p0, p1, p2, p3, [0, -1, 0], 11, STEEL, HULL2);
+      // magenta leading edge
+      M.quad([s * 48, 5.2, 44], [s * 152, -10.8, 104],
+        [s * 148, -10.8, 96], [s * 50, 5.2, 36], TRIM);
+      // rake gun pod slung under the wing root
+      M.box(s * 62, -34, 60, 26, 24, 130, HULL2, PLATE);
+      M.box(s * 62, -34, 132, 12, 12, 40, STEEL);
+      M.box(s * 62, -34, 154, 17, 17, 6, DARK);
+    });
+
+    // canted twin tails, raked hard back
+    [1, -1].forEach(function (s) {
+      M.plate([s * 30, 18, -70], [s * 76, 96, -104],
+        [s * 70, 94, -146], [s * 26, 16, -152], [s * 1, 0, 0], 8, HULL2, TRIM);
+    });
+    // ventral strakes keep the belly from reading as a bare tube
+    [1, -1].forEach(function (s) {
+      M.plate([s * 22, -40, 20], [s * 52, -88, -40],
+        [s * 46, -86, -96], [s * 20, -38, -110], [s * 1, 0, 0], 7, HULL2, PLATE);
+    });
+
+    // twin oversized engines
+    [1, -1].forEach(function (s) {
+      var a = ringXY(s * 52, 6, -140, 34, 34, 8, PI / 8);
+      var b = ringXY(s * 52, 6, -186, 27, 27, 8, PI / 8);
+      M.skin(a, b, HULL2, PLATE);
+      var c = ringXY(s * 52, 6, -180, 17, 17, 8, PI / 8);
+      M.skin(b, c, DARK);
+      M.capCenter(c, GLOW);
+      // flank trim strip along the nacelle
+      M.quad([s * 88, 14, -132], [s * 88, 14, -186],
+        [s * 88, 4, -186], [s * 88, 4, -132], TRIM);
+    });
+
+    return M;
+  }
+
   /* =================================================================== CRATE */
   function buildCrate() {
     var M = Mesh();
@@ -1233,7 +1373,8 @@ export const MODELS = (function () {
     striker = buildStriker(), mine = buildMine(), bomb = buildBomb(),
     lancer = buildLancer(),
     carrier = buildCarrier(), dreadnought = buildDreadnought(),
-    wasp = buildWasp(), ravager = buildRavager(), leviathan = buildLeviathan();
+    wasp = buildWasp(), ravager = buildRavager(), leviathan = buildLeviathan(),
+    warden = buildWarden(), hunter = buildHunter();
 
   return {
     jet: jet.build(),
@@ -1249,6 +1390,8 @@ export const MODELS = (function () {
     carrier: carrier.build(),
     dreadnought: dreadnought.build(),
     leviathan: leviathan.build(),
+    warden: warden.build(),
+    hunter: hunter.build(),
     crate: crate.build(),
     shard: shard.build(),
     attach: {
@@ -1287,7 +1430,15 @@ export const MODELS = (function () {
         [180, 10, -108], [-180, 10, -108],
         [210, 10, -108], [-210, 10, -108],
         [240, 10, -108], [-240, 10, -108]
-      ]
+      ],
+      /* the warden SPINS, so its arm muzzles cannot be a fixed table: this is
+         ONE arm tip as a radius (x) and depth (z), swept round b.spin six
+         times by scene-draw. x is used as a radius and is never mirrored, but
+         the hull still flies yaw≈PI — the sweep negates cos() to match. */
+      wardenArm: [298, 0, -84],
+      wardenIris: [0, 0, -46],
+      hunterNose: [0, -6, -234],
+      hunterGuns: [[62, -34, -154], [-62, -34, -154]]
     }
   };
 })();

@@ -26,19 +26,24 @@ const KMESH = {
   ravager: mesh(MODELS.ravager)
 };
 const BOMBMESH = mesh(MODELS.bomb);
-/* boss type → mesh (bosses rotate: mothership / carrier / dreadnought / leviathan) */
+/* boss type → mesh (bosses rotate: mothership / carrier / dreadnought /
+   leviathan / warden / hunter) */
 const BOSSMESH = {
   mothership:  MESH.mothership,
   carrier:     mesh(MODELS.carrier),
   dreadnought: mesh(MODELS.dreadnought),
-  leviathan:   mesh(MODELS.leviathan)
+  leviathan:   mesh(MODELS.leviathan),
+  warden:      mesh(MODELS.warden),
+  hunter:      mesh(MODELS.hunter)
 };
 /* per-type phase tints, same idiom as the old inline mothership pick */
 const BOSSPH = {
   mothership:  [null, [.16,0,.16], [.45,0,0]],
   carrier:     [null, [0,.15,.07], [.35,.06,0]],
   dreadnought: [null, [.18,.02,0], [.50,0,0]],
-  leviathan:   [null, [.10,.14,0], [.38,.16,0]]
+  leviathan:   [null, [.10,.14,0], [.38,.16,0]],
+  warden:      [null, [.22,.11,0], [.48,.14,0]],
+  hunter:      [null, [.18,0,.16], [.44,0,.30]]
 };
 
 /* ------------------------------------------------------------------ additive batch */
@@ -437,6 +442,34 @@ export function buildFX(){
       sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], 14+90*ch, COL.white, .4+.9*ch);
       for(const g of ATT.levVents)
         sprite(b.x+g[0],b.y+g[1],b.z+g[2], 18+8*Math.sin(b.t*3+g[0]*.07+g[2]*.05), COL.bio, .8);
+    } else if(type==='warden'){
+      /* arm muzzles swept round b.spin, which is also the hull's roll, so the
+         glows stay welded to the arms they belong to. The x term is negated
+         because the platform flies yaw≈PI (mesh +x is world -x) — the same
+         mirror wardenPinwheel() applies to the bolts it emits. */
+      const sp=b.spin||0, fl=Math.max(0,b.flash||0), A=ATT.wardenArm, ir=ATT.wardenIris;
+      for(let i=0;i<6;i++){
+        const a=sp+i*Math.PI/3;
+        sprite(b.x-Math.cos(a)*A[0], b.y+Math.sin(a)*A[0], b.z+A[2],
+          15+9*fl, COL.amber, .85+fl);
+      }
+      /* the iris carries the tell for both patterns: a short hot pulse on
+         every pinwheel tick, a much bigger one when the ring opens */
+      sprite(b.x+ir[0],b.y+ir[1],b.z+ir[2], (54+10*Math.sin(b.t*3))*(1+fl*2.2), COL.amber, .7+fl*1.3);
+      sprite(b.x+ir[0],b.y+ir[1],b.z+ir[2], 20+90*fl, COL.white, .5+fl);
+    } else if(type==='hunter'){
+      /* the pounce charge is the whole telegraph — the nose swells for a full
+         second before it commits, and stays lit through the dive */
+      const ch=b.chg||0, fl=Math.max(0,b.flash||0), n=ATT.hunterNose;
+      /* kept deliberately small for a charge glow: the hull is barely 300
+         across and the dreadnought-scale flare swallowed it whole, which cost
+         the pounce its other tell — seeing which way the nose is pointed */
+      sprite(b.x+n[0],b.y+n[1],b.z+n[2], 14+86*ch, COL.mag, .45+1.1*ch);
+      sprite(b.x+n[0],b.y+n[1],b.z+n[2], 6+30*ch, COL.white, .4+.8*ch);
+      /* wing pods, the only lights on the far-facing side of the hull that
+         are not occluded by it — they carry the rake's muzzle flash */
+      for(const g of ATT.hunterGuns)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 11+34*fl, COL.mag, .55+fl*3);
     } else {
       const c=ATT.bossCore;
       sprite(b.x+c[0],b.y+c[1],b.z+c[2], 120*pl, b.phase===3?COL.red:COL.green, 1.1);

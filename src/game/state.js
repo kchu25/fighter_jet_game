@@ -62,6 +62,8 @@ export const S = {
      tuned to strobe-and-clear and the Teller double-flash has to linger long
      enough to actually blind. */
   nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0,
+  /* the first-boss set piece, once per run: 0 armed, 1 release called, 2 spent */
+  bossNuke: 0, bossNukeT: 0,
   tipMsg: TIP_DEFAULT,
   easeT: 0, easeStage: 0, runNo: 0, everDied: false
 };
@@ -89,6 +91,7 @@ export function reset(){
      early the first strike can arrive: long enough to have flown a little,
      short enough that even a brief run sees one */
   S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0;
+  S.bossNuke=0; S.bossNukeT=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
 }

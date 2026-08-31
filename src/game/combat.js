@@ -179,27 +179,41 @@ export function spawnBoss(){
 
      Boss TYPE rotates with bossN: mothership (bolt volleys), hive carrier
      (summons trash from its bays), dreadnought (telegraphed lance + bolt
-     walls). All three stay ONE S.boss object — lockOn/hitScan/missiles/HUD
-     concat [S.boss] and must keep working unchanged. The carrier runs 0.9x
-     HP (its escorts soak your fire), the dreadnought 1.1x. */
-  const type = ['mothership','carrier','dreadnought','leviathan'][S.bossN%4];
+     walls), leviathan (bio shotgun + wasp births), warden (rotating pinwheel
+     platform), hunter-killer (tracks your lane, rakes it, pounces). All six
+     stay ONE S.boss object — lockOn/hitScan/missiles/HUD concat [S.boss] and
+     must keep working unchanged. Mothership stays index 0: the first boss of
+     a run is scripted as one elsewhere. The carrier runs 0.9x HP (its escorts
+     soak your fire), the dreadnought 1.1x, the hunter 0.95x (it spends whole
+     seconds out of your guns on a pounce). */
+  const type = ['mothership','carrier','dreadnought','leviathan','warden','hunter'][S.bossN%6];
   const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT'
-             : type==='leviathan'?'LEVIATHAN' : 'MOTHERSHIP';
+             : type==='leviathan'?'LEVIATHAN' : type==='warden'?'WARDEN'
+             : type==='hunter'?'HUNTER-KILLER' : 'MOTHERSHIP';
   const c    = type==='carrier'?COL.green : type==='dreadnought'?COL.red
-             : type==='leviathan'?COL.bio : COL.purple;
+             : type==='leviathan'?COL.bio : type==='warden'?COL.amber
+             : type==='hunter'?COL.mag : COL.purple;
   const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1
-             : type==='leviathan'?1.05 : 1));
-  const r  = type==='carrier'?240 : type==='dreadnought'?170 : type==='leviathan'?230 : 210;
-  const rz = type==='carrier'?140 : type==='dreadnought'?210 : type==='leviathan'?170 : 150;
+             : type==='leviathan'?1.05 : type==='hunter'?.95 : 1));
+  const r  = type==='carrier'?240 : type==='dreadnought'?170 : type==='leviathan'?230
+           : type==='warden'?200 : type==='hunter'?150 : 210;
+  const rz = type==='carrier'?140 : type==='dreadnought'?210 : type==='leviathan'?170
+           : type==='warden'?160 : type==='hunter'?190 : 150;
   /* every field ANY type's update branch reads is initialised here, so a
      branch can never touch an undefined on its first frame:
      chg/mode = dreadnought lance state (leviathan reuses both for its maw
-     lance / attack cycle), alt = carrier & leviathan wave alternator,
-     flash = carrier bay-launch / leviathan birth glow, fcd = carrier
-     phase-3 direct-fire cd, scr3 = leviathan phase-3 screech latch */
+     lance / attack cycle, the hunter both for its pounce charge and its whole
+     stalk/rake/pounce state machine), alt = carrier & leviathan wave
+     alternator (hunter: rake-or-pounce toggle), flash = carrier bay-launch /
+     leviathan birth / warden iris / hunter muzzle glow, fcd = carrier
+     phase-3 direct-fire cd (warden: iris-ring cd), scr3 = leviathan phase-3
+     screech latch, spin/sdir = warden pinwheel angle and its direction,
+     pph = last frame's phase, so a branch can react to a phase CHANGE,
+     rkN = hunter rake rounds left in the burst */
   S.boss={k:'boss',type,name,x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r,rz,c,
         phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0,
-        chg:0,mode:'lance',alt:false,flash:0,fcd:2.4,scr3:false};
+        chg:0,mode:type==='hunter'?'stalk':'lance',alt:false,flash:0,fcd:2.4,scr3:false,
+        spin:0,sdir:1,pph:1,rkN:0};
   /* hud prints the warn phrase raw — the leviathan's carries its own verb */
   S.bossWarn=2.4; S.bossWarnName = type==='leviathan'?'LEVIATHAN RISING' : name+' INBOUND';
   pushComms('CONTROL','ALL BIRDS — HEAVY SIGNATURE INBOUND',.9);
@@ -323,6 +337,88 @@ export function levLance(b){
   const V=3400, t=gz/V;
   S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t,vy:(S.P.y-gy)/t,vz:-V,dmg:15,c:COL.bio,r:36});
   AUDIO.lance && AUDIO.lance();
+}
+/* ----------------------------------------------------------- warden attacks */
+export function wardenPinwheel(b){
+  /* k spokes off the iris, each an ARM of three bolts on a lateral-speed ramp.
+     One speed per spoke would land the whole tick on a single radius and leave
+     the middle of the arena permanently safe; the ramp is what makes an arm
+     sweep the box instead of drawing a ring. b.spin advances between ticks, so
+     consecutive arms lay down a spiral — and the spin reverses on every phase
+     change, which is the only thing the player has to re-learn. */
+  const k = b.phase===1?3 : b.phase===2?4 : 5;
+  /* Arms are SHORT in phase 1. A full three-bolt arm reaches past the envelope,
+     so k of them sweep the entire box and the only survivable line is the
+     rotating gap: an evasive bot that ran out a 90s clock against four of the
+     other five bosses died to phase-1 warden in 41s. Two bolts leaves the outer
+     band open while the spin is still being read. */
+  const arm = b.phase===1?2:3;
+  const V=1400, r0=40;
+  for(let i=0;i<k;i++){
+    const a=b.spin+i*Math.PI*2/k;
+    /* the platform flies yaw≈PI, which mirrors mesh x — the fan is mirrored
+       the same way or the spiral would turn against the arms you can see */
+    const dx=-Math.cos(a), dy=Math.sin(a);
+    for(let j=0;j<arm;j++){
+      /* the bolts of an arm land on fixed radii, which would leave
+         two permanently safe annuli to camp in — the creeping offset walks
+         those rings outward every tick so no distance from the hub is ever
+         safe twice running */
+      const lat=(b.t*41)%92 + j*92;
+      /* y is squeezed to the flight envelope's aspect (476x300), so one arm
+         reaches the top and the side of the box at the same moment */
+      S.foes.push({x:b.x+dx*r0,y:b.y+dy*r0*.66,z:b.z,
+        vx:dx*lat,vy:dy*lat*.66,vz:-V,dmg:8,c:COL.amber,r:26});
+    }
+  }
+  b.flash=.24; AUDIO.thud();
+}
+export function wardenRing(b){
+  /* the iris opens: a ring of bolts expanding to roughly the size of the
+     flight envelope with ONE sector left out. Same guaranteed-safe-lane
+     philosophy as sporeBarrage, but the answer is angular — sit in the gap,
+     or be inside the ring when it arrives. Phase 3 adds a tighter second ring
+     on the SAME gap angle, so it stays one lane and not two puzzles. */
+  const V=1300, T=b.z/V, n=26, gap=rnd(0,Math.PI*2);
+  for(const m of (b.phase===3?[1,.6]:[1]))
+    for(let i=0;i<n;i++){
+      const a=i/n*Math.PI*2;
+      /* signed angular distance to the gap centre, wrapped into ±PI */
+      if(Math.abs(((a-gap+Math.PI*3)%(Math.PI*2))-Math.PI) < .5) continue;
+      const cs=Math.cos(a), sn=Math.sin(a);
+      S.foes.push({x:b.x+cs*60,y:b.y+sn*40,z:b.z,
+        vx:cs*(250*m-60)/T,vy:sn*(165*m-40)/T,vz:-V,dmg:10,c:COL.amber,r:28});
+    }
+  b.flash=.6; AUDIO.lance && AUDIO.lance();
+}
+/* ---------------------------------------------------- hunter-killer attacks */
+export function hunterRake(b){
+  /* one round of the rake stream, alternating wing pods. The pods are
+     boresighted — each round is angled to cross the hull's own centreline at
+     the player's depth, because a pair of parallel streams 124 apart would
+     straddle a target sitting dead ahead and the whole point is that the lane
+     it occupies is the lethal one. Still not aimed: the convergence is fixed
+     geometry, and update.js freezes its tracking for the burst. Without that
+     committed window the stream would just follow you, which is not hard,
+     only unfair. */
+  const g=ATT.hunterGuns[b.rkN&1], V=1900, gz=b.z+g[2], T=gz/V;
+  S.foes.push({x:b.x+g[0],y:b.y+g[1],z:gz,
+    vx:-g[0]/T+rnd(-16,16),vy:rnd(-14,14),vz:-V,dmg:8,c:COL.mag,r:24});
+  b.flash=.1;
+}
+export function hunterSpread(b){
+  /* the bottom of the pounce: a point-blank fan down its own axis, NOT aimed.
+     Flight time from the dive depth is only ~0.3s, so the shot itself cannot
+     be reacted to — what is dodgeable is the second of frozen charge and the
+     dive that precede it, which say exactly which lane is about to be sprayed. */
+  const n = b.phase===3?9:7, V=2200;
+  for(let i=0;i<n;i++){
+    const a=i/(n-1)-.5;
+    /* it hangs a little above your lane (see the y tracking in update.js), so
+       the fan is thrown DOWN into it rather than fired flat */
+    S.foes.push({x:b.x,y:b.y-10,z:b.z,vx:a*900,vy:a*260-90,vz:-V,dmg:12,c:COL.mag,r:28});
+  }
+  AUDIO.thud();
 }
 export function hitScan(s,dmg,big){
   const list = S.boss? S.enemies.concat([S.boss]) : S.enemies;

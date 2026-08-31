@@ -20,7 +20,7 @@ import { AUDIO } from '../audio/index.js';
 import { rnd, clamp } from '../core/utils.js';
 import { S, COL, SPAWN_Z, DESPAWN_Z, GROUND_Y } from './state.js';
 import { mk, shock, shard, later, sparks } from './fx.js';
-import { hurt, explode, pushComms } from './combat.js';
+import { hurt, explode, pushComms, spawnCrate } from './combat.js';
 
 /* release geometry — tuned together, do not move one without the others.
    Fall time from REL_Y under GRAV with REL_VY is ~1.09s, during which the
@@ -142,6 +142,22 @@ function detonate(k){
     });
   }
 
+  /* The set piece lands here. The boss is DELETED, not damaged: no score, no
+     combo, no kill credit — the same rule the fireball already applies to
+     everything else it swallows, and the whole point of the beat. The crates
+     are salvage, and the only apology for a fight taken off you.
+     The bossN===0 test closes a narrow race: if the player finished the boss
+     during the fall, bossN has already ticked and this must not fire on
+     whatever spawned next. */
+  if(k.bossKill && S.boss && S.bossN===0){
+    const b=S.boss;
+    explode(b, b.x, b.y, b.z);
+    S.boss=null; S.bossN++;
+    for(let i=0;i<2;i++) spawnCrate();
+    later(1.7, 0,0,0, ()=>
+      pushComms('CONTROL','SPLASH. WE COULD HAVE DONE THAT AT ANY TIME.',1));
+  }
+
   /* everything in the fireball is simply gone — no score, it is not your kill */
   for(let i=S.enemies.length-1;i>=0;i--){
     const e=S.enemies[i];
@@ -250,12 +266,70 @@ export function nukeTick(dt){
   if(S.rad>.04) AUDIO.geiger && AUDIO.geiger(S.rad);
 }
 
+/* ------------------------------------------------- first-boss set piece */
+/* Once per run, the opening boss is not yours to kill. Partway through the
+   fight CONTROL calls a release and the thing you have been grinding down is
+   deleted by one warhead — dropped close enough that the column it leaves
+   still has to be flown around.
+
+   It has to be the FIRST boss. The beat only works on the fight you assumed
+   was the test, and only the first time; on any later boss it would read as a
+   mechanic rather than a betrayal.
+
+   This is the one strike that ignores every gate in nukeSchedule (it fires
+   DURING a boss, which is otherwise forbidden), so it is scheduled here
+   instead. The normal scheduler stays suppressed throughout on its own: the
+   boss blocks it, and then the live column does. */
+const BN_WARN = 3.2;   // seconds of warning between the release call and the drop
+const BN_FALL = 1.086; // fall time from REL_Y — see the release-geometry block
+
+function bossNukeTick(dt){
+  if(S.bossNuke>=2) return;
+  if(S.bossNuke===0){
+    const b = S.boss;
+    if(!b || S.bossN>0 || !b.here) return;
+    /* The floor comes first and is not negotiable: the beat is a fight being
+       taken away, so there has to have BEEN a fight. A rapid-fire pickup can
+       put the boss under 60% within a couple of seconds of it arriving, and
+       firing then reads as a scripted cutscene rather than a betrayal.
+       Past the floor, either trigger is enough — the timer covers a pilot who
+       cannot dent it, the hp gate covers one who is shredding it, and without
+       that gate a fast run would finish the boss and never see this at all. */
+    if(b.t < 8) return;
+    if(b.t < 15 && b.hp/b.max > .6) return;
+    S.bossNuke=1; S.bossNukeT=BN_WARN;
+    S.bossWarn=2.4; S.bossWarnName='BREAK OFF — DANGER CLOSE';
+    pushComms('CONTROL','TAC RELEASE AUTHORISED — BREAK OFF NOW',1);
+    AUDIO.nukeAlert && AUDIO.nukeAlert();
+    return;
+  }
+  if((S.bossNukeT-=dt)>0) return;
+  S.bossNuke=2;
+
+  /* Aimed to detonate ON the boss: the warhead scrolls with the world all the
+     way down, so it is released a full fall's worth of scroll further out.
+     x is still clamped to MAX_OFF even though a boss can sit wider than that —
+     the column must leave the player a pocket, and a boss hull is wide enough
+     that the hit still reads from the far side of the clamp. */
+  const b = S.boss;
+  S.nukes.push({
+    x: clamp(b?b.x:0, -MAX_OFF, MAX_OFF), y: REL_Y, z: (b?b.z:1500) + S.flow*BN_FALL,
+    vy: REL_VY, spin: rnd(0,6.28), seed: rnd(0,100),
+    state:'fall', t:0, g:0, hitT:0, radT:0,
+    wave:0, waveHit:false, trailT:0, bossKill:true
+  });
+  S.nukeWarn = 4.2;
+  pushComms('CONTROL','SHOT OUT — CLEAR THE AXIS',1);
+}
+
 /* --------------------------------------------------------------- schedule */
-/* Called from the director. Strikes are an EVENT, not a spawn channel: they
-   only land in open sky (never mid-boss, never on the first-run ramp) and
-   never overlap each other, because two live WALKS in the corridor at once
-   leaves no clean lane anywhere in it. */
+/* Called from the director. SCHEDULED strikes are an EVENT, not a spawn
+   channel: they only land in open sky (never mid-boss, never on the first-run
+   ramp) and never overlap each other, because two live WALKS in the corridor
+   at once leaves no clean lane anywhere in it. The first-boss set piece above
+   is the deliberate exception and books its own drop. */
 export function nukeSchedule(dt){
+  bossNukeTick(dt);
   /* The clock runs on wall time and the gates only hold back the RELEASE. If
      the countdown itself were gated it would barely advance: bosses alone eat
      most of a run, so a strike armed behind them lands minutes late, or never.

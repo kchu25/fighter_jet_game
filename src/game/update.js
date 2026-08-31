@@ -7,7 +7,8 @@ import { keys, mouse } from './input.js';
 import { mk, sparks, shard, shock, later } from './fx.js';
 import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, explode,
          carrierLaunch, carrierVolley, dreadLance, dreadWall,
-         sporeBarrage, levBirth, levLance, pushComms } from './combat.js';
+         sporeBarrage, levBirth, levLance,
+         wardenPinwheel, wardenRing, hunterRake, hunterSpread, pushComms } from './combat.js';
 import { directorTick } from './director.js';
 import { nukeTick } from './nuke.js';
 import { gameOver } from '../main.js';
@@ -263,15 +264,18 @@ export function update(dt){
      a detonation splices S.enemies to vaporise everything at ground zero. */
   nukeTick(dt);
 
-  /* S.boss — one object, three behaviour sets keyed by b.type. The shared
+  /* S.boss — one object, six behaviour sets keyed by b.type. The shared
      skeleton (approach to a hold depth, phase from hp thirds, listing, rage
      smoke, hit decay) is identical for all; only movement + attack cycles
      branch. Every field a branch reads is initialised in spawnBoss(). */
   if(S.boss){
     const b=S.boss; b.t+=dt;
     const type=b.type||'mothership';
-    /* the carrier hangs deeper — its threat launches at you, it doesn't */
-    const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : type==='leviathan'?1650 : 1500;
+    /* the carrier hangs deeper — its threat launches at you, it doesn't.
+       The hunter hangs closest: its rake has to arrive fast enough that
+       sitting still in its lane is punished. */
+    const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : type==='leviathan'?1650
+                : type==='warden'?1550 : type==='hunter'?1400 : 1500;
     if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true;
       if(type==='leviathan') AUDIO.screech && AUDIO.screech(); } }
     else{
@@ -354,6 +358,88 @@ export function update(dt){
               if(b.mode==='spore'){ sporeBarrage(b); b.cd=2.0; }
               else if(b.mode==='birth') b.cd = levBirth(b) ? 2.4 : .8;
               else b.chg=1e-4;
+            }
+          }
+        }
+      } else if(type==='warden'){
+        /* an orbital gun platform, not a ship: it barely repositions. The
+           threat is the SPIN — b.spin drives the mesh roll AND the pinwheel's
+           spoke angles, so the arms you can see ARE the pattern. It reverses
+           on every phase change, which is the one thing that has to be
+           re-learned mid-fight; without the radio call the reversal reads as
+           a glitch rather than as a beat. */
+        if(b.phase!==b.pph){
+          b.pph=b.phase; b.sdir*=-1;
+          pushComms('CONTROL','WARDEN REVERSING — SPIN FLIPPED',.7);
+        }
+        b.spin = (b.spin + b.sdir*(.85+.16*b.phase)*dt) % (Math.PI*2);
+        b.x += b.dir*(45+35*rage)*dt;
+        if(Math.abs(b.x)>110) b.dir*=-1;
+        b.y = 30+Math.sin(b.t*.4)*30;
+        b.z = holdZ+Math.sin(b.t*.3)*90;
+        b.yaw = Math.PI;
+        b.roll = b.spin;
+        if(b.flash>0) b.flash-=dt;
+        if((b.cd-=dt)<=0){
+          b.cd = b.phase===1?1.0 : b.phase===2?.82 : .7;
+          wardenPinwheel(b);
+        }
+        /* the iris ring runs on its OWN clock, deliberately not a multiple of
+           the pinwheel tick: the two patterns drift against each other so no
+           single memorised loop clears the fight */
+        if((b.fcd-=dt)<=0){
+          b.fcd = b.phase===1?5 : b.phase===2?4.2 : 3.4;
+          wardenRing(b);
+        }
+      } else if(type==='hunter'){
+        /* the gimmick is MOVEMENT: it chases your position with a lag and a
+           hard speed cap (230/s lateral against your ~590/s), so it can always
+           be broken away from — but only by actually flying. Tracking freezes
+           for the whole of a rake burst and a pounce; those committed windows
+           are the only reason either attack is dodgeable, so nothing may fire
+           while it is still following you. */
+        const zt = holdZ+Math.sin(b.t*.5)*60;
+        if(b.mode==='stalk'){
+          b.x += clamp((S.P.x-b.x)*1.8,-230,230)*dt;
+          /* +34 lines your lane up with the wing pods, which sit that far
+             below the hull centre — the rake is fired flat, so the hull has
+             to do the aiming with its own body */
+          b.y += clamp((S.P.y+34-b.y)*1.4,-190,190)*dt;
+          b.y = clamp(b.y,-120,150);
+        }
+        b.yaw = Math.PI + clamp((S.P.x-b.x)/900,-.5,.5);
+        b.roll = clamp((b.x-S.P.x)/700,-.7,.7) + rage*.12*Math.sin(b.t*3.2);
+        if(b.flash>0) b.flash-=dt;
+        if(b.mode==='rake'){
+          b.z=zt;
+          if((b.cd-=dt)<=0){
+            hunterRake(b);
+            b.cd = b.phase===3?.055 : .075;
+            if(--b.rkN<=0){ b.mode='stalk'; b.cd = b.phase===1?1.1 : b.phase===2?.85 : .65; }
+          }
+        } else if(b.mode==='charge'){
+          b.z=zt; b.chg=Math.min(1,b.chg+dt);
+          if(b.chg>=1) b.mode='pounce';
+        } else if(b.mode==='pounce'){
+          b.z-=2100*dt;
+          if(b.z<=620){ b.z=620; hunterSpread(b); b.mode='back'; b.chg=0; }
+        } else if(b.mode==='back'){
+          /* climb back to the CURRENT hold depth, not a fixed one, or the
+             stalk sine snaps the hull backwards the frame it resumes */
+          b.z+=1150*dt;
+          if(b.z>=zt){ b.z=zt; b.mode='stalk'; b.cd = b.phase===1?1.2 : b.phase===2?.95 : .75; }
+        } else {
+          b.z=zt;
+          if((b.cd-=dt)<=0){
+            if(b.alt=!b.alt){
+              b.mode='rake'; b.rkN = b.phase===1?9 : b.phase===2?12 : 16;
+              b.cd=.32;                 // a beat of stillness before the first round
+              AUDIO.strafe && AUDIO.strafe();
+            } else {
+              /* the pounce telegraph: a full second of frozen nose charge
+                 before it commits, which is the entire dodge window */
+              b.mode='charge'; b.chg=1e-4;
+              AUDIO.lance && AUDIO.lance();
             }
           }
         }
