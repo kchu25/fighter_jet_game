@@ -12,6 +12,7 @@ import {
 import { gl, glc, W, H, attribs, upload, Plit, Pspr, Psky, MESH, ATT, skyBuf, mesh } from './gl.js';
 import { MODELS } from './models.js';
 import { SCENERY } from '../world/scenery.js';
+import { coreR, falloutR } from '../game/nuke.js';
 
 /* enemy kind → mesh. The three newer hulls are uploaded here (gl.js only
    carries the original set); MESH entries are reused for the rest. */
@@ -24,6 +25,7 @@ const KMESH = {
   wasp:    mesh(MODELS.wasp),
   ravager: mesh(MODELS.ravager)
 };
+const BOMBMESH = mesh(MODELS.bomb);
 /* boss type → mesh (bosses rotate: mothership / carrier / dreadnought / leviathan) */
 const BOSSMESH = {
   mothership:  MESH.mothership,
@@ -232,6 +234,14 @@ export function render(){
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;
     litDraw(MESH.crate, model, [c[0]*.55,c[1]*.55,c[2]*.55], 1);
   }
+  /* falling warheads. The mesh is built nose-+Z like every other hull, so a
+     +90° pitch stands it on end; the wobble is the casing coning as it falls. */
+  for(const k of S.nukes||[]){
+    if(k.state!=='fall') continue;
+    compose(model, k.x,k.y,k.z,
+      Math.PI/2 + Math.sin(k.spin*.7)*.13, Math.sin(k.spin*.5)*.13, k.spin, 1);
+    litDraw(BOMBMESH, model, [.30,.05,.02], 1);
+  }
 
   SCENERY.draw();
 
@@ -437,5 +447,116 @@ export function buildFX(){
   for(const k of S.crates){
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;
     sprite(k.x,k.y,k.z, 30+Math.sin(S.T*6)*5, c, .8);
+  }
+  nukeFX();
+}
+
+/* ---------------------------------------------------------- nuclear column
+   The sprite batch is purely ADDITIVE (ONE,ONE), so nothing here can darken
+   the frame — a smoke column has to be built out of light. That turns out to
+   be right for this subject: the cloud is lit from inside by its own fireball,
+   so the ash tones are dim warm greys that read as haze, and the heat term
+   simply blends them up toward fire. As the cloud cools it dims rather than
+   greying, which is the only honest way to do smoke in an additive pass. */
+const N_FIRE=[1,.55,.14], N_EMBER=[1,.78,.34], N_ASH=[.26,.21,.23], N_DIRT=[.50,.36,.26];
+const _nc=[0,0,0];
+function nmix(a,b,t){
+  _nc[0]=a[0]+(b[0]-a[0])*t; _nc[1]=a[1]+(b[1]-a[1])*t; _nc[2]=a[2]+(b[2]-a[2])*t;
+  return _nc;
+}
+function ring(x,y,z,r,w,c,a,n){
+  let px=x+camR[0]*r, py=y+camR[1]*r, pz=z+camR[2]*r;
+  for(let i=1;i<=n;i++){
+    const th=i/n*6.2832, cs=Math.cos(th)*r, sn=Math.sin(th)*r;
+    const nx=x+camR[0]*cs+camU[0]*sn, ny=y+camR[1]*cs+camU[1]*sn, nz=z+camR[2]*cs+camU[2]*sn;
+    beam(px,py,pz, nx,ny,nz, w, c, a);
+    px=nx; py=ny; pz=nz;
+  }
+}
+function nukeFX(){
+  for(const k of S.nukes||[]){
+    if(k.state==='fall'){
+      /* the warhead itself, so it is trackable against a black sky */
+      sprite(k.x,k.y,k.z, 16, COL.white, .9);
+      sprite(k.x,k.y,k.z, 34, COL.red, .5);
+      continue;
+    }
+    const x=k.x, z=k.z, age=k.t, g=k.g;
+    const e   = 1-(1-g)*(1-g);
+    const hot = clamp(1-age/3.2, 0, 1);          // how molten it still is
+    const rc  = coreR(k), rf = falloutR(k);
+    const topY = GROUND_Y + 200 + 940*e + Math.min(300, age*46);
+    const capR = rc*(1.35+.55*e);
+
+    /* --- the fireball, before it has climbed into a stem */
+    const fb = clamp(1-age/1.5, 0, 1);
+    if(fb>0){
+      const fy = GROUND_Y+130 + (1-fb)*380, fr = rc*(.95+1.5*(1-fb));
+      sprite(x,fy,z, fr*2.3, [1,.72,.30], fb*fb*1.10);
+      sprite(x,fy,z, fr*1.25, [1,.94,.72], fb*fb*1.45);
+      sprite(x,fy,z, fr*.55,  COL.white,   fb*1.6);
+    }
+
+    /* --- stem: narrow at the crater, waisted, flaring up into the cap */
+    const NS=18, stemR=rc*.58;
+    for(let i=0;i<NS;i++){
+      const u=i/(NS-1);
+      const sy = GROUND_Y + u*(topY-GROUND_Y);
+      const r  = stemR*(.5 + .55*Math.sin(u*1.5708) + .75*u*u);
+      const wob = Math.sin(S.T*.9 + u*5.1 + k.seed)*r*.30;
+      const heat = clamp(hot*(1-u*.45) + (1-u)*.40, 0, 1);
+      for(let j=0;j<3;j++){
+        const a = S.T*.45 + j*2.0944 + u*4.3 + k.seed;
+        sprite(x+wob+Math.cos(a)*r*.55, sy, z+Math.sin(a)*r*.55,
+          r*1.55, nmix(N_ASH,N_FIRE,heat), .26+.38*heat);
+      }
+    }
+
+    /* --- cap: three stacked rings make a dome, and the underside glows,
+       which is the single cue that reads as "mushroom" at a glance */
+    const RR=[1,.72,.38], RY=[0,92,152], RN=[14,10,6];
+    for(let b=0;b<3;b++){
+      const rr=RR[b]*capR, yy=topY+RY[b]*(.4+.6*e), heat=clamp(hot*.7,0,1);
+      for(let i=0;i<RN[b];i++){
+        const a=i/RN[b]*6.2832 + S.T*.16 + b*.7 + k.seed;
+        const pulse=1+.13*Math.sin(S.T*1.6+i+b);
+        sprite(x+Math.cos(a)*rr, yy, z+Math.sin(a)*rr,
+          capR*.60*pulse, nmix(N_ASH,N_EMBER,heat), .24+.30*heat);
+      }
+    }
+    sprite(x, topY-46, z, capR*1.35, nmix(N_ASH,N_FIRE,hot*.9), .28+.50*hot);
+
+    /* --- base surge: the dirt ring thrown flat along the deck */
+    const bs=clamp(age/2.4,0,1), br=rc*(.8+2.5*bs);
+    for(let i=0;i<12;i++){
+      const a=i/12*6.2832+k.seed;
+      sprite(x+Math.cos(a)*br, GROUND_Y+34+46*bs, z+Math.sin(a)*br,
+        rc*.8, nmix(N_ASH,N_DIRT,hot*.6), (1-bs)*.45);
+    }
+
+    /* --- internal lightning: bright pops inside the column while it burns */
+    if(hot>.15 && Math.random()<.4)
+      sprite(x+rnd(-rc,rc), GROUND_Y+rnd(120,topY-GROUND_Y), z+rnd(-rc,rc),
+        rnd(40,115), [1,.90,.70], rnd(.3,.9)*hot);
+
+    /* --- blast front, still outrunning the cloud */
+    if(!k.waveHit && k.wave>60){
+      const wa=clamp(1-k.wave/4200,0,1)*.8;
+      ring(x, GROUND_Y+340, z, k.wave, 14, [.86,.93,1], wa, 26);
+      ring(x, GROUND_Y+340, z, k.wave*.86, 7, [1,.88,.62], wa*.6, 20);
+    }
+
+    /* --- the gates. Everything above is spectacle; THESE are the gameplay.
+       Two red rails at the lethal radius and two green ones at the fallout
+       edge, standing floor-to-ceiling so the safe lane is unmistakable from
+       any altitude — the whole hazard is lateral, and it has to be legible
+       through a sky already full of fire. */
+    if(z>-320 && z<3200){
+      const al=clamp(1-Math.abs(z)/2400, .14, .85);
+      for(const s of [-1,1]){
+        beam(x+s*rc, GROUND_Y, z, x+s*rc, 430, z, 6.5, [1,.20,.26], al*.95);
+        beam(x+s*rf, GROUND_Y, z, x+s*rf, 300, z, 3.5, [.50,1,.30], al*.40);
+      }
+    }
   }
 }

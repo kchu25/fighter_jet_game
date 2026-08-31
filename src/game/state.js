@@ -55,6 +55,13 @@ export const S = {
   /* radio comms stack (bottom-left HUD): {who,txt,t,u} — pushComms() in
      combat.js owns pushing, update.js ages them out */
   comms: null, creepStage: 0, creepT: 0,
+  /* nuclear strikes: warheads fall ahead of you and leave a lethal column of
+     fire that has to be flown AROUND — nuke.js owns the whole lifecycle.
+     rad is this frame's fallout exposure 0..1, and nukeFl is the detonation
+     whiteout — a SEPARATE channel from S.flash because flash is deliberately
+     tuned to strobe-and-clear and the Teller double-flash has to linger long
+     enough to actually blind. */
+  nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0,
   tipMsg: TIP_DEFAULT,
   easeT: 0, easeStage: 0, runNo: 0, everDied: false
 };
@@ -78,6 +85,9 @@ export function reset(){
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
   S.allies=[]; S.allyNext=2; S.allyFirst=true;
   S.comms=[]; S.creepStage=0; S.creepT=0;
+  /* first strike is never in the opening minute — nukeSchedule also gates on
+     sector>=3, this just stops the timer being already expired when it does */
+  S.nukes=[]; S.nukeT=rnd(34,50); S.nukeWarn=0; S.rad=0; S.nukeFl=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
 }

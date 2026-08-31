@@ -1003,3 +1003,194 @@ export function siren() {
   voice(head, srcs);
 }
 
+
+/* ===================================================== nuclear strike suite
+   Throttle clocks are module-local rather than fields on A: nothing outside
+   this file reads them, and geiger() is called once per frame so it has to
+   own its own rate limiting. */
+var lastNukeBoomT = -99, lastGeigerT = -99;
+
+/* NUCLEAR LAUNCH DETECTED. Deliberately not siren(): that one is a smooth
+   two-cycle wail for a capital ship. This is gated — four hard stabs — and
+   sours the interval with a tritone, so it reads as a civil-defence klaxon
+   rather than another boss horn. */
+export function nukeAlert() {
+  if (!A.ready || A.muted || !budget(9)) return;
+  var t = now() + 0.002;
+  var dur = 1.35;
+  var head = gainNode(0.5);
+  head.connect(A.sfxGain);
+  var srcs = [];
+
+  // four hard-gated stabs: an alarm articulates, a siren glides
+  var g = A.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  var stabs = 4, per = dur / stabs;
+  for (var s = 0; s < stabs; s++) {
+    var s0 = t + s * per;
+    g.gain.setValueAtTime(0.0001, s0);
+    g.gain.exponentialRampToValueAtTime(0.6, s0 + 0.014);
+    g.gain.setValueAtTime(0.6, s0 + per * 0.62);
+    g.gain.exponentialRampToValueAtTime(0.0001, s0 + per * 0.92);
+  }
+  g.connect(head);
+
+  var f = bp(900, 3.0);
+  f.frequency.setValueAtTime(fclamp(1500), t);
+  f.frequency.exponentialRampToValueAtTime(fclamp(700), t + dur * 0.55);
+  f.frequency.exponentialRampToValueAtTime(fclamp(2000), t + dur);
+  f.connect(g);
+
+  // the wail falls, then overshoots upward on the last stab
+  var hiF = 660, loF = 392, endF = 784;
+  for (var k = 0; k < 2; k++) {
+    var o = osc('sawtooth', hiF, t);
+    o.detune.value = k ? 11 : -11;          // ~5Hz beat, sits uneasy
+    var p = o.frequency;
+    p.setValueAtTime(fclamp(hiF), t);
+    p.exponentialRampToValueAtTime(fclamp(loF), t + dur * 0.62);
+    p.exponentialRampToValueAtTime(fclamp(endF), t + dur);
+    o.connect(f);
+    o.start(t); o.stop(t + dur + 0.03);
+    srcs.push(o);
+  }
+  // tritone below the wail — the sourness that says "this is not a drill"
+  var tri = osc('sawtooth', hiF / 1.414, t);
+  tri.frequency.setValueAtTime(fclamp(hiF / 1.414), t);
+  tri.frequency.exponentialRampToValueAtTime(fclamp(loF / 1.414), t + dur * 0.62);
+  var trg = gainNode(0.4);
+  tri.connect(trg); trg.connect(f);
+  tri.start(t); tri.stop(t + dur + 0.03);
+  srcs.push(tri);
+
+  // sub drone swelling under the whole call
+  var sub = osc('sine', 38, t);
+  sub.frequency.linearRampToValueAtTime(fclamp(58), t + dur);
+  var sg = A.ctx.createGain();
+  sg.gain.setValueAtTime(0.0001, t);
+  sg.gain.exponentialRampToValueAtTime(0.45, t + 0.4);
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.2);
+  sub.connect(sg); sg.connect(head);
+  sub.start(t); sub.stop(t + dur + 0.25);
+  srcs.push(sub);
+
+  // air-raid wash
+  var nb = bp(1100, 1.1);
+  var ng = A.ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t);
+  ng.gain.exponentialRampToValueAtTime(0.13, t + 0.3);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  nb.connect(ng); ng.connect(head);
+  var ns = noise(t, dur + 0.02, 1.0); ns.connect(nb); srcs.push(ns);
+
+  voice(head, srcs);
+}
+
+/* The detonation. This is the loudest thing in the game and the only cue
+   allowed to own the mix for a full second — it ducks the music hard and
+   claims two slots from the boom pool so a dogfight underneath it cannot
+   starve the tail. The shape is crack -> sub drop -> long rumble, which is
+   what a distant airburst actually does: the report arrives, the ground
+   shock follows, then several seconds of decaying roar. */
+export function nukeBoom() {
+  if (!A.ready || A.muted) return;
+  var t = now();
+  if (t - lastNukeBoomT < 1.2) return;
+  if (A.boomVoices >= MAX_BOOM - 2 || !budget(14)) return;
+  lastNukeBoomT = t;
+  t += 0.002;
+
+  var dur = 3.6;
+  var head = gainNode(0.95);
+  head.connect(A.sfxGain);
+  var srcs = [];
+  duckPump(t, 0.55, 1.6);
+
+  // --- 1. the crack: a bright 50ms transient, the shock front arriving
+  var ch = hp(1800);
+  var cg = pluck(t, 0.7, 0.05, 0.0012);
+  ch.connect(cg); cg.connect(head);
+  var cs = noise(t, 0.07, 1.6); cs.connect(ch); srcs.push(cs);
+
+  // --- 2. sub drop: 70Hz walked down to the floor over 1.2s
+  var so = osc('sine', 70, t);
+  so.frequency.exponentialRampToValueAtTime(fclamp(18), t + 1.2);
+  var sg = A.ctx.createGain();
+  sg.gain.setValueAtTime(0.0001, t);
+  sg.gain.exponentialRampToValueAtTime(1.0, t + 0.03);
+  sg.gain.exponentialRampToValueAtTime(0.35, t + 0.9);
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.9);
+  so.connect(sg); sg.connect(head);
+  so.start(t); so.stop(t + 1.95);
+  srcs.push(so);
+
+  // --- 3. mid punch, so it hits the chest and not just the floor
+  var mo = osc('triangle', 180, t);
+  mo.frequency.exponentialRampToValueAtTime(fclamp(42), t + 0.3);
+  var mg = pluck(t, 0.6, 0.55, 0.004);
+  mo.connect(mg); mg.connect(head);
+  mo.start(t); mo.stop(t + 0.6);
+  srcs.push(mo);
+
+  // --- 4. the rumble: two noise layers at different rates through a lowpass
+  // closing slowly, which is what turns a bang into a rolling roar
+  var rf = lp(1800, 1.1);
+  rf.frequency.setValueAtTime(fclamp(1800), t);
+  rf.frequency.exponentialRampToValueAtTime(fclamp(220), t + 1.4);
+  rf.frequency.exponentialRampToValueAtTime(fclamp(60), t + dur);
+  var rg = A.ctx.createGain();
+  rg.gain.setValueAtTime(0.0001, t);
+  rg.gain.exponentialRampToValueAtTime(0.9, t + 0.05);
+  rg.gain.exponentialRampToValueAtTime(0.45, t + 1.1);
+  rg.gain.exponentialRampToValueAtTime(0.12, t + 2.4);
+  rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  rf.connect(rg); rg.connect(head);
+  var r1 = noise(t, dur + 0.05, 0.55); r1.connect(rf); srcs.push(r1);
+  var r2 = noise(t, dur + 0.05, 0.22); r2.connect(rf); srcs.push(r2);
+
+  // --- 5. debris tail: same jittery stepped-gain trick boom() uses
+  var dh = hp(900);
+  var dg = A.ctx.createGain();
+  dg.gain.setValueAtTime(0.0001, t + 0.1);
+  var steps = 14, dDur = dur * 0.8;
+  for (var i = 0; i < steps; i++) {
+    var it = t + 0.1 + (i / steps) * dDur;
+    var amp = 0.3 * (1 - i / steps) * (0.3 + Math.random() * 0.7);
+    dg.gain.setTargetAtTime(Math.max(0.0002, amp), it, dDur / (steps * 3));
+  }
+  dg.gain.setTargetAtTime(0.0001, t + 0.1 + dDur, 0.12);
+  dh.connect(dg); dg.connect(head);
+  var ds = noise(t + 0.1, dDur + 0.2, 1.3); ds.connect(dh); srcs.push(ds);
+
+  A.boomVoices += 2;
+  setTimeout(function () { A.boomVoices -= 2; }, (dur + 0.2) * 1000);
+  voice(head, srcs);
+}
+
+/* Fallout crackle. Called every frame while the player is in the ring, so
+   it self-throttles to ~12 rolls/sec and fires probabilistically — level
+   squared, which gives roughly 3 clicks/sec at the core edge and near
+   silence at the fringe, i.e. the rate itself reads as the dose. */
+export function geiger(level) {
+  if (!A.ready || A.muted) return;
+  if (!(level > 0.05)) return;
+  var t = now();
+  if (t - lastGeigerT < 0.08) return;
+  lastGeigerT = t;
+  if (Math.random() > 0.25 * level * level) return;
+  if (!budget(2)) return;
+  t += 0.002;
+
+  var head = gainNode(0.42);
+  var pn = panner((Math.random() * 2 - 1) * 0.6);
+  if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
+  var srcs = [];
+
+  var f = bp(3200 + Math.random() * 2600, 9);
+  var g = pluck(t, 0.5, 0.022, 0.0008);
+  f.connect(g); g.connect(head);
+  var ns = noise(t, 0.03, 1.8); ns.connect(f); srcs.push(ns);
+
+  if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, 300);
+  voice(head, srcs);
+}

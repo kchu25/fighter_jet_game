@@ -791,6 +791,67 @@ export const MODELS = (function () {
     return M;
   }
 
+  /* ==================================================================== BOMB
+     Free-fall nuclear warhead: blunt rounded nose at +z, a fat gunmetal
+     casing with two raised lifting collars, a hot warning stripe around the
+     mid-body, and four boxy swept fins in a cruciform at -z. Drawn nose-down
+     by the caller. Only ever seen falling fast and small, so kept lean. */
+  function buildBomb() {
+    var M = Mesh();
+    var STEEL = [0.255, 0.270, 0.300];  // dull gunmetal casing
+    var STEEL2 = [0.190, 0.202, 0.228]; // second flank value
+    var NOSE = [0.105, 0.112, 0.132];   // darker ballistic nose cone
+    var NOSE2 = [0.070, 0.076, 0.092];
+    var COLLAR = [0.345, 0.360, 0.395]; // raised band rings
+    var DARK = [0.042, 0.046, 0.058];   // tail cap / shadowed detail
+    var FIN = [0.165, 0.176, 0.205];
+    var HOT = [0.92, 0.22, 0.06];       // warning stripe (red-amber)
+
+    var N = 8, PH = PI / 8;
+    function sec(z, r) { return ringXY(0, 0, z, r, r, N, PH); }
+
+    /* casing loft, nose at +z. The two rings either side of z=0 sit a hair
+       proud so the warning stripe reads as painted-on banding. */
+    var S = [
+      sec(29.0, 2.4),
+      sec(26.5, 4.9),
+      sec(21.0, 6.8),
+      sec(14.0, 7.5),
+      sec(4.0, 7.5),
+      sec(0.2, 7.62),
+      sec(-4.0, 7.62),
+      sec(-12.0, 7.4),
+      sec(-19.0, 7.0),
+      sec(-25.0, 5.4)
+    ];
+    var COL = [NOSE, NOSE2, NOSE, STEEL, STEEL, HOT, STEEL, STEEL2, DARK];
+    for (var i = 0; i < S.length - 1; i++)
+      M.skin(S[i], S[i + 1], COL[i], shade(COL[i], 0.78));
+    M.capCenter(S[0], NOSE2, [0, 0, 1]);   // blunt rounded tip at z=30
+    M.capCenter(S[9], DARK);
+
+    // two raised lifting collars clamped around the casing
+    [[12.0, 9.0, 7.5], [-13.0, -16.5, 7.3]].forEach(function (c) {
+      var zF = c[0], zR = c[1], rIn = c[2], rOut = rIn + 1.1;
+      M.skin(sec(zF, rOut), sec(zF, rIn), COLLAR);       // forward annulus
+      M.skin(sec(zF, rOut), sec(zR, rOut), COLLAR, shade(COLLAR, 0.74));
+      M.skin(sec(zR, rIn), sec(zR, rOut), shade(COLLAR, 0.62));
+    });
+
+    // conduit raceway running along the spine to the fuze well
+    M.box(0, 8.1, 6.0, 2.6, 2.2, 16, STEEL2, COLLAR);
+
+    // four boxy swept fins in a cruciform
+    [[1, 0], [0, 1], [-1, 0], [0, -1]].forEach(function (d) {
+      var ux = d[0], uy = d[1], wx = -d[1], wy = d[0], t = 1.1;
+      function p(rad, z) { return [ux * rad + wx * t, uy * rad + wy * t, z]; }
+      M.plate(p(6.5, -9), p(13.2, -17), p(13.2, -28), p(4.2, -28),
+        [-wx, -wy, 0], t * 2, FIN, STEEL2);
+    });
+
+    return M;
+  }
+
   /* ================================================================== LANCER
      Telegraphed sniper: a mid-size angular gunship built around one long rail
      barrel. Purple accents; charge glow attaches at the muzzle. */
@@ -1169,7 +1230,8 @@ export const MODELS = (function () {
   /* ==================================================================== emit */
   var jet = buildJet(), drone = buildDrone(), cruiser = buildCruiser(),
     boss = buildBoss(), crate = buildCrate(), shard = buildShard(),
-    striker = buildStriker(), mine = buildMine(), lancer = buildLancer(),
+    striker = buildStriker(), mine = buildMine(), bomb = buildBomb(),
+    lancer = buildLancer(),
     carrier = buildCarrier(), dreadnought = buildDreadnought(),
     wasp = buildWasp(), ravager = buildRavager(), leviathan = buildLeviathan();
 
@@ -1179,6 +1241,7 @@ export const MODELS = (function () {
     cruiser: cruiser.build(),
     striker: striker.build(),
     mine: mine.build(),
+    bomb: bomb.build(),
     lancer: lancer.build(),
     wasp: wasp.build(),
     ravager: ravager.build(),

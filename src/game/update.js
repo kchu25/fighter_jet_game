@@ -9,6 +9,7 @@ import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, expl
          carrierLaunch, carrierVolley, dreadLance, dreadWall,
          sporeBarrage, levBirth, levLance, pushComms } from './combat.js';
 import { directorTick } from './director.js';
+import { nukeTick } from './nuke.js';
 import { gameOver } from '../main.js';
 
 /* ------------------------------------------------------------------ allies
@@ -258,6 +259,9 @@ export function update(dt){
     }
   }
   AUDIO.swarm && AUDIO.swarm(swarmNear);
+  /* nuclear strikes. Deliberately after the enemy loop, never inside it:
+     a detonation splices S.enemies to vaporise everything at ground zero. */
+  nukeTick(dt);
 
   /* S.boss — one object, three behaviour sets keyed by b.type. The shared
      skeleton (approach to a hold depth, phase from hp thirds, listing, rage
@@ -394,6 +398,9 @@ export function update(dt){
      tracers are real player-side shots, combo/score untouched by their loss. */
   for(let i=S.allies.length-1;i>=0;i--){
     const a=S.allies[i]; a.t+=dt;
+    /* caught in a fireball — nuke.js raises the flag, the existing scripted
+       death owns everything after it */
+    if(a.nuked){ a.nuked=false; if(a.state!=='dying'){ allyDown(a); continue; } }
     if(a.state==='join'){
       /* fast climb-in from behind/below the camera to station on your wing */
       a.z += (a.stz-a.z)*Math.min(1,dt*2.6);

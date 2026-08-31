@@ -13,6 +13,7 @@ import { S, COL, EASE_CALM } from './state.js';
 import { spawnBoss, spawnCruiser, spawnDrone, spawnCrate, spawnAllies,
          spawnStriker, spawnMine, spawnLancer, spawnWasp, spawnRavager,
          spawnSwarm, pushComms } from './combat.js';
+import { nukeSchedule } from './nuke.js';
 
 const COST = { drone: 1, cruiser: 2.5, striker: 1.5, mine: .75, lancer: 2, wasp: .5, ravager: 2.5, swarm: 1.25 };
 function aliveCost(){ let c=0; for(const e of S.enemies) c+=COST[e.k]||1; return c; }
@@ -103,6 +104,10 @@ const FORMS = [
 
 /* ------------------------------------------------------------------ director */
 export function directorTick(dt, easeP){
+  /* strikes run on their own clock alongside the enemy budget — a nuclear
+     column is terrain, not a spawn, so it deliberately does not consume
+     threat and the two can (and should) land on you at once */
+  nukeSchedule(dt);
   const alive = aliveCost();
   S.threat = alive;
   const q = quality();

@@ -3,10 +3,33 @@ import { clamp, css } from '../core/utils.js';
 import { S, COL, FOVY } from '../game/state.js';
 import { h2d, W, H, DPR } from './gl.js';
 import { lockOn } from '../game/combat.js';
+import { coreR, falloutR } from '../game/nuke.js';
 import { toScreen } from './scene-draw.js';
 import { mouse } from '../game/input.js';
 
 /* ------------------------------------------------------------------ hud */
+/* Screen/world handedness, because it is the one thing that will silently
+   invert this whole feature: the camera's right vector is -X (see aimAt in
+   combat.js), so world +X is screen LEFT — and 'a' pushes +vx. A safe side of
+   world +X therefore reads out as "BREAK LEFT" and is flown with the A key. */
+function breakWord(safe){ return safe>0 ? 'BREAK LEFT' : 'BREAK RIGHT'; }
+
+/* dir: +1 draws chevrons marching screen-right, -1 screen-left */
+function chevrons(cx,cy,dir,size,n,alpha,color){
+  h2d.strokeStyle=color; h2d.lineWidth=size*.22; h2d.lineCap='round';
+  h2d.shadowColor=color; h2d.shadowBlur=16;
+  for(let i=0;i<n;i++){
+    h2d.globalAlpha = alpha*(.35+.65*Math.abs(Math.sin(S.T*6 - i*.8)));
+    const ox = cx + dir*i*size*.9;
+    h2d.beginPath();
+    h2d.moveTo(ox-dir*size*.34, cy-size*.5);
+    h2d.lineTo(ox+dir*size*.34, cy);
+    h2d.lineTo(ox-dir*size*.34, cy+size*.5);
+    h2d.stroke();
+  }
+  h2d.shadowBlur=0; h2d.globalAlpha=1; h2d.lineCap='butt';
+}
+
 export function bar(x,y,w,h,v,c){
   h2d.fillStyle='rgba(255,255,255,.10)'; h2d.fillRect(x,y,w,h);
   h2d.shadowColor=c; h2d.shadowBlur=10; h2d.fillStyle=c;
@@ -155,6 +178,54 @@ export function drawHUD(){
     h2d.fillText(S.bossWarnName||'MOTHERSHIP INBOUND', W/2, H*.28+34);
     h2d.shadowBlur=0; h2d.globalAlpha=1;
   }
+  // ---- nuclear strike: the break call, and a live in-the-column readout.
+  // The safe side is always -sign(column x): placement is capped at ±175 and
+  // the envelope is ±238, so the far side is the one that always has room —
+  // steering by the player's own offset would happily advise the pinned side.
+  if(S.nukes && S.nukes.length){
+    let nk=null, nz=1e9;
+    for(const k of S.nukes){ if(k.z<-420) continue; if(k.z<nz){ nz=k.z; nk=k; } }
+    if(nk){
+      const safe = nk.x>=0 ? -1 : 1, sdir = safe>0 ? -1 : 1;
+      const live = nk.state==='cloud' && nk.z<900;
+      const ad = Math.abs(S.P.x-nk.x);
+      const inCore = live && ad<coreR(nk);
+      const inFall = live && !inCore && ad<falloutR(nk);
+
+      if(S.nukeWarn>0){
+        h2d.textAlign='center';
+        h2d.globalAlpha=clamp(S.nukeWarn/1.6,0,1)*(Math.floor(S.T*9)%2?1:.45);
+        h2d.fillStyle=css(COL.amber); h2d.shadowColor=css(COL.amber); h2d.shadowBlur=26;
+        h2d.font='bold '+Math.min(46,W*.045)+'px "Courier New",monospace';
+        h2d.fillText('NUCLEAR LAUNCH DETECTED', W/2, H*.20);
+        h2d.fillStyle=css(COL.red); h2d.shadowColor=css(COL.red);
+        h2d.font='bold '+Math.min(34,W*.034)+'px "Courier New",monospace';
+        h2d.fillText(breakWord(safe), W/2, H*.20+42);
+        h2d.shadowBlur=0; h2d.globalAlpha=1;
+        chevrons(W/2+sdir*Math.min(230,W*.20), H*.20+32, sdir,
+          Math.min(30,W*.028), 3, .95, css(COL.red));
+      }
+      if(inCore || inFall){
+        h2d.textAlign='center';
+        const c = inCore?COL.red:COL.green;
+        h2d.globalAlpha = Math.floor(S.T*11)%2?1:.5;
+        h2d.fillStyle=css(c); h2d.shadowColor=css(c); h2d.shadowBlur=22;
+        h2d.font='bold '+Math.min(40,W*.038)+'px "Courier New",monospace';
+        h2d.fillText(inCore?'IN THE BLAST — '+breakWord(safe):'FALLOUT — KEEP GOING',
+          W/2, H*.66);
+        h2d.shadowBlur=0; h2d.globalAlpha=1;
+        chevrons(W/2+sdir*Math.min(250,W*.22), H*.66-12, sdir,
+          Math.min(28,W*.026), 3, 1, css(c));
+      }
+    }
+  }
+  // radiation dose — sits under the hull bars, only present when exposed
+  if(S.rad>.02){
+    h2d.textAlign='left'; h2d.font='11px "Courier New",monospace';
+    h2d.fillStyle=css(COL.green); h2d.globalAlpha=.55+.45*Math.abs(Math.sin(S.T*7));
+    h2d.fillText('RAD', m, by+2); h2d.globalAlpha=1;
+    bar(m+30, by-6, bw-30, 5, S.rad, css(COL.green));
+  }
   if(S.tipT>0){
     h2d.globalAlpha=Math.min(1,S.tipT/1.2); h2d.textAlign='center';
     h2d.font='12px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
@@ -163,6 +234,20 @@ export function drawHUD(){
   }
   // damage / pickup S.flash
   if(S.flash>.002){ h2d.globalAlpha=S.flash; h2d.fillStyle=css(S.flashC); h2d.fillRect(0,0,W,H); h2d.globalAlpha=1; }
+  // detonation whiteout. Kept off S.flash on purpose: that channel decays
+  // superlinearly so ordinary hits strobe and clear, whereas the Teller
+  // double-flash has to hang long enough to actually blind.
+  if(S.nukeFl>.004){
+    h2d.globalAlpha=clamp(S.nukeFl,0,1);
+    h2d.fillStyle='#fff6e4'; h2d.fillRect(0,0,W,H); h2d.globalAlpha=1;
+  }
+  // fallout wash — sickly green crowding in from the frame edges
+  if(S.rad>.02){
+    h2d.globalAlpha=clamp(S.rad,0,1)*.45;
+    h2d.strokeStyle=css(COL.green); h2d.lineWidth=76;
+    h2d.shadowColor=css(COL.green); h2d.shadowBlur=68;
+    h2d.strokeRect(0,0,W,H); h2d.shadowBlur=0; h2d.globalAlpha=1;
+  }
   if(S.hitT>0){ h2d.globalAlpha=S.hitT*.9; h2d.strokeStyle=css(COL.red); h2d.lineWidth=26;
     h2d.shadowColor=css(COL.red); h2d.shadowBlur=50; h2d.strokeRect(0,0,W,H);
     h2d.shadowBlur=0; h2d.globalAlpha=1; }
