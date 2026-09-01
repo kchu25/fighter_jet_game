@@ -60,8 +60,15 @@ export const S = {
      rad is this frame's fallout exposure 0..1, and nukeFl is the detonation
      whiteout — a SEPARATE channel from S.flash because flash is deliberately
      tuned to strobe-and-clear and the Teller double-flash has to linger long
-     enough to actually blind. */
-  nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0,
+     enough to actually blind.
+     Warheads come in two tiers (see nuke.js): the ordinary tactical round, and
+     the HYDROGEN round — same geometry contract, bigger everything. nukeFlH is
+     how much of this frame's whiteout came from a hydrogen detonation, which is
+     what lets the HUD tint it hotter and punch the break call back through it.
+     nukeSess is a live barrage session (a single walk that keeps extending) or
+     null; nukeSessT is the wall clock to the next one. */
+  nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0, nukeFlH: 0,
+  nukeSess: null, nukeSessT: 0,
   /* the first-boss set piece, once per run: 0 armed, 1 release called, 2 spent */
   bossNuke: 0, bossNukeT: 0,
   tipMsg: TIP_DEFAULT,
@@ -90,7 +97,11 @@ export function reset(){
   /* nukeSchedule also gates on sector>=2, so this is only the floor on how
      early the first strike can arrive: long enough to have flown a little,
      short enough that even a brief run sees one */
-  S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0;
+  S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0; S.nukeFlH=0;
+  /* Barrage sessions are the rare escalation, not the baseline: this is the
+     floor on the first one, long enough that a run has settled into its rhythm
+     before the rhythm is taken away. nukeSchedule also gates them on sector. */
+  S.nukeSess=null; S.nukeSessT=rnd(62,105);
   S.bossNuke=0; S.bossNukeT=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */

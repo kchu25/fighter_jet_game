@@ -183,9 +183,19 @@ export function scene5(u, dt) {
         part(x, y, rnd(-30, 30), rnd(-60, 20), rnd(0.7, 1.4),
           rnd(8, 18) * (sc + 0.3), Math.random() < 0.35 ? C.orange : C.smoke,
           { add: Math.random() < 0.35, d: 0.97, gr: 18 });
-    } else if (i % 2 === 0)
-      part(x, y + 30 * sc, rnd(-20, 20), 185 + 150 * q, rnd(0.4, 0.9),
-        rnd(5, 13) * (sc + 0.30), i % 4 ? C.cyan : C.white, { d: 0.93, gr: 12 });
+    } else {
+      /* Sub-step the contrail.  These climb at ~700 px/s by the top of
+         the arc, so one particle per frame lands them ~12 px apart and
+         the trail reads as a dotted line rather than a column of gas.
+         Lay three down the distance the jet covered this frame. */
+      const dy = (m.climb + 244 * qc) / 60;
+      for (let k = 0; k < 3; k++) {
+        const f = k / 3;
+        part(x + rnd(-2, 2), y + 30 * sc + dy * f, rnd(-20, 20), 185 + 150 * q,
+          rnd(0.4, 0.9), rnd(5, 13) * (sc + 0.30), i % 4 ? C.cyan : C.white,
+          { d: 0.93, gr: 12, a: 0.5 });
+      }
+    }
   }
 
   drawParts(false); drawParts(true);

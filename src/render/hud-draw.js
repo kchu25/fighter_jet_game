@@ -182,11 +182,15 @@ export function drawHUD(){
   // The safe side is always -sign(column x): placement is capped at ±175 and
   // the envelope is ±238, so the far side is the one that always has room —
   // steering by the player's own offset would happily advise the pinned side.
+  /* hoisted: the whiteout at the bottom of this function re-draws the break
+     call on top of itself, and it must be the SAME call, not a recomputed one */
+  let bSafe=0, bDir=0, bHyd=0;
   if(S.nukes && S.nukes.length){
     let nk=null, nz=1e9;
     for(const k of S.nukes){ if(k.z<-420) continue; if(k.z<nz){ nz=k.z; nk=k; } }
     if(nk){
       const safe = nk.x>=0 ? -1 : 1, sdir = safe>0 ? -1 : 1;
+      bSafe=safe; bDir=sdir; bHyd=nk.hyd?1:0;
       const live = nk.state==='cloud' && nk.z<900;
       const ad = Math.abs(S.P.x-nk.x);
       const inCore = live && ad<coreR(nk);
@@ -197,7 +201,7 @@ export function drawHUD(){
         h2d.globalAlpha=clamp(S.nukeWarn/1.6,0,1)*(Math.floor(S.T*9)%2?1:.45);
         h2d.fillStyle=css(COL.amber); h2d.shadowColor=css(COL.amber); h2d.shadowBlur=26;
         h2d.font='bold '+Math.min(46,W*.045)+'px "Courier New",monospace';
-        h2d.fillText('NUCLEAR LAUNCH DETECTED', W/2, H*.20);
+        h2d.fillText(bHyd?'THERMONUCLEAR RELEASE':'NUCLEAR LAUNCH DETECTED', W/2, H*.20);
         h2d.fillStyle=css(COL.red); h2d.shadowColor=css(COL.red);
         h2d.font='bold '+Math.min(34,W*.034)+'px "Courier New",monospace';
         h2d.fillText(breakWord(safe), W/2, H*.20+42);
@@ -219,6 +223,62 @@ export function drawHUD(){
       }
     }
   }
+  /* ---- the lane strip.
+     The 3D gate rails in scene-draw.js are additive, and a hydrogen column is
+     bright enough to saturate most of the frame to white — at which point the
+     rails, which are the actual gameplay, are invisible because nothing can be
+     brighter than white. Verified in the preview: at z≈1400 a hydrogen fireball
+     buries them completely.
+     So the corridor is also drawn flat, as a plan view: the full ±BX envelope,
+     every live column's core span in red and its fallout span in green, and
+     your own x as a caret. It is immune to the scene's brightness by
+     construction, and it is the one readout that says exactly where the lane
+     is rather than which way to turn. Only present while columns are live. */
+  if(S.nukes && S.nukes.length){
+    const BXW=238, lw=Math.min(420,W*.34), lx=W/2-lw/2, ly=H*.795, lh=13;
+    /* world +X is screen LEFT (see breakWord) — the strip must agree with the
+       world or it is worse than nothing */
+    const px = wx => lx + lw*(0.5 - clamp(wx/BXW,-1.4,1.4)*0.5);
+    h2d.globalAlpha=.5; h2d.fillStyle='rgba(0,0,0,.55)';
+    h2d.fillRect(lx-4,ly-4,lw+8,lh+8);
+    h2d.strokeStyle='rgba(140,200,225,.55)'; h2d.lineWidth=1;
+    h2d.strokeRect(lx,ly,lw,lh); h2d.globalAlpha=1;
+    for(const k of S.nukes){
+      if(k.z>3000 || k.z<-500) continue;
+      const near=clamp(1-Math.max(0,k.z)/2600, .18, 1);
+      const rc=coreR(k), rf=falloutR(k);
+      const a=px(k.x+rf), b=px(k.x-rf);
+      h2d.globalAlpha=near*.30; h2d.fillStyle=css(COL.green);
+      h2d.fillRect(Math.min(a,b),ly,Math.abs(b-a),lh);
+      const c=px(k.x+rc), d=px(k.x-rc);
+      h2d.globalAlpha=near*.72; h2d.fillStyle=css(COL.red);
+      h2d.fillRect(Math.min(c,d),ly,Math.abs(d-c),lh);
+    }
+    h2d.globalAlpha=1; h2d.fillStyle=css(COL.cyan);
+    h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=10;
+    const cx=px(S.P.x);
+    h2d.beginPath(); h2d.moveTo(cx,ly-5); h2d.lineTo(cx+5,ly-12); h2d.lineTo(cx-5,ly-12);
+    h2d.closePath(); h2d.fill();
+    h2d.fillRect(cx-1,ly,2,lh);
+    h2d.shadowBlur=0;
+  }
+  /* sustained barrage: its own banner, because a session is an EVENT with a
+     start, a length and an end, and the per-strike break call cannot say that.
+     The counter is the promise that it stops — without it the player reads a
+     rolling barrage as "the game is broken now" rather than "survive this". */
+  if(S.nukeSess){
+    const q=S.nukeSess;
+    h2d.textAlign='center';
+    h2d.globalAlpha=(Math.floor(S.T*4)%2?1:.62);
+    h2d.fillStyle=css(COL.red); h2d.shadowColor=css(COL.red); h2d.shadowBlur=24;
+    h2d.font='bold '+Math.min(26,W*.024)+'px "Courier New",monospace';
+    h2d.fillText('SUSTAINED NUCLEAR BARRAGE', W/2, H*.115);
+    h2d.shadowBlur=0; h2d.globalAlpha=.8;
+    h2d.fillStyle=css(COL.amber); h2d.font='bold '+Math.min(16,W*.015)+'px "Courier New",monospace';
+    h2d.fillText(q.armT>0 ? 'RELEASE IN '+q.armT.toFixed(1)
+                          : 'WARHEADS REMAINING  '+q.left+' / '+q.n, W/2, H*.115+22);
+    h2d.globalAlpha=1;
+  }
   // radiation dose — sits under the hull bars, only present when exposed
   if(S.rad>.02){
     h2d.textAlign='left'; h2d.font='11px "Courier New",monospace';
@@ -239,7 +299,26 @@ export function drawHUD(){
   // double-flash has to hang long enough to actually blind.
   if(S.nukeFl>.004){
     h2d.globalAlpha=clamp(S.nukeFl,0,1);
-    h2d.fillStyle='#fff6e4'; h2d.fillRect(0,0,W,H); h2d.globalAlpha=1;
+    /* a hydrogen flash is hotter and cleaner than a fission one — it washes
+       toward pure white rather than the tungsten cream of the tactical round */
+    h2d.fillStyle = S.nukeFlH>.15 ? '#fffdf6' : '#fff6e4';
+    h2d.fillRect(0,0,W,H); h2d.globalAlpha=1;
+    /* THE FAIRNESS VALVE. The hydrogen whiteout holds near-opaque for ~1.3s,
+       which is most of the time between its detonation and its column reaching
+       the band — long enough to genuinely blind, which is the point, and long
+       enough to make the dodge a coin flip, which is not. So the break call is
+       re-drawn ON TOP of the wash in ink, using the SAME safe side computed
+       above. The flash takes the world away; it never takes the dodge away. */
+    if(bDir && S.nukeFl>.28){
+      const a=clamp((S.nukeFl-.28)/.35,0,1);
+      h2d.textAlign='center'; h2d.globalAlpha=a*.92;
+      h2d.fillStyle='#2a0406';
+      h2d.font='bold '+Math.min(52,W*.05)+'px "Courier New",monospace';
+      h2d.fillText(breakWord(bSafe), W/2, H*.44);
+      chevrons(W/2+bDir*Math.min(260,W*.23), H*.44-14, bDir,
+        Math.min(34,W*.032), 3, a, '#2a0406');
+      h2d.globalAlpha=1;
+    }
   }
   // fallout wash — sickly green crowding in from the frame edges
   if(S.rad>.02){

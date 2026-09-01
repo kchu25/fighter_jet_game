@@ -144,14 +144,33 @@ export function silo(c, x, y, w, open, glowCol) {
     const upG = lg(c, 'sl.up', 0, 0, 0, -300, [
       [0.00, rgba(G, 0.42)], [0.35, rgba(G, 0.16)], [1.00, rgba(G, 0)]
     ]);
+    /* Sliced, not one quad.  A single filled trapezoid gives the shaft
+       two crisp diagonal edges against the sky and it reads as a piece
+       of clip-art laid over the shot.  Building it from vertical slices
+       whose alpha follows a cosine across the width gives the beam soft
+       sides, so it reads as light in dusty air. */
+    c.fillStyle = upG;
+    const NS = 17;
+    for (let k = 0; k < NS; k++) {
+      const t0 = k / NS - 0.5, t1 = (k + 1) / NS - 0.5;
+      const tc = (t0 + t1) * 0.5;
+      const w = Math.pow(Math.cos(tc * Math.PI), 1.7);
+      if (w <= 0.004) continue;
+      /* Bleed each slice a hair into its neighbours so the seams do not
+         show as antialiasing gaps — but only a hair, and composited
+         source-over rather than additively, or the overlaps stack into
+         bright stripes and the soft shaft turns into a fan of rays. */
+      const a0 = t0 - 0.22 / NS, a1 = t1 + 0.22 / NS;
+      c.globalAlpha = open * w * 0.72;
+      c.beginPath();
+      c.moveTo(a0 * off * 2.10, SL_D);
+      c.lineTo(a1 * off * 2.10, SL_D);
+      c.lineTo(a1 * off * 4.00, -300);
+      c.lineTo(a0 * off * 4.00, -300);
+      c.closePath();
+      c.fill();
+    }
     c.globalAlpha = open;
-    c.beginPath();
-    c.moveTo(-off * 1.05, SL_D);
-    c.lineTo(off * 1.05, SL_D);
-    c.lineTo(off * 2.6, -300);
-    c.lineTo(-off * 2.6, -300);
-    c.closePath();
-    c.fillStyle = upG; c.fill();
     blob(c, 0, 0, 90 + 120 * open, G, 0.35 * open);
     c.globalAlpha = 1;
     c.restore();

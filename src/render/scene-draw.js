@@ -243,9 +243,12 @@ export function render(){
      +90° pitch stands it on end; the wobble is the casing coning as it falls. */
   for(const k of S.nukes||[]){
     if(k.state!=='fall') continue;
+    /* the hydrogen casing is simply a bigger object in the sky, which is the
+       only tell you get before it lands and the only one you need */
     compose(model, k.x,k.y,k.z,
-      Math.PI/2 + Math.sin(k.spin*.7)*.13, Math.sin(k.spin*.5)*.13, k.spin, 1);
-    litDraw(BOMBMESH, model, [.30,.05,.02], 1);
+      Math.PI/2 + Math.sin(k.spin*.7)*.13, Math.sin(k.spin*.5)*.13, k.spin,
+      k.hyd?2.1:1);
+    litDraw(BOMBMESH, model, k.hyd?[.44,.06,.02]:[.30,.05,.02], 1);
   }
 
   SCENERY.draw();
@@ -510,28 +513,42 @@ function nukeFX(){
   for(const k of S.nukes||[]){
     if(k.state==='fall'){
       /* the warhead itself, so it is trackable against a black sky */
-      sprite(k.x,k.y,k.z, 16, COL.white, .9);
-      sprite(k.x,k.y,k.z, 34, COL.red, .5);
+      const fs = k.hyd?2.0:1;
+      sprite(k.x,k.y,k.z, 16*fs, COL.white, .9);
+      sprite(k.x,k.y,k.z, 34*fs, COL.red, .5);
+      if(k.hyd) sprite(k.x,k.y,k.z, 96, [1,.5,.15], .28);
       continue;
     }
+    /* hy is the ONE tier term in here. Every radius already scales for free
+       through coreR(k); what it cannot carry is height, lifetime and detail
+       count, so those are the only things that read the flag. */
+    const hy  = k.hyd?1:0;
     const x=k.x, z=k.z, age=k.t, g=k.g;
     const e   = 1-(1-g)*(1-g);
-    const hot = clamp(1-age/3.2, 0, 1);          // how molten it still is
+    const hot = clamp(1-age/(3.2+hy*2.6), 0, 1);  // how molten it still is
     const rc  = coreR(k), rf = falloutR(k);
-    const topY = GROUND_Y + 200 + 940*e + Math.min(300, age*46);
+    /* the hydrogen cloud is not just wider, it is much TALLER — a column that
+       leaves the top of the frame is the whole difference in silhouette */
+    const topY = GROUND_Y + (200 + 940*e + Math.min(300, age*46))*(1+hy*1.15);
     const capR = rc*(1.35+.55*e);
 
     /* --- the fireball, before it has climbed into a stem */
-    const fb = clamp(1-age/1.5, 0, 1);
+    const fb = clamp(1-age/(1.5+hy*1.1), 0, 1);
     if(fb>0){
-      const fy = GROUND_Y+130 + (1-fb)*380, fr = rc*(.95+1.5*(1-fb));
+      const fy = GROUND_Y+130 + (1-fb)*380*(1+hy*.9), fr = rc*(.95+1.5*(1-fb));
       sprite(x,fy,z, fr*2.3, [1,.72,.30], fb*fb*1.10);
       sprite(x,fy,z, fr*1.25, [1,.94,.72], fb*fb*1.45);
       sprite(x,fy,z, fr*.55,  COL.white,   fb*1.6);
+      /* the hydrogen fireball keeps a hard white heart long after the tactical
+         one has gone orange — the stage that is still burning, not cooling */
+      if(hy){
+        sprite(x,fy,z, fr*2.9, [1,.55,.16], fb*fb*.55);
+        sprite(x,fy+60,z, fr*.30, COL.white, fb*2.2);
+      }
     }
 
     /* --- stem: narrow at the crater, waisted, flaring up into the cap */
-    const NS=18, stemR=rc*.58;
+    const NS=18+hy*12, stemR=rc*.58;
     for(let i=0;i<NS;i++){
       const u=i/(NS-1);
       const sy = GROUND_Y + u*(topY-GROUND_Y);
@@ -558,25 +575,51 @@ function nukeFX(){
       }
     }
     sprite(x, topY-46, z, capR*1.35, nmix(N_ASH,N_FIRE,hot*.9), .28+.50*hot);
+    /* --- hydrogen only: the skirt and the second, higher cap. A thermonuclear
+       cloud reads as two stacked mushrooms with a flat condensation skirt slung
+       under the lower one, and that silhouette is the whole point of the tier —
+       at a glance you know which bomb just went off. */
+    if(hy){
+      const skY = GROUND_Y + (topY-GROUND_Y)*.34, skR = capR*1.55;
+      for(let i=0;i<16;i++){
+        const a=i/16*6.2832 + S.T*.10 + k.seed;
+        sprite(x+Math.cos(a)*skR, skY, z+Math.sin(a)*skR,
+          capR*.52, nmix(N_ASH,N_EMBER,hot*.45), .16+.20*hot);
+      }
+      const upY = topY + 300*(.4+.6*e), upR = capR*.74;
+      for(let b=0;b<2;b++){
+        const rr=(b?.62:1)*upR, yy=upY+b*104*(.4+.6*e);
+        for(let i=0;i<(b?7:11);i++){
+          const a=i/(b?7:11)*6.2832 + S.T*.13 + b*.9 + k.seed;
+          sprite(x+Math.cos(a)*rr, yy, z+Math.sin(a)*rr,
+            capR*.50*(1+.12*Math.sin(S.T*1.4+i)), nmix(N_ASH,N_EMBER,hot*.6), .18+.24*hot);
+        }
+      }
+      sprite(x, upY-30, z, capR*.95, nmix(N_ASH,N_FIRE,hot*.8), .18+.34*hot);
+    }
 
     /* --- base surge: the dirt ring thrown flat along the deck */
-    const bs=clamp(age/2.4,0,1), br=rc*(.8+2.5*bs);
-    for(let i=0;i<12;i++){
-      const a=i/12*6.2832+k.seed;
+    const bs=clamp(age/(2.4+hy*1.4),0,1), br=rc*(.8+2.5*bs);
+    for(let i=0;i<12+hy*8;i++){
+      const a=i/(12+hy*8)*6.2832+k.seed;
       sprite(x+Math.cos(a)*br, GROUND_Y+34+46*bs, z+Math.sin(a)*br,
         rc*.8, nmix(N_ASH,N_DIRT,hot*.6), (1-bs)*.45);
     }
 
     /* --- internal lightning: bright pops inside the column while it burns */
-    if(hot>.15 && Math.random()<.4)
-      sprite(x+rnd(-rc,rc), GROUND_Y+rnd(120,topY-GROUND_Y), z+rnd(-rc,rc),
-        rnd(40,115), [1,.90,.70], rnd(.3,.9)*hot);
+    for(let i=0;i<1+hy*2;i++)
+      if(hot>.15 && Math.random()<.4)
+        sprite(x+rnd(-rc,rc), GROUND_Y+rnd(120,topY-GROUND_Y), z+rnd(-rc,rc),
+          rnd(40,115)*(1+hy*.8), [1,.90,.70], rnd(.3,.9)*hot);
 
-    /* --- blast front, still outrunning the cloud */
+    /* --- blast front, still outrunning the cloud. The hydrogen front travels
+       SLOWER (HYD_WAVE) and much further, so the ring hangs in the frame for
+       seconds instead of flicking past — the sound arriving late is the cue. */
     if(!k.waveHit && k.wave>60){
-      const wa=clamp(1-k.wave/4200,0,1)*.8;
-      ring(x, GROUND_Y+340, z, k.wave, 14, [.86,.93,1], wa, 26);
-      ring(x, GROUND_Y+340, z, k.wave*.86, 7, [1,.88,.62], wa*.6, 20);
+      const wa=clamp(1-k.wave/(hy?7000:4200),0,1)*(hy?1.0:.8);
+      ring(x, GROUND_Y+340, z, k.wave, 14+hy*10, [.86,.93,1], wa, 26);
+      ring(x, GROUND_Y+340, z, k.wave*.86, 7+hy*6, [1,.88,.62], wa*.6, 20);
+      if(hy) ring(x, GROUND_Y+140, z, k.wave*.62, 9, [1,.72,.34], wa*.45, 20);
     }
 
     /* --- the gates. Everything above is spectacle; THESE are the gameplay.
@@ -586,9 +629,12 @@ function nukeFX(){
        through a sky already full of fire. */
     if(z>-320 && z<3200){
       const al=clamp(1-Math.abs(z)/2400, .14, .85);
+      /* the hydrogen gates run floor-to-well-above-the-ceiling and pulse, so
+         they stay readable through a whiteout that is nearly opaque */
+      const gt = hy ? 1+.35*Math.sin(S.T*9) : 1;
       for(const s of [-1,1]){
-        beam(x+s*rc, GROUND_Y, z, x+s*rc, 430, z, 6.5, [1,.20,.26], al*.95);
-        beam(x+s*rf, GROUND_Y, z, x+s*rf, 300, z, 3.5, [.50,1,.30], al*.40);
+        beam(x+s*rc, GROUND_Y, z, x+s*rc, 430+hy*380, z, (6.5+hy*4)*gt, [1,.20,.26], al*.95);
+        beam(x+s*rf, GROUND_Y, z, x+s*rf, 300+hy*180, z, 3.5+hy*2, [.50,1,.30], al*.40);
       }
     }
   }

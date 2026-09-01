@@ -20,12 +20,12 @@ import { jet } from './jet.js';
 import { pilot } from './pilot.js';
 import { silo } from './silo.js';
 import { cockpit } from './cockpit.js';
-import { cloudBank, crowd } from './atmosphere.js';
+import { cloudBank } from './atmosphere.js';
 import { waspSwarm, leviathan } from './bio.js';
 
 export const CINE_ART = {
   rocket: rocket, warship: warship, jet: jet, pilot: pilot,
-  cockpit: cockpit, silo: silo, cloudBank: cloudBank, crowd: crowd,
+  cockpit: cockpit, silo: silo, cloudBank: cloudBank,
   waspSwarm: waspSwarm, leviathan: leviathan
 };
 

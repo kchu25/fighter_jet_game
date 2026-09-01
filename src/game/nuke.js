@@ -59,86 +59,181 @@ const MAX_OFF = 175;
    To make a walk harder, add warheads (more reversals) — never close the gap. */
 const WALK_Z = [1900, 2350];
 
+/* ===================================================== the hydrogen tier ===
+   A second, rarer, much larger warhead. It is NOT a separate entity: it sets
+   k.hyd and every radius, damage, timing and visual term below reads the flag,
+   so it flows through the same geometry contract both renderers already use.
+   Forking the code path would have meant forking the fairness argument too.
+
+   THE PLACEMENT GEOMETRY, WORKED OUT — this is the part that has to be right.
+   A column at k.x with lethal radius rc kills for |x-k.x| < rc, and the flight
+   envelope is ±BX(238). Placement is always on one side, so the survivable
+   lane is the far side and its width is:
+
+       lane = (k.x - rc) - (-BX) = BX + k.x - rc
+
+   which INCREASES with k.x. That is the opposite of the intuition that a fat
+   column should be pulled inboard: moving it in eats the far-side lane from
+   the wrong end. The number that guarantees fairness is the MINIMUM offset,
+   not the maximum, and the tactical round's real guarantee is its floor of
+   115 (lane = 238+115-200 = 153, its worst case).
+
+   So the hydrogen round is placed FURTHER OUT, not nearer in, and its floor is
+   chosen to preserve a comparable lane against a 300 core:
+
+       HYD_OFF[0]=196  ->  lane = 238+196-300 = 134   (worst case)
+       HYD_OFF[1]=268  ->  lane = 238+268-300 = 206   (best case)
+
+   134 is a real lane — the jet is ~46 wide and crosses the corridor at ~660/s
+   — but it is pinned against the wall, so the dodge is now "commit all the way
+   out", not "drift to the quiet half". Meanwhile the core still covers
+   [-104, +496] at the worst case, i.e. the whole centre and the whole near
+   half: there is nowhere to hide but that outboard strip.
+
+   Fallout gets its own, TIGHTER multiplier — 1.28 against the tactical 1.74 —
+   and this is the correction that makes the tier work at all. On the shared
+   1.74 the hydrogen annulus reached 522 and swallowed the far wall, so every
+   round doses you no matter how well you fly. Measured: a bot with a perfect
+   0% core-hit record still took 338 damage across one 15-warhead session
+   against a 170-point pool, i.e. it died twice over having never once been in
+   a fireball. That is an HP tax, which is the one thing this weapon must not
+   be. At 1.28 the annulus is 384 and the floor placement leaves a 50-wide
+   strip against the far wall that is genuinely clean:
+
+       offset 196 -> lane [-238,-104] (134 wide), clean [-238,-188] (50 wide)
+       offset 268 -> lane [-238, -32] (206 wide), clean [-238,-116] (122 wide)
+
+   So the hydrogen round is the one that punishes a HALF break. It is the
+   fireball that grew, not the ring; the fallout damage stays high precisely
+   because there is now somewhere to stand that avoids all of it. */
+const HYD_FALL_MUL = 1.28;
+const HYD_CORE   = 300;
+const HYD_GROW   = 1.45;  // slower bloom; still full width ~0.5s before the band
+const HYD_DMG    = 75,  HYD_DMG_MAX = 205;   // dead centre is fatal, and should be
+const HYD_FALL   = 22,  HYD_FALL_MAX = 66;
+const HYD_WAVE   = 1500;  // slower front: flash first, wall of sound much later
+const HYD_OFF    = [196, 268];
+/* Wider than WALK_Z for the same reason WALK_Z is wide: the lane you must
+   reach is further outboard AND the front shoves harder (620..900), so the
+   reversal costs more. 2500 buys 2.17s of scroll against a ~0.65s traverse. */
+const HYD_WALK_Z = [2500, 3050];
+
 export function coreR(k){
   /* eased so the fireball punches out fast and then settles */
   const g = k.g||0, e = 1-(1-g)*(1-g);
-  return 62 + (CORE_R-62)*e;
+  const R = k.hyd ? HYD_CORE : CORE_R, r0 = k.hyd ? 96 : 62;
+  return r0 + (R-r0)*e;
 }
-export function falloutR(k){ return coreR(k)*FALL_MUL; }
+export function falloutR(k){ return coreR(k)*(k.hyd?HYD_FALL_MUL:FALL_MUL); }
+
+function mkWarhead(x, z, hyd, extra){
+  const k = {
+    x: x, y: REL_Y, z: z,
+    vy: REL_VY, spin: rnd(0,6.28), seed: rnd(0,100),
+    state:'fall', t:0, g:0, hitT:0, radT:0,
+    wave:0, waveHit:false, trailT:0, hyd: !!hyd
+  };
+  if(extra) Object.assign(k, extra);
+  return k;
+}
+/* the x-placement for a tier, on a given side */
+function offFor(hyd, side){
+  return side * (hyd ? rnd(HYD_OFF[0], HYD_OFF[1]) : rnd(115, MAX_OFF));
+}
+/* the gap between two adjacent warheads: whenever EITHER of them is hydrogen
+   the pair is spaced on the hydrogen budget, because the reversal is only as
+   easy as the harder of the two lanes */
+function gapFor(a, b){
+  const g = (a||b) ? HYD_WALK_Z : WALK_Z;
+  return rnd(g[0], g[1]);
+}
 
 /* ------------------------------------------------------------------ spawn */
 /* n warheads walked across the corridor: the first picks a side, each
    subsequent one lands on the OPPOSITE side and deeper, so surviving the
    first dodge immediately demands the reverse dodge. */
-export function nukeStrike(n){
+export function nukeStrike(n, hydP){
   if(!S.nukes) S.nukes=[];
+  hydP = hydP||0;
   let side = Math.random()<.5?-1:1;
   let z = SPAWN_Z+REL_Z;
+  let prevH=false, anyH=false;
   for(let i=0;i<n;i++){
-    S.nukes.push({
-      x: side*rnd(115,MAX_OFF), y: REL_Y, z: z,
-      vy: REL_VY, spin: rnd(0,6.28), seed: rnd(0,100),
-      state:'fall', t:0, g:0, hitT:0, radT:0,
-      wave:0, waveHit:false, trailT:0
-    });
+    /* per-warhead tier roll, so a walk can be all-tactical, all-hydrogen, or
+       a mix — a mixed walk is the nastiest read, because the lane you have to
+       reach moves outboard without warning halfway through */
+    const h = Math.random() < hydP;
     /* gaps are jittered rather than uniform so a walk cannot be dodged on a
        metronome — you have to keep reading the corridor, not count beats */
-    z += rnd(WALK_Z[0], WALK_Z[1]);
+    if(i>0) z += gapFor(h, prevH);
+    S.nukes.push(mkWarhead(offFor(h, side), z, h));
+    prevH = h; anyH = anyH || h;
     side = -side;
   }
-  S.nukeWarn = 4.2;
-  pushComms('CONTROL','NUCLEAR LAUNCH DETECTED — BREAK AND CLEAR',1.0);
-  AUDIO.nukeAlert && AUDIO.nukeAlert();
+  S.nukeWarn = anyH ? 5.2 : 4.2;
+  pushComms('CONTROL', anyH ? 'THERMONUCLEAR RELEASE — BREAK NOW, BREAK HARD'
+                            : 'NUCLEAR LAUNCH DETECTED — BREAK AND CLEAR', 1.0);
+  AUDIO.nukeAlert && AUDIO.nukeAlert(anyH?1:0);
 }
 
 /* ------------------------------------------------------------- detonation */
 function detonate(k){
   k.state='cloud'; k.t=0; k.g=0; k.y=GROUND_Y;
   const x=k.x, y=GROUND_Y, z=k.z;
+  /* One scale term drives the whole set piece so the two tiers cannot drift
+     apart: h is 0 for tactical, 1 for hydrogen, and P is the linear blow-up. */
+  const h = k.hyd?1:0, P = 1+h*.85;
 
   /* the light arrives now; the SOUND and the blast front arrive later, when
      k.wave catches up to you — that gap is most of why this reads as huge */
   AUDIO.boom && AUDIO.boom(2);
-  S.shake = Math.min(52, S.shake+30);
+  S.shake = Math.min(52+h*16, S.shake+30+h*16);
 
   /* ground zero: a white core inside a swelling fireball, plus the ground
      flash that lights the deck before anything has had time to rise */
-  S.parts.push(mk(x,y+70,z, 0,0,0, COL.white, .55, 300, 0, 0, 2.6));
-  S.parts.push(mk(x,y+70,z, 0,0,0, [1,.92,.62], .85, 420, 0, 0, 3.2));
-  S.parts.push(mk(x,y+40,z, 0,0,0, [1,.52,.12], 1.5, 520, 0, 0, 3.6));
-  shock(x,y+60,z,  50, 2600, 1.5, 46, COL.white, 1.3);
-  shock(x,y+20,z,  30, 1900, 1.1, 66, [1,.66,.20], 1.2);
-  shock(x,y,z,     40, 3200, 2.1, 30, [1,.86,.45], .9);
+  S.parts.push(mk(x,y+70,z, 0,0,0, COL.white, .55+h*.5, 300*P, 0, 0, 2.6));
+  S.parts.push(mk(x,y+70,z, 0,0,0, [1,.92,.62], .85+h*.7, 420*P, 0, 0, 3.2));
+  S.parts.push(mk(x,y+40,z, 0,0,0, [1,.52,.12], 1.5+h*1.4, 520*P, 0, 0, 3.6));
+  shock(x,y+60,z,  50, 2600*P, 1.5+h*.7, 46, COL.white, 1.3);
+  shock(x,y+20,z,  30, 1900*P, 1.1+h*.6, 66, [1,.66,.20], 1.2);
+  shock(x,y,z,     40, 3200*P, 2.1+h*1.1, 30, [1,.86,.45], .9);
+  /* the hydrogen round gets the extra beat a two-stage device earns: a second
+     ring punched THROUGH the first one a fifth of a second later */
+  if(h) later(.21, x, y, z, (fx,fy,fz)=>{
+    shock(fx,fy+90,fz, 260, 5200, 1.7, 40, COL.white, 1.4);
+    shock(fx,fy+30,fz, 120, 4200, 2.4, 54, [1,.80,.36], 1.1);
+    S.shake=Math.min(68,S.shake+26);
+  });
 
   /* the stem is born as a jet of fire climbing out of the crater */
-  for(let i=0;i<40;i++)
-    S.parts.push(mk(x+rnd(-70,70), y+rnd(0,120), z+rnd(-70,70),
-      rnd(-210,210), rnd(420,1150), rnd(-210,210),
-      i&1?[1,.62,.16]:COL.white, rnd(.8,1.7), rnd(60,130), 0, .5, 2.4));
+  for(let i=0;i<40+h*34;i++)
+    S.parts.push(mk(x+rnd(-70,70)*P, y+rnd(0,120), z+rnd(-70,70)*P,
+      rnd(-210,210)*P, rnd(420,1150)*P, rnd(-210,210)*P,
+      i&1?[1,.62,.16]:COL.white, rnd(.8,1.7)+h*.6, rnd(60,130)*P, 0, .5, 2.4));
   /* base surge: dirt thrown flat along the deck in every direction */
-  for(let i=0;i<34;i++){
-    const a=rnd(0,6.2832), sp=rnd(700,1900);
+  for(let i=0;i<34+h*26;i++){
+    const a=rnd(0,6.2832), sp=rnd(700,1900)*P;
     S.parts.push(mk(x,y+rnd(0,50),z, Math.cos(a)*sp, rnd(20,180), Math.sin(a)*sp,
-      i%3?[.42,.30,.22]:[1,.55,.18], rnd(1.0,2.0), rnd(70,150), 0, .35, 2.8));
+      i%3?[.42,.30,.22]:[1,.55,.18], rnd(1.0,2.0)+h*.7, rnd(70,150)*P, 0, .35, 2.8));
   }
-  for(let i=0;i<14;i++)
-    shard(x+rnd(-90,90), y+rnd(0,90), z+rnd(-90,90),
-      rnd(-1500,1500), rnd(300,1500), rnd(-1500,1500),
-      rnd(.6,1.2), i&1?[1,.6,.2]:[.5,.42,.36], rnd(.7,1.3));
+  for(let i=0;i<14+h*12;i++)
+    shard(x+rnd(-90,90)*P, y+rnd(0,90), z+rnd(-90,90)*P,
+      rnd(-1500,1500)*P, rnd(300,1500)*P, rnd(-1500,1500)*P,
+      rnd(.6,1.2)*P, i&1?[1,.6,.2]:[.5,.42,.36], rnd(.7,1.3));
 
   /* staged secondaries walking outward — each is its own ring + fire pulse,
      so the fireball keeps re-blooming instead of peaking once and fading */
-  for(let i=0;i<5;i++){
-    later(.16+i*.19, x, y, z, (fx,fy,fz)=>{
-      const rr = 240+i*220;
-      shock(fx,fy+60+i*70,fz, rr*.35, rr*2.2, .8, 22+i*5, i&1?[1,.72,.26]:COL.white, .95);
-      for(let j=0;j<10;j++){
-        const a=rnd(0,6.2832), sp=rnd(200,700);
+  for(let i=0;i<5+h*4;i++){
+    later(.16+i*(.19+h*.05), x, y, z, (fx,fy,fz)=>{
+      const rr = (240+i*220)*P;
+      shock(fx,fy+60+i*70,fz, rr*.35, rr*2.2, .8+h*.4, 22+i*5, i&1?[1,.72,.26]:COL.white, .95);
+      for(let j=0;j<10+h*6;j++){
+        const a=rnd(0,6.2832), sp=rnd(200,700)*P;
         S.parts.push(mk(fx+Math.cos(a)*rr*.4, fy+90+i*90+rnd(-40,40), fz+Math.sin(a)*rr*.4,
-          Math.cos(a)*sp, rnd(180,620), Math.sin(a)*sp,
-          j&1?[1,.58,.14]:[1,.86,.5], rnd(.7,1.4), rnd(80,170), 0, .45, 2.6));
+          Math.cos(a)*sp, rnd(180,620)*P, Math.sin(a)*sp,
+          j&1?[1,.58,.14]:[1,.86,.5], rnd(.7,1.4)+h*.5, rnd(80,170)*P, 0, .45, 2.6));
       }
-      S.shake=Math.min(52,S.shake+7);
+      S.shake=Math.min(52+h*16,S.shake+7+h*5);
     });
   }
 
@@ -161,7 +256,7 @@ function detonate(k){
   /* everything in the fireball is simply gone — no score, it is not your kill */
   for(let i=S.enemies.length-1;i>=0;i--){
     const e=S.enemies[i];
-    if(Math.hypot(e.x-x, e.z-z) > 900) continue;
+    if(Math.hypot(e.x-x, e.z-z) > 900*P) continue;
     later(rnd(0,.5), e.x, e.y, e.z, (fx,fy,fz)=>{
       explode({...e, x:fx, y:fy, z:fz}, fx, fy, fz);
     });
@@ -170,24 +265,30 @@ function detonate(k){
   /* wingmen caught in it go down the normal scripted-death path — update.js
      owns allyDown(), so this only raises the flag it watches for */
   for(const a of S.allies)
-    if(a.state!=='dying' && a.state!=='rtb' && Math.hypot(a.x-x, a.z-z)<820) a.nuked=true;
+    if(a.state!=='dying' && a.state!=='rtb' && Math.hypot(a.x-x, a.z-z)<820*P) a.nuked=true;
 }
 
 /* ------------------------------------------------------------ blast front */
 function waveHit(k){
   k.waveHit=true;
+  const h = k.hyd?1:0;
   /* the noise finally catches up, and the front physically throws the jet —
      shoved away from ground zero and lofted, which is the one moment the
-     player is not in full control of the aircraft */
-  AUDIO.nukeBoom && AUDIO.nukeBoom();
-  S.shake = Math.min(56, S.shake+38);
-  S.flash = Math.min(.5, S.flash+.30); S.flashC=[1,.86,.55];
+     player is not in full control of the aircraft.
+     The hydrogen shove is bigger, but only because HYD_WALK_Z bought the time
+     to absorb it: at ~0.1s velocity half-life a 900 shove displaces ~134 and
+     costs ~0.25s of authority, against 2.17s of gap. Raising one without the
+     other is exactly the mistake WALK_Z's comment warns about. */
+  AUDIO.nukeBoom && AUDIO.nukeBoom(h);
+  S.shake = Math.min(56+h*20, S.shake+38+h*20);
+  S.flash = Math.min(.5+h*.22, S.flash+.30+h*.16); S.flashC=[1,.86,.55];
   const away = S.P.x>=k.x ? 1 : -1;
-  S.P.vx += away*rnd(420,640);
-  S.P.vy += rnd(240,460);
-  S.P.thr = Math.min(1, S.P.thr+.4);
+  S.P.vx += away*(h?rnd(620,900):rnd(420,640));
+  S.P.vy += h?rnd(340,640):rnd(240,460);
+  S.P.thr = Math.min(1, S.P.thr+.4+h*.2);
   /* the front made visible: a ring racing past the camera */
-  shock(k.x, GROUND_Y+340, k.z, 900, 3400, .7, 20, [.85,.92,1], .8);
+  shock(k.x, GROUND_Y+340, k.z, 900, 3400*(1+h*.7), .7+h*.4, 20, [.85,.92,1], .8);
+  if(h) shock(k.x, GROUND_Y+180, k.z, 1400, 5200, 1.2, 26, [1,.90,.70], .6);
 }
 
 /* ------------------------------------------------------------------ tick */
@@ -195,6 +296,7 @@ export function nukeTick(dt){
   if(!S.nukes) S.nukes=[];
   S.rad = 0;
   S.nukeFl = Math.max(0, S.nukeFl - dt*(.9+S.nukeFl*1.8));
+  S.nukeFlH = Math.max(0, S.nukeFlH - dt*1.7);
   if(S.nukeWarn>0) S.nukeWarn-=dt;
 
   for(let i=S.nukes.length-1;i>=0;i--){
@@ -210,32 +312,44 @@ export function nukeTick(dt){
         k.trailT=.02;
         S.parts.push(mk(k.x+rnd(-4,4), k.y+rnd(-4,4), k.z,
           rnd(-30,30), rnd(60,160), rnd(-30,30),
-          Math.random()<.4?COL.white:[.8,.85,.95], rnd(.5,1.1), rnd(9,17), 0, .3, 1.4));
+          Math.random()<.4?COL.white:[.8,.85,.95], rnd(.5,1.1), rnd(9,17)*(k.hyd?2.1:1), 0, .3, 1.4));
       }
       if(k.y<=GROUND_Y) detonate(k);
       continue;
     }
 
     /* ---- column phase */
-    k.g = Math.min(1, k.g + dt/GROW);
+    const hy = k.hyd?1:0;
+    k.g = Math.min(1, k.g + dt/(hy?HYD_GROW:GROW));
 
     /* Teller double-flash: a knife-edge first peak, a dip, then a broader and
        brighter second peak as the fireball outruns its own shock front. This
        is the whiteout — attenuated with distance, but never below a floor,
-       because even a far detonation has to blind. */
-    const near = clamp(1 - (k.z-200)/3600, .55, 1);
-    const f1 = Math.exp(-Math.pow(k.t/.055, 2));
-    const f2 = .95*Math.exp(-Math.pow((k.t-.30)/.30, 2));
-    S.nukeFl = Math.max(S.nukeFl, Math.min(1, (f1+f2)*near));
+       because even a far detonation has to blind.
+       The hydrogen flash is a full whiteout and holds for ~1.3s rather than
+       ~0.9s. That is long enough to be genuinely blinding, which is why
+       hud-draw.js re-draws the break call ON TOP of the wash: the flash is
+       allowed to take the world away, it is not allowed to take the dodge. */
+    const near = clamp(1 - (k.z-200)/3600, hy?.74:.55, 1);
+    const f1 = Math.exp(-Math.pow(k.t/(hy?.085:.055), 2));
+    const f2 = (hy?1.25:.95)*Math.exp(-Math.pow((k.t-(hy?.44:.30))/(hy?.44:.30), 2));
+    const fl = Math.min(1, (f1+f2)*near);
+    S.nukeFl = Math.max(S.nukeFl, fl);
+    if(hy) S.nukeFlH = Math.max(S.nukeFlH, fl);
 
     /* blast front, expanding from the (still scrolling) ground zero */
     if(!k.waveHit){
-      k.wave += WAVE_SPD*dt;
+      k.wave += (hy?HYD_WAVE:WAVE_SPD)*dt;
       const d = Math.hypot(S.P.x-k.x, S.P.y-GROUND_Y, k.z);
       if(k.wave >= d) waveHit(k);
     }
 
-    /* ---- the actual hazard: lateral distance, inside the depth band */
+    /* ---- the actual hazard: lateral distance, inside the depth band.
+       BAND is deliberately NOT scaled by tier: 2*BAND of depth against FLOW is
+       ~0.7s of overlap, which is exactly one hurt() tick, and "one tick carries
+       the whole cost of the mistake" is the invariant the damage numbers are
+       balanced against. A deeper hydrogen band would land two ticks and turn a
+       survivable graze into an unavoidable kill. */
     const az = Math.abs(k.z);
     if(az < BAND){
       const dx = Math.abs(S.P.x - k.x);
@@ -247,15 +361,17 @@ export function nukeTick(dt){
              every tick actually lands — same trick the swarm engulf uses */
           k.hitT=.7;
           const pen = 1 - dx/rc;
-          hurt(Math.round(CORE_DMG + (CORE_DMG_MAX-CORE_DMG)*pen), null);
-          sparks(S.P.x, S.P.y, 10, 16, 700, 1.3, [1,.6,.15], 0,0,-1, 1);
+          const d0 = hy?HYD_DMG:CORE_DMG, d1 = hy?HYD_DMG_MAX:CORE_DMG_MAX;
+          hurt(Math.round(d0 + (d1-d0)*pen), null);
+          sparks(S.P.x, S.P.y, 10, hy?26:16, hy?1100:700, 1.3, [1,.6,.15], 0,0,-1, 1);
         }
       } else if(dx < rf){
         const lvl = (1 - (dx-rc)/(rf-rc)) * (1 - az/BAND);
         S.rad = Math.max(S.rad, lvl);
         if((k.radT-=dt)<=0){
           k.radT=.75;
-          hurt(Math.round(FALL_DMG + (FALL_DMG_MAX-FALL_DMG)*lvl), null);
+          const d0 = hy?HYD_FALL:FALL_DMG, d1 = hy?HYD_FALL_MAX:FALL_DMG_MAX;
+          hurt(Math.round(d0 + (d1-d0)*lvl), null);
         }
       }
     }
@@ -312,14 +428,88 @@ function bossNukeTick(dt){
      the column must leave the player a pocket, and a boss hull is wide enough
      that the hit still reads from the far side of the clamp. */
   const b = S.boss;
-  S.nukes.push({
-    x: clamp(b?b.x:0, -MAX_OFF, MAX_OFF), y: REL_Y, z: (b?b.z:1500) + S.flow*BN_FALL,
-    vy: REL_VY, spin: rnd(0,6.28), seed: rnd(0,100),
-    state:'fall', t:0, g:0, hitT:0, radT:0,
-    wave:0, waveHit:false, trailT:0, bossKill:true
-  });
+  /* Stays TACTICAL on purpose. The beat is about who pulled the trigger, not
+     about yield, and the hydrogen round's placement floor (±196) would put the
+     column off the boss it is supposed to delete. */
+  S.nukes.push(mkWarhead(
+    clamp(b?b.x:0, -MAX_OFF, MAX_OFF), (b?b.z:1500) + S.flow*BN_FALL,
+    false, {bossKill:true}));
   S.nukeWarn = 4.2;
   pushComms('CONTROL','SHOT OUT — CLEAR THE AXIS',1);
+}
+
+/* ------------------------------------------------------- barrage sessions */
+/* The scheduler's rule is that two live WALKS in the corridor at once leaves
+   no clean lane anywhere in it, and that rule is not negotiable. A session
+   does not break it — it is ONE walk that never ends. Instead of committing n
+   warheads up front, the session holds a single side-alternating cursor and
+   releases the next round only once the world has scrolled a full HYD_WALK_Z
+   past the last one, so the spacing along the corridor is bit-for-bit the
+   spacing a hand-authored hydrogen walk would have had. It just never runs out.
+
+   The consequence worth knowing: releases are ~2.4s apart and a column lives
+   ~3.3s from detonation to despawn, so at most TWO columns exist at once and
+   they are 2500+ apart in z. Never two in the danger band. */
+const SESS_SECTOR = 4;    // not before the run has taught the ordinary strike
+const SESS_ARM    = 2.4;  // seconds between the flash traffic and the first release
+
+function sessionStart(){
+  const s = S.sector;
+  /* Long enough to stop being a strike and start being weather. At sector 4
+     that is 11 warheads ≈ 27s of continuous release; by sector 12 it is the
+     16 cap ≈ 39s. */
+  const n = Math.min(16, 8 + Math.round(s*.75));
+  S.nukeSess = { n:n, left:n, fired:0, side: Math.random()<.5?-1:1,
+                 gapLeft:0, armT:SESS_ARM, t:0 };
+  /* hud-draw.js hangs its own sustained banner off S.nukeSess directly rather
+     than borrowing bossWarn, which belongs to the sector arc and would be
+     stomped by (or stomp) a real capital-ship call. */
+  S.nukeWarn = SESS_ARM + 2.2;
+  pushComms('CONTROL','FLASH TRAFFIC — THERMONUCLEAR BARRAGE, MULTIPLE INBOUND',1.4);
+  later(1.9, 0,0,0, ()=> pushComms('CONTROL','THEY ARE NOT AIMING AT YOU. STAY ALIVE ANYWAY',1.2));
+  AUDIO.nukeAlert && AUDIO.nukeAlert(2);
+}
+
+function sessionEnd(msg){
+  const q = S.nukeSess;
+  S.nukeSess = null;
+  /* The exit is a real breather, not a seam: nothing else may release until
+     the last column of the session has scrolled clear and then some. */
+  S.nukeSessT = rnd(84, 150) - Math.min(42, S.sector*3.2);
+  S.nukeT = Math.max(S.nukeT, rnd(16,26));
+  if(msg) pushComms('CONTROL', msg, 1.0);
+  return q;
+}
+
+function sessionTick(dt){
+  const q = S.nukeSess;
+  q.t += dt;
+  /* The sky THINS for the strike — it does not empty. Giving back 55% of each
+     frame's spawn countdown roughly halves the formation rate for the duration,
+     which is done this way rather than through lullT (whose side effects, music
+     sag and an ally spawn on release, belong to the sector arc) and rather than
+     by clamping spawnT (which re-asserts every frame and so blocks spawns
+     outright). Blocking them outright was tried and it is worse: a fully
+     committed break is clean of fallout by construction, so an empty sky turns
+     a 40-second barrage into a 40-second pause. The fight has to continue,
+     because the actual cost of a session is that you are PINNED to the wall
+     and cannot manoeuvre to fight while you are there. */
+  S.spawnT += dt*.55;
+  /* A boss arriving mid-session ends it: "never mid-boss" outranks the event,
+     and a capital ship plus a rolling barrage has no lane at all. */
+  if(S.boss){ sessionEnd('BARRAGE ABORTED — DANGER CLOSE'); return; }
+  if(q.armT>0){ q.armT-=dt; return; }
+
+  if((q.gapLeft -= S.flow*dt) > 0) return;
+  S.nukes.push(mkWarhead(offFor(true, q.side), SPAWN_Z+REL_Z, true));
+  q.side = -q.side;
+  q.gapLeft = rnd(HYD_WALK_Z[0], HYD_WALK_Z[1]);
+  q.fired++; q.left--;
+  /* one klaxon at the top and one on the last release; a klaxon per warhead
+     would turn the whole session into an alarm and stop meaning anything */
+  if(q.left===1) AUDIO.nukeAlert && AUDIO.nukeAlert(1);
+  if(q.fired===3) pushComms('CONTROL','WALKING IT DOWN THE CORRIDOR — KEEP MOVING',1.0);
+  if(q.left<=0) sessionEnd('LAST ROUND OUT — RIDE IT OUT');
 }
 
 /* --------------------------------------------------------------- schedule */
@@ -330,13 +520,23 @@ function bossNukeTick(dt){
    is the deliberate exception and books its own drop. */
 export function nukeSchedule(dt){
   bossNukeTick(dt);
+  if(!S.nukes) S.nukes=[];
+  if(S.nukeSess){ sessionTick(dt); return; }
+  if(S.nukeSessT>0) S.nukeSessT-=dt;
+
+  const clear = !(S.boss || S.easeT>0 || S.sector<2 || S.lullT>0) && !S.nukes.length;
+  /* The session clock is checked BEFORE the ordinary one and pre-empts it, so
+     a session is never queued behind a routine strike that happens to be
+     mid-countdown. Same wall-time rule as nukeT: gates hold back the release,
+     never the countdown. */
+  if(S.nukeSessT<=0 && S.sector>=SESS_SECTOR && clear){ sessionStart(); return; }
+
   /* The clock runs on wall time and the gates only hold back the RELEASE. If
      the countdown itself were gated it would barely advance: bosses alone eat
      most of a run, so a strike armed behind them lands minutes late, or never.
      Once it is armed it stays armed and fires the moment the sky is its own. */
   if(S.nukeT>0 && (S.nukeT-=dt)>0) return;
-  if(S.boss || S.easeT>0 || S.sector<2 || S.lullT>0){ return; }
-  if(S.nukes && S.nukes.length){ return; }
+  if(!clear) return;
   const s = S.sector;
   /* Uneven on purpose. A third of the time the next strike is already on its
      way before the last column is off the screen; the rest of the time you get
@@ -346,6 +546,10 @@ export function nukeSchedule(dt){
   S.nukeT = Math.random()<.34 ? rnd(6,11)
                               : rnd(15,26) - Math.min(8, s*.7);
   /* Warheads walk across the corridor on alternating sides, so n is literally
-     how many times you are made to reverse the break. */
-  nukeStrike(s>=9 ? 5 : s>=6 ? 4 : s>=4 ? 3 : 2);
+     how many times you are made to reverse the break. hydP is the per-warhead
+     chance the round is a hydrogen one: rare enough early that the ordinary
+     strike is still the thing you learn, common enough deep that a routine
+     walk stops being routine. */
+  const hydP = s>=10 ? .55 : s>=7 ? .38 : s>=5 ? .24 : s>=3 ? .12 : 0;
+  nukeStrike(s>=9 ? 5 : s>=6 ? 4 : s>=4 ? 3 : 2, hydP);
 }

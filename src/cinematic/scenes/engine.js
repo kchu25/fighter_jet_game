@@ -64,10 +64,18 @@ export function glow(k) {
   if (s) return s;
   s = document.createElement('canvas'); s.width = s.height = 64;
   const x = s.getContext('2d');
+  /* A small hot core with a long soft skirt, not a near-flat disc.
+     The old ramp (1.0 held out to 0.32r, then straight to 0) gave every
+     particle a hard-edged bright plate, so an exhaust trail laid down
+     along a moving emitter read as a string of separate beads instead
+     of one continuous plume.  With the falloff below, neighbouring
+     particles overlap in their skirts and merge. */
   const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(' + key + ',1)');
-  g.addColorStop(0.32, 'rgba(' + key + ',0.55)');
-  g.addColorStop(1, 'rgba(' + key + ',0)');
+  g.addColorStop(0.00, 'rgba(' + key + ',1)');
+  g.addColorStop(0.14, 'rgba(' + key + ',0.72)');
+  g.addColorStop(0.34, 'rgba(' + key + ',0.34)');
+  g.addColorStop(0.62, 'rgba(' + key + ',0.10)');
+  g.addColorStop(1.00, 'rgba(' + key + ',0)');
   x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   sprites[key] = s; return s;
 }
@@ -113,10 +121,26 @@ export function drawParts(filterAdd) {
     if (filterAdd !== undefined && p.add !== filterAdd) continue;
     const a = sat(p.l / p.L) * p.a;
     I.c.globalCompositeOperation = p.add ? 'lighter' : 'source-over';
-    I.c.globalAlpha = p.add ? a : a * 0.62;
+    I.c.globalAlpha = p.add ? a : (p.sq ? a * 0.95 : a * 0.62);
     if (p.sq) {
+      /* A tumbling hull plate, not a scrap of paper.  These used to be
+         one flat fill of the full-brightness palette colour, which is
+         exactly why the aftermath read as confetti: identical pastel
+         rectangles, evenly lit, no volume.  Now the broad face sits in
+         shadow and only rolls into the light as the chunk turns, with
+         one bright edge on the lit side — so the debris field strobes
+         and varies the way real spinning wreckage does. */
+      const k = p.c, lit = Math.abs(Math.cos(p.rot));
+      const dk = 0.10 + 0.22 * lit;
       I.c.save(); I.c.translate(p.x, p.y); I.c.rotate(p.rot);
-      I.c.fillStyle = rgba(p.c, 1); I.c.fillRect(-p.r, -p.r * 0.45, p.r * 2, p.r * 0.9);
+      I.c.fillStyle = 'rgb(' + (k[0] * dk | 0) + ',' + (k[1] * dk | 0) + ',' + (k[2] * dk | 0) + ')';
+      I.c.fillRect(-p.r, -p.r * 0.45, p.r * 2, p.r * 0.9);
+      if (lit > 0.12) {
+        const br = 0.26 + 0.44 * lit;
+        I.c.fillStyle = 'rgb(' + (Math.min(255, k[0] * br) | 0) + ',' + (Math.min(255, k[1] * br) | 0) +
+          ',' + (Math.min(255, k[2] * br) | 0) + ')';
+        I.c.fillRect(-p.r, -p.r * 0.45, p.r * 2, Math.max(0.8, p.r * 0.30 * lit));
+      }
       I.c.restore();
     } else {
       I.c.drawImage(glow(p.c), p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
@@ -203,8 +227,18 @@ export function dawnSky(hz, dark) {
   g.addColorStop(0.90, '#8f1355');
   g.addColorStop(1, '#ff5f3e');
   I.c.fillStyle = g; I.c.fillRect(0, -200, VW, hz + 200);
-  /* sun */
+  /* sun.  The disc used to terminate on a razor-sharp clipped circle
+     against the sky, which is the single thing that made it read as a
+     sticker; a low sun seen through this much atmosphere blooms into
+     the air around it and its lower limb is eaten by horizon haze.
+     So: a wide corona under it, the clipped disc on top, then a haze
+     wash that dissolves the bottom of the limb back into the band. */
   I.c.save(); I.c.globalCompositeOperation = 'lighter';
+  I.c.globalAlpha = 0.30;
+  I.c.drawImage(glow([255, 132, 84]), 430 - 330, hz - 20 - 330, 660, 660);
+  I.c.globalAlpha = 0.22;
+  I.c.drawImage(glow([255, 190, 110]), 430 - 178, hz - 20 - 178, 356, 356);
+  I.c.globalAlpha = 1;
   const sg = I.c.createLinearGradient(0, hz - 250, 0, hz + 30);
   sg.addColorStop(0, rgba([255, 220, 90], 0.95));
   sg.addColorStop(0.55, rgba([255, 110, 60], 0.9));
@@ -214,15 +248,32 @@ export function dawnSky(hz, dark) {
   I.c.fillStyle = sg; I.c.fillRect(190, hz - 260, 480, 300);
   I.c.fillStyle = 'rgba(10,2,20,0.85)';
   for (let i = 0; i < 9; i++) I.c.fillRect(190, hz - 190 + i * 26, 480, 4 + i * 1.6);
+  /* feather only the last few pixels of the limb — enough that the
+     edge is not a razor-cut arc, not so much that the disc turns into
+     a soft ball and starts reading as a moon */
+  I.c.globalCompositeOperation = 'destination-out';
+  const fr = I.c.createRadialGradient(430, hz - 20, 214, 430, hz - 20, 232);
+  fr.addColorStop(0, 'rgba(0,0,0,0)');
+  fr.addColorStop(1, 'rgba(0,0,0,0.88)');
+  I.c.fillStyle = fr; I.c.fillRect(190, hz - 260, 480, 300);
   I.c.restore();
   I.c.globalAlpha = 0.4;
   I.c.drawImage(glow([255, 90, 120]), 430 - 420, hz - 20 - 420, 840, 840);
   I.c.restore();
-  /* horizon band */
+  /* horizon band: a real depth of haze rather than one bright hairline,
+     so everything standing on the horizon is standing *in* something */
   I.c.save(); I.c.globalCompositeOperation = 'lighter';
-  I.c.fillStyle = rgba(C.mag, 0.5); I.c.fillRect(0, hz - 3, VW, 5);
+  I.c.globalAlpha = 0.30; I.c.drawImage(glow([255, 96, 110]), -200, hz - 210, VW + 400, 300);
   I.c.globalAlpha = 0.35; I.c.drawImage(glow(C.mag), 0, hz - 90, VW, 180);
+  I.c.globalAlpha = 1;
+  I.c.fillStyle = rgba(C.mag, 0.5); I.c.fillRect(0, hz - 3, VW, 5);
   I.c.restore();
+  /* and a thin cool scatter layer sitting just above the line, which
+     the hive and the alien wall then rise through */
+  const hzg = I.c.createLinearGradient(0, hz - 118, 0, hz + 2);
+  hzg.addColorStop(0, 'rgba(84,26,72,0)');
+  hzg.addColorStop(1, 'rgba(96,30,80,0.34)');
+  I.c.fillStyle = hzg; I.c.fillRect(0, hz - 118, VW, 120);
 }
 export function neonGround(hz, scroll, alpha) {
   I.c.fillStyle = '#08030f'; I.c.fillRect(0, hz, VW, VH - hz + 200);
@@ -238,6 +289,17 @@ export function neonGround(hz, scroll, alpha) {
   for (let i = -13; i <= 13; i++) {
     I.c.beginPath(); I.c.moveTo(800 + i * 24, hz); I.c.lineTo(800 + i * 430, VH + 90); I.c.stroke();
   }
+  I.c.restore();
+  /* ground fog against the horizon.  Without this the sky meets the
+     ground on one perfectly hard black line and everything standing on
+     it — the hive, the alien wall, the silos — reads as pasted onto a
+     backdrop rather than standing in the same air. */
+  I.c.save();
+  const fg = I.c.createLinearGradient(0, hz - 4, 0, hz + 96);
+  fg.addColorStop(0.00, 'rgba(158,52,116,0.46)');
+  fg.addColorStop(0.34, 'rgba(96,28,80,0.24)');
+  fg.addColorStop(1.00, 'rgba(52,14,52,0)');
+  I.c.fillStyle = fg; I.c.fillRect(0, hz - 4, VW, 100);
   I.c.restore();
 }
 export function attract(dt) {
@@ -294,8 +356,18 @@ export function frame(ms) {
   I.c.clearRect(0, 0, I.W, I.H);
   I.c.fillStyle = '#000'; I.c.fillRect(0, 0, I.W, I.H);
   I.c.save();
-  I.c.setTransform(I.dpr * I.sc, 0, 0, I.dpr * I.sc, I.dpr * (I.ox + (I.shake ? rnd(-I.shake, I.shake) : 0)),
-    I.dpr * (I.oy + (I.shake ? rnd(-I.shake, I.shake) : 0)));
+  /* Overscan with the shake.  The shake is a translation of the whole
+     frame, so on the big hits (shake 46 at the rocket kill) it used to
+     slide the picture off its own edge and expose bands of the black
+     backing — which reads instantly as "a picture being wobbled about
+     inside a box" rather than as a camera being hit.  Scaling up by
+     just over the shake amplitude keeps the frame full at all times. */
+  const sh = I.shake;
+  const os = Math.min(1.26, 1 + 2.2 * sh / (VH * I.sc));
+  const s2 = I.dpr * I.sc * os;
+  I.c.setTransform(s2, 0, 0, s2,
+    I.dpr * (I.ox - VW * I.sc * (os - 1) * 0.5 + (sh ? rnd(-sh, sh) : 0)),
+    I.dpr * (I.oy - VH * I.sc * (os - 1) * 0.5 + (sh ? rnd(-sh, sh) : 0)));
   I.c.beginPath(); I.c.rect(0, 0, VW, VH); I.c.clip();
 
   try {
@@ -311,8 +383,18 @@ export function frame(ms) {
   }
 
   if (I.flash > 0.002) {
+    /* A blast flash blooms out from where it went off; filling the
+       whole viewport with one flat value instead washed every frame to
+       an even, papery grey and killed the shape of the explosion
+       underneath.  Hot in the middle, falling away to a low ambient
+       lift at the corners. */
+    const f = I.flash * I.flash;
+    const fg = I.c.createRadialGradient(VW / 2, VH * 0.46, 0, VW / 2, VH * 0.46, VH * 1.05);
+    fg.addColorStop(0, rgba(I.flashCol, f));
+    fg.addColorStop(0.42, rgba(I.flashCol, f * 0.62));
+    fg.addColorStop(1, rgba(I.flashCol, f * 0.18));
     I.c.globalCompositeOperation = 'lighter';
-    I.c.fillStyle = rgba(I.flashCol, I.flash * I.flash);
+    I.c.fillStyle = fg;
     I.c.fillRect(0, 0, VW, VH);
     I.c.globalCompositeOperation = 'source-over';
   }

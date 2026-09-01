@@ -19,6 +19,12 @@ export const PAD_Y = 605, GND_Y = 700;
 /* where the unseen things are when they discharge.  Never drawn lit. */
 export const STRIKE = [[1286, 178], [252, 250], [828, 92]];
 export let camAlt = 0, camPrev = 0, rkX = 800, rkY = PAD_Y, rkRot = 0;
+/* the exhaust colour ramp — white at the throat, orange down the
+   plume.  Five fixed steps, because engine.js's glow() caches one
+   sprite per distinct colour and a continuous ramp would leak one
+   canvas per frame. */
+export const PLUME = [[255, 244, 226], [255, 218, 168], [255, 186, 108],
+  [255, 156, 64], [255, 132, 48]];
 
 /* ----------------------------------------------------------------
    coverage, not one static shot.  camFor() returns the zoom for
@@ -27,20 +33,26 @@ export let camAlt = 0, camPrev = 0, rkX = 800, rkY = PAD_Y, rkRot = 0;
    A zoom of 1 is a no-op transform, so it is always safe to apply. */
 export const CHASE0 = 1.90, CHASE1 = 3.05;        /* tight ascent push, before the ambush glimpses */
 export const STRIKE_PUSH = FIRE + 0.28;           /* close-in push, just clear of the discharge flicker */
-export const REACT1 = BOOM + 0.24;                /* end of the hard cut away to the crowd */
+export const SHOCK = BOOM + 0.24;                 /* the front reaches the lens; the camera loses the shot */
 export const AFT_PEAK = 7.90;                     /* aftermath push holds here, eases to 1 before HUGE */
 /* shared rise-then-fall envelope for the aftermath tumble — camFor(),
    camRotFor() and scene1's own shake/streak all key off exactly the
    same curve, so the zoom, the roll and the extra shudder all peak
-   and resolve together instead of drifting out of sync. */
+   and resolve together instead of drifting out of sync.  It starts on
+   BOOM itself, not a beat after it: there is no cut away any more, so
+   the blast has to be what knocks the camera. */
 export function aftEnv(u) {
-  return (u >= REACT1 && u < HUGE)
-    ? ramp(REACT1, REACT1 + 0.35, u) * (1 - ramp(AFT_PEAK, HUGE, u)) : 0;
+  return (u >= BOOM && u < HUGE)
+    ? ramp(BOOM, SHOCK + 0.11, u) * (1 - ramp(AFT_PEAK, HUGE, u)) : 0;
 }
 export function camFor(u) {
   if (u >= CHASE0 && u < CHASE1) return 1 + 0.55 * ramp(CHASE0, CHASE0 + 0.55, u);
   if (u >= STRIKE_PUSH && u < BOOM) return 1 + 0.7 * ramp(STRIKE_PUSH, BOOM, u);
-  if (u >= REACT1 && u < HUGE) return 1 + 1.1 * aftEnv(u);
+  /* continuous across BOOM: the 1.7x close-in push we arrive on hands
+     straight over to the tumble push, so nothing snaps at the cut that
+     used to be here */
+  if (u >= BOOM && u < HUGE)
+    return 1 + 0.7 * (1 - ramp(BOOM, SHOCK + 0.11, u)) + 1.1 * aftEnv(u);
   return 1;
 }
 /* ----------------------------------------------------------------
@@ -57,11 +69,11 @@ export function camRotFor(u) {
     const env = ramp(CHASE0, CHASE0 + 0.4, u) * (1 - ramp(CHASE1 - 0.3, CHASE1, u));
     return 0.065 * env * Math.sin((u - CHASE0) * 2.3);
   }
-  if (u >= REACT1 && u < HUGE) {
+  if (u >= BOOM && u < HUGE) {
     const env = aftEnv(u);
     /* a hard bank one way, then a wobble as it settles — not a clean
        oscillation, an actual loss of orientation */
-    return env * (0.30 * Math.sin((u - REACT1) * 1.7) + 0.11 * Math.sin((u - REACT1) * 4.4 + 1.1));
+    return env * (0.30 * Math.sin((u - BOOM) * 1.7) + 0.11 * Math.sin((u - BOOM) * 4.4 + 1.1));
   }
   return 0;
 }
@@ -357,7 +369,7 @@ export function colossus(u) {
    language (rust/ochre, half-lost in blown dust) as the wrecks the
    player will later fly over on the ground.  Purely cosmetic: no
    collision, no state, a closed-form function of absolute time. */
-export const HULK_T0 = REACT1 + 0.03, HULK_T1 = HUGE - 0.20;
+export const HULK_T0 = SHOCK + 0.03, HULK_T1 = HUGE - 0.20;
 export function hulkShard(u) {
   if (u < HULK_T0 || u > HULK_T1) return;
   const q = sat((u - HULK_T0) / (HULK_T1 - HULK_T0));
@@ -468,10 +480,24 @@ export function scene1(u, dt) {
   if (I.rumbleH && I.rumbleH.set) I.rumbleH.set(dead ? 0 : 0.35 + 0.65 * thr);
   if (u > IGN && !dead) {
     I.shake = Math.max(I.shake, u < LIFT ? 5 + 6 * Math.sin(u * 42) : 3.2);
-    /* exhaust + ground smoke */
+    /* Exhaust.  One particle a frame used to leave a visible gap of
+       `dcam` between each puff, and alternating white/orange made every
+       gap read as a join: the plume came out as a string of beads.
+       Emit a short sub-frame sweep instead, back-filling the distance
+       the trail scrolls in one frame, and roll the colour continuously
+       from white at the throat to orange down the plume rather than
+       flipping between two of them.  Radius also tapers off with range
+       so the far shot gets a thin bright pencil, not fat blobs. */
     const nz = rkY + 96;
-    part(rkX + rnd(-7, 7), nz + rnd(0, 18), rnd(-28, 28), rnd(150, 320),
-      rnd(0.3, 0.6), rnd(7, 15), Math.random() < 0.4 ? C.white : C.orange, { gr: 16, d: 0.93 });
+    const rng = 1 - 0.52 * space;
+    for (let k = 0; k < 3; k++) {
+      const f = k / 3;
+      /* quantised to five steps: glow() caches one sprite per colour,
+         so the ramp has to be a small fixed set, not a continuum */
+      const col = PLUME[(Math.random() * PLUME.length) | 0];
+      part(rkX + rnd(-6, 6) * rng, nz + rnd(0, 14) * rng + dcam * f, rnd(-24, 24) * rng,
+        rnd(150, 320), rnd(0.34, 0.62), rnd(5, 11) * rng, col, { gr: 15, d: 0.93, a: 0.62 });
+    }
     /* the pad billow only exists while the stack is still near the tower */
     if (gy < VH + 200 && u < LIFT + 1.6)
       part(rkX + rnd(-52, 52), gy - rnd(0, 24), rnd(-330, 330), rnd(-50, 20),
@@ -482,44 +508,28 @@ export function scene1(u, dt) {
   stepParts(dt, dcam);
   drawParts(false);
 
-  /* --- the rocket: a full vector ship close in, or from the far
-     "audience" angle, nothing but a point of light climbing --- */
+  /* --- the rocket: a full vector ship close in, or, once it is far
+     enough out, nothing but a point of light climbing ---
+     There used to be a hard cut away from the explosion here, to a
+     ground-level "audience" angle.  It is gone: it cut away at exactly
+     the moment the audience most wants to be looking, it washed the
+     frame to flat grey for a quarter of a second, and the ground
+     lighting it drew was pinned to a horizon that had long since
+     scrolled off the bottom of the shot.  The camera now stays on the
+     vehicle and simply gets hit — see aftEnv()/camRotFor(). */
   const A = art();
   const farShot = u >= CHASE1 && u < FIRE;
-  const reactShot = u >= BOOM && u < REACT1;
-  if (reactShot) {
-    /* hard cut away: a gut-punch reaction, back on the ground with
-       the people who are watching this happen to them */
-    if (A && A.crowd) A.crowd(I.c, rkX, GND_Y + 130, VW * 1.3, 128, I.t, 0.92);
-    const rp = sat((u - BOOM) / (REACT1 - BOOM));
-    I.c.save();
-    I.c.globalCompositeOperation = 'lighter';
-    /* the white flash itself, then a slower warm rust bloom underneath
-       it — sand and dust kicked up, lit from above by what just went off */
-    I.c.globalAlpha = (1 - rp) * (1 - rp) * 0.9;
-    I.c.drawImage(glow(C.white), rkX - 900, GND_Y - 340, 1800, 680);
-    I.c.globalAlpha = (1 - rp * 0.6) * 0.5;
-    I.c.drawImage(glow(C.rust), rkX - 760, GND_Y - 40, 1520, 420);
-    I.c.globalAlpha = 1;
-    I.c.restore();
-  } else {
-    if (!dead && A) {
-      if (farShot) {
-        /* too far to read as a machine — a coal of light, and a trail */
-        I.c.save();
-        I.c.globalCompositeOperation = 'lighter';
-        I.c.drawImage(glow(C.amber), rkX - 26, rkY - 26, 52, 52);
-        I.c.fillStyle = '#fff';
-        I.c.beginPath(); I.c.arc(rkX, rkY, 1.7, 0, 6.2832); I.c.fill();
-        I.c.restore();
-      } else {
-        A.rocket(I.c, rkX, rkY, 0.95, rkRot, thr, I.t);
-      }
-    }
-    /* the crowd this is all happening in front of, however far off */
-    if (farShot && A && A.crowd) {
-      const crFade = ramp(CHASE1, CHASE1 + 0.4, u) * (1 - ramp(FIRE - 0.35, FIRE, u));
-      if (crFade > 0.01) A.crowd(I.c, rkX, GND_Y + 40, VW * 1.15, 100, I.t, 0.82 * crFade);
+  if (!dead && A) {
+    if (farShot) {
+      /* too far to read as a machine — a coal of light, and a trail */
+      I.c.save();
+      I.c.globalCompositeOperation = 'lighter';
+      I.c.drawImage(glow(C.amber), rkX - 26, rkY - 26, 52, 52);
+      I.c.fillStyle = '#fff';
+      I.c.beginPath(); I.c.arc(rkX, rkY, 1.7, 0, 6.2832); I.c.fill();
+      I.c.restore();
+    } else {
+      A.rocket(I.c, rkX, rkY, 0.95, rkRot, thr, I.t);
     }
   }
 
@@ -590,7 +600,7 @@ export function scene1(u, dt) {
         rnd(2, 9), i % 2 ? C.rust : C.steel, { sq: true, g: 230, d: 0.994, vr: rnd(-9, 9) });
     }
   });
-  if (dead && !reactShot) {
+  if (dead) {
     const q = u - BOOM;
     /* fireball + double shockwave */
     I.c.globalCompositeOperation = 'lighter';
@@ -654,20 +664,15 @@ export function scene1(u, dt) {
     I.c.globalCompositeOperation = 'source-over';
   }
 
-  /* the debris/fire particles are hidden, not stopped, during the cut
-     away to the crowd — they keep simulating so nothing jumps when
-     we cut back to them */
-  if (!reactShot) {
-    /* the aftermath tumble: debris smearing toward the lens, and the
-       camera shudder to match the roll/zoom already applied above */
-    const tumbleEnv = aftEnv(u);
-    if (tumbleEnv > 0.01) {
-      I.shake = Math.max(I.shake, 9 + 24 * tumbleEnv);
-      streakParts(tumbleEnv * 0.95);
-    }
-    drawParts(true);
-    hulkShard(u);
+  /* the aftermath tumble: debris smearing toward the lens, and the
+     camera shudder to match the roll/zoom already applied above */
+  const tumbleEnv = aftEnv(u);
+  if (tumbleEnv > 0.01) {
+    I.shake = Math.max(I.shake, 9 + 24 * tumbleEnv);
+    streakParts(tumbleEnv * 0.95);
   }
+  drawParts(true);
+  hulkShard(u);
 
   /* ---- MOVEMENT 2: whatever it is, it is in front of all of that ---- */
   if (u > 3.1 && u < FIRE + 0.24) movement2(u);

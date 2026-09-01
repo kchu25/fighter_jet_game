@@ -1013,19 +1013,27 @@ var lastNukeBoomT = -99, lastGeigerT = -99;
 /* NUCLEAR LAUNCH DETECTED. Deliberately not siren(): that one is a smooth
    two-cycle wail for a capital ship. This is gated — four hard stabs — and
    sours the interval with a tritone, so it reads as a civil-defence klaxon
-   rather than another boss horn. */
-export function nukeAlert() {
-  if (!A.ready || A.muted || !budget(9)) return;
+   rather than another boss horn.
+
+   tier scales the SAME call rather than forking it, so the three warnings are
+   audibly the same instrument at three sizes and a player never has to learn a
+   second alarm: 0 tactical, 1 hydrogen, 2 the arming call for a sustained
+   barrage. Going up a tier lengthens the call, adds stabs and drops the whole
+   thing a fifth — bigger warning, lower voice, longer to say it. */
+export function nukeAlert(tier) {
+  tier = tier | 0;
+  if (!A.ready || A.muted || !budget(tier ? 12 : 9)) return;
   var t = now() + 0.002;
-  var dur = 1.35;
-  var head = gainNode(0.5);
+  var dur = tier === 2 ? 3.0 : tier === 1 ? 1.95 : 1.35;
+  var drop = tier === 2 ? 0.62 : tier === 1 ? 0.78 : 1;   // pitch multiplier
+  var head = gainNode(tier ? 0.62 : 0.5);
   head.connect(A.sfxGain);
   var srcs = [];
 
   // four hard-gated stabs: an alarm articulates, a siren glides
   var g = A.ctx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  var stabs = 4, per = dur / stabs;
+  var stabs = tier === 2 ? 8 : tier === 1 ? 6 : 4, per = dur / stabs;
   for (var s = 0; s < stabs; s++) {
     var s0 = t + s * per;
     g.gain.setValueAtTime(0.0001, s0);
@@ -1035,14 +1043,14 @@ export function nukeAlert() {
   }
   g.connect(head);
 
-  var f = bp(900, 3.0);
-  f.frequency.setValueAtTime(fclamp(1500), t);
-  f.frequency.exponentialRampToValueAtTime(fclamp(700), t + dur * 0.55);
-  f.frequency.exponentialRampToValueAtTime(fclamp(2000), t + dur);
+  var f = bp(900 * drop, 3.0);
+  f.frequency.setValueAtTime(fclamp(1500 * drop), t);
+  f.frequency.exponentialRampToValueAtTime(fclamp(700 * drop), t + dur * 0.55);
+  f.frequency.exponentialRampToValueAtTime(fclamp(2000 * drop), t + dur);
   f.connect(g);
 
   // the wail falls, then overshoots upward on the last stab
-  var hiF = 660, loF = 392, endF = 784;
+  var hiF = 660 * drop, loF = 392 * drop, endF = 784 * drop;
   for (var k = 0; k < 2; k++) {
     var o = osc('sawtooth', hiF, t);
     o.detune.value = k ? 11 : -11;          // ~5Hz beat, sits uneasy
@@ -1063,22 +1071,24 @@ export function nukeAlert() {
   tri.start(t); tri.stop(t + dur + 0.03);
   srcs.push(tri);
 
-  // sub drone swelling under the whole call
-  var sub = osc('sine', 38, t);
-  sub.frequency.linearRampToValueAtTime(fclamp(58), t + dur);
+  // sub drone swelling under the whole call. On the barrage call it does not
+  // settle — it keeps climbing for the whole three seconds, which is what makes
+  // that one feel like something being wound up rather than announced.
+  var sub = osc('sine', tier ? 30 : 38, t);
+  sub.frequency.linearRampToValueAtTime(fclamp(tier === 2 ? 74 : 58), t + dur);
   var sg = A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001, t);
-  sg.gain.exponentialRampToValueAtTime(0.45, t + 0.4);
+  sg.gain.exponentialRampToValueAtTime(tier ? 0.75 : 0.45, t + (tier === 2 ? 1.4 : 0.4));
   sg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.2);
   sub.connect(sg); sg.connect(head);
   sub.start(t); sub.stop(t + dur + 0.25);
   srcs.push(sub);
 
   // air-raid wash
-  var nb = bp(1100, 1.1);
+  var nb = bp(1100 * drop, 1.1);
   var ng = A.ctx.createGain();
   ng.gain.setValueAtTime(0.0001, t);
-  ng.gain.exponentialRampToValueAtTime(0.13, t + 0.3);
+  ng.gain.exponentialRampToValueAtTime(tier ? 0.22 : 0.13, t + 0.3);
   ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   nb.connect(ng); ng.connect(head);
   var ns = noise(t, dur + 0.02, 1.0); ns.connect(nb); srcs.push(ns);
@@ -1092,67 +1102,88 @@ export function nukeAlert() {
    starve the tail. The shape is crack -> sub drop -> long rumble, which is
    what a distant airburst actually does: the report arrives, the ground
    shock follows, then several seconds of decaying roar. */
-export function nukeBoom() {
+export function nukeBoom(big) {
   if (!A.ready || A.muted) return;
   var t = now();
-  if (t - lastNukeBoomT < 1.2) return;
-  if (A.boomVoices >= MAX_BOOM - 2 || !budget(14)) return;
+  /* The throttle has to come DOWN for the hydrogen round, not up: during a
+     barrage the fronts arrive ~2.4s apart, but a hydrogen detonation lands on
+     top of a tactical tail often enough that a 1.2s gate would silently eat
+     the loudest cue in the game. A big one always gets through. */
+  if (t - lastNukeBoomT < (big ? 0.5 : 1.2)) return;
+  if (A.boomVoices >= MAX_BOOM - 2 || !budget(big ? 18 : 14)) return;
   lastNukeBoomT = t;
   t += 0.002;
 
-  var dur = 3.6;
-  var head = gainNode(0.95);
+  var dur = big ? 6.4 : 3.6;
+  var head = gainNode(big ? 1.15 : 0.95);
   head.connect(A.sfxGain);
   var srcs = [];
-  duckPump(t, 0.55, 1.6);
+  duckPump(t, big ? 0.42 : 0.55, big ? 2.8 : 1.6);
 
   // --- 1. the crack: a bright 50ms transient, the shock front arriving
-  var ch = hp(1800);
-  var cg = pluck(t, 0.7, 0.05, 0.0012);
+  var ch = hp(big ? 1300 : 1800);
+  var cg = pluck(t, big ? 0.85 : 0.7, big ? 0.09 : 0.05, 0.0012);
   ch.connect(cg); cg.connect(head);
-  var cs = noise(t, 0.07, 1.6); cs.connect(ch); srcs.push(cs);
+  var cs = noise(t, big ? 0.13 : 0.07, 1.6); cs.connect(ch); srcs.push(cs);
 
-  // --- 2. sub drop: 70Hz walked down to the floor over 1.2s
-  var so = osc('sine', 70, t);
-  so.frequency.exponentialRampToValueAtTime(fclamp(18), t + 1.2);
+  // --- 2. sub drop: 70Hz walked down to the floor over 1.2s. The big one
+  // starts lower and takes twice as long to get there, so the floor moves
+  // under the whole cue instead of thumping once.
+  var so = osc('sine', big ? 52 : 70, t);
+  so.frequency.exponentialRampToValueAtTime(fclamp(big ? 13 : 18), t + (big ? 2.4 : 1.2));
   var sg = A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001, t);
   sg.gain.exponentialRampToValueAtTime(1.0, t + 0.03);
-  sg.gain.exponentialRampToValueAtTime(0.35, t + 0.9);
-  sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.9);
+  sg.gain.exponentialRampToValueAtTime(0.35, t + (big ? 1.9 : 0.9));
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + (big ? 3.4 : 1.9));
   so.connect(sg); sg.connect(head);
-  so.start(t); so.stop(t + 1.95);
+  so.start(t); so.stop(t + (big ? 3.45 : 1.95));
   srcs.push(so);
 
   // --- 3. mid punch, so it hits the chest and not just the floor
-  var mo = osc('triangle', 180, t);
-  mo.frequency.exponentialRampToValueAtTime(fclamp(42), t + 0.3);
-  var mg = pluck(t, 0.6, 0.55, 0.004);
+  var mo = osc('triangle', big ? 132 : 180, t);
+  mo.frequency.exponentialRampToValueAtTime(fclamp(big ? 32 : 42), t + (big ? 0.5 : 0.3));
+  var mg = pluck(t, big ? 0.75 : 0.6, big ? 0.9 : 0.55, 0.004);
   mo.connect(mg); mg.connect(head);
-  mo.start(t); mo.stop(t + 0.6);
+  mo.start(t); mo.stop(t + (big ? 1.0 : 0.6));
   srcs.push(mo);
 
   // --- 4. the rumble: two noise layers at different rates through a lowpass
   // closing slowly, which is what turns a bang into a rolling roar
   var rf = lp(1800, 1.1);
   rf.frequency.setValueAtTime(fclamp(1800), t);
-  rf.frequency.exponentialRampToValueAtTime(fclamp(220), t + 1.4);
+  rf.frequency.exponentialRampToValueAtTime(fclamp(220), t + (big ? 2.2 : 1.4));
   rf.frequency.exponentialRampToValueAtTime(fclamp(60), t + dur);
   var rg = A.ctx.createGain();
   rg.gain.setValueAtTime(0.0001, t);
-  rg.gain.exponentialRampToValueAtTime(0.9, t + 0.05);
-  rg.gain.exponentialRampToValueAtTime(0.45, t + 1.1);
-  rg.gain.exponentialRampToValueAtTime(0.12, t + 2.4);
+  rg.gain.exponentialRampToValueAtTime(big ? 1.0 : 0.9, t + 0.05);
+  rg.gain.exponentialRampToValueAtTime(big ? 0.62 : 0.45, t + (big ? 1.8 : 1.1));
+  rg.gain.exponentialRampToValueAtTime(0.12, t + (big ? 4.2 : 2.4));
   rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   rf.connect(rg); rg.connect(head);
   var r1 = noise(t, dur + 0.05, 0.55); r1.connect(rf); srcs.push(r1);
   var r2 = noise(t, dur + 0.05, 0.22); r2.connect(rf); srcs.push(r2);
 
+  // --- 4b. the return: a second roar swelling back in ~1.5s later, the front
+  // reflecting off the deck. It is the single thing that makes the hydrogen
+  // round sound like it happened to a landscape rather than to a point.
+  if (big) {
+    var ef = lp(420, 0.9);
+    ef.frequency.exponentialRampToValueAtTime(fclamp(70), t + dur);
+    var eg = A.ctx.createGain();
+    eg.gain.setValueAtTime(0.0001, t);
+    eg.gain.setValueAtTime(0.0001, t + 1.35);
+    eg.gain.exponentialRampToValueAtTime(0.55, t + 2.3);
+    eg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    ef.connect(eg); eg.connect(head);
+    var e1 = noise(t + 1.3, dur - 1.3, 0.4); e1.connect(ef); srcs.push(e1);
+  }
+
   // --- 5. debris tail: same jittery stepped-gain trick boom() uses
   var dh = hp(900);
   var dg = A.ctx.createGain();
   dg.gain.setValueAtTime(0.0001, t + 0.1);
-  var steps = 14, dDur = dur * 0.8;
+  var steps = big ? 22 : 14, dDur = dur * 0.8;
   for (var i = 0; i < steps; i++) {
     var it = t + 0.1 + (i / steps) * dDur;
     var amp = 0.3 * (1 - i / steps) * (0.3 + Math.random() * 0.7);
