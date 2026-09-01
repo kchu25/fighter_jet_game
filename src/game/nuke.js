@@ -134,6 +134,10 @@ function mkWarhead(x, z, hyd, extra){
     wave:0, waveHit:false, trailT:0, hyd: !!hyd
   };
   if(extra) Object.assign(k, extra);
+  /* every hydrogen round in the game is built here, so this is the one place
+     the "have they actually seen one yet" flag can be set without the callers
+     having to remember to. The scheduler reads it to stop forcing. */
+  if(k.hyd) S.hydSeen = true;
   return k;
 }
 /* the x-placement for a tier, on a given side */
@@ -152,17 +156,25 @@ function gapFor(a, b){
 /* n warheads walked across the corridor: the first picks a side, each
    subsequent one lands on the OPPOSITE side and deeper, so surviving the
    first dodge immediately demands the reverse dodge. */
-export function nukeStrike(n, hydP){
+export function nukeStrike(n, hydP, forceHyd){
   if(!S.nukes) S.nukes=[];
   hydP = hydP||0;
   let side = Math.random()<.5?-1:1;
   let z = SPAWN_Z+REL_Z;
   let prevH=false, anyH=false;
+  /* One warhead in the walk can be PROMOTED rather than rolled. A probability
+     alone is not a guarantee, and a feature nobody sees does not exist: at the
+     old 12% against a two-warhead walk, ~78% of first eligible walks contained
+     no hydrogen round at all, so the tier routinely went unseen for minutes —
+     or for a whole run, since dying resets the sector. Not index 0: the beat
+     is a walk that ESCALATES mid-dodge, so the promoted round wants to be one
+     you are already committed away from. */
+  const fi = forceHyd ? (n>1 ? 1+((Math.random()*(n-1))|0) : 0) : -1;
   for(let i=0;i<n;i++){
     /* per-warhead tier roll, so a walk can be all-tactical, all-hydrogen, or
        a mix — a mixed walk is the nastiest read, because the lane you have to
        reach moves outboard without warning halfway through */
-    const h = Math.random() < hydP;
+    const h = (i===fi) || Math.random() < hydP;
     /* gaps are jittered rather than uniform so a walk cannot be dodged on a
        metronome — you have to keep reading the corridor, not count beats */
     if(i>0) z += gapFor(h, prevH);
@@ -450,7 +462,7 @@ function bossNukeTick(dt){
    The consequence worth knowing: releases are ~2.4s apart and a column lives
    ~3.3s from detonation to despawn, so at most TWO columns exist at once and
    they are 2500+ apart in z. Never two in the danger band. */
-const SESS_SECTOR = 4;    // not before the run has taught the ordinary strike
+const SESS_SECTOR = 3;    // not before the run has taught the ordinary strike
 const SESS_ARM    = 2.4;  // seconds between the flash traffic and the first release
 
 function sessionStart(){
@@ -529,7 +541,13 @@ export function nukeSchedule(dt){
      a session is never queued behind a routine strike that happens to be
      mid-countdown. Same wall-time rule as nukeT: gates hold back the release,
      never the countdown. */
-  if(S.nukeSessT<=0 && S.sector>=SESS_SECTOR && clear){ sessionStart(); return; }
+  /* A barrage is a hydrogen event, so it must not be the pilot's INTRODUCTION
+     to hydrogen. Measured without this gate, a strong run opened its session at
+     52.5s and met its first hydrogen round at 54.9s — i.e. the tier and the
+     sustained version of the tier arrived as one thing, which reads as noise
+     rather than as an escalation. Requiring hydSeen forces the intended order:
+     ordinary strike, then a walk with one hydrogen round in it, then a barrage. */
+  if(S.nukeSessT<=0 && S.sector>=SESS_SECTOR && S.hydSeen && clear){ sessionStart(); return; }
 
   /* The clock runs on wall time and the gates only hold back the RELEASE. If
      the countdown itself were gated it would barely advance: bosses alone eat
@@ -550,6 +568,19 @@ export function nukeSchedule(dt){
      chance the round is a hydrogen one: rare enough early that the ordinary
      strike is still the thing you learn, common enough deep that a routine
      walk stops being routine. */
-  const hydP = s>=10 ? .55 : s>=7 ? .38 : s>=5 ? .24 : s>=3 ? .12 : 0;
-  nukeStrike(s>=9 ? 5 : s>=6 ? 4 : s>=4 ? 3 : 2, hydP);
+  /* Measured against an autopiloted run that never dies: at the old sector-3
+     gate the first hydrogen round landed at 47.8s of strong play, 54.8s of
+     average play and 146.8s of weak play — and a real pilot who dies drops
+     back to sector 1 and starts that clock again. The tier was effectively
+     invisible. It opens at sector 2 now, and the FIRST eligible walk always
+     carries one, so it is seen once on a guarantee and thereafter on a curve. */
+  const hydP = s>=9 ? .55 : s>=7 ? .42 : s>=5 ? .32 : s>=3 ? .22 : .1;
+  /* The guarantee waits for the SECOND strike, not the first. Forcing it on
+     the first put a hydrogen round in the very first strike a pilot ever saw,
+     which inverts the teaching order: the tactical round is what establishes
+     "break left or right and commit", and the hydrogen round only reads as an
+     escalation if there is something for it to escalate FROM. One ordinary
+     strike first, then the promotion. */
+  S.nukeN = (S.nukeN||0) + 1;
+  nukeStrike(s>=9 ? 5 : s>=6 ? 4 : s>=4 ? 3 : 2, hydP, !S.hydSeen && s>=2 && S.nukeN>=2);
 }

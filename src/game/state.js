@@ -66,9 +66,11 @@ export const S = {
      how much of this frame's whiteout came from a hydrogen detonation, which is
      what lets the HUD tint it hotter and punch the break call back through it.
      nukeSess is a live barrage session (a single walk that keeps extending) or
-     null; nukeSessT is the wall clock to the next one. */
+     null; nukeSessT is the wall clock to the next one. hydSeen latches once a
+     hydrogen round has actually been built this run, and is what lets the
+     scheduler guarantee the first one instead of leaving it to a dice roll. */
   nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0, nukeFlH: 0,
-  nukeSess: null, nukeSessT: 0,
+  nukeSess: null, nukeSessT: 0, hydSeen: false, nukeN: 0,
   /* the first-boss set piece, once per run: 0 armed, 1 release called, 2 spent */
   bossNuke: 0, bossNukeT: 0,
   tipMsg: TIP_DEFAULT,
@@ -98,10 +100,13 @@ export function reset(){
      early the first strike can arrive: long enough to have flown a little,
      short enough that even a brief run sees one */
   S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0; S.nukeFlH=0;
+  S.hydSeen=false; S.nukeN=0;
   /* Barrage sessions are the rare escalation, not the baseline: this is the
      floor on the first one, long enough that a run has settled into its rhythm
-     before the rhythm is taken away. nukeSchedule also gates them on sector. */
-  S.nukeSess=null; S.nukeSessT=rnd(62,105);
+     before the rhythm is taken away. nukeSchedule also gates them on sector.
+     It used to be rnd(62,105), which stacked on top of a sector-4 gate and put
+     the first barrage past 100s even for strong play — most runs ended first. */
+  S.nukeSess=null; S.nukeSessT=rnd(34,52);
   S.bossNuke=0; S.bossNukeT=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */
