@@ -1009,6 +1009,8 @@ export function siren() {
    this file reads them, and geiger() is called once per frame so it has to
    own its own rate limiting. */
 var lastNukeBoomT = -99, lastGeigerT = -99;
+/* How long the last hydrogen front's tail still owns the mix. See nukeBoom(). */
+var bigTailUntil = -99, duckToken = 0;
 
 /* NUCLEAR LAUNCH DETECTED. Deliberately not siren(): that one is a smooth
    two-cycle wail for a capital ship. This is gated — four hard stabs — and
@@ -1096,12 +1098,78 @@ export function nukeAlert(tier) {
   voice(head, srcs);
 }
 
-/* The detonation. This is the loudest thing in the game and the only cue
-   allowed to own the mix for a full second — it ducks the music hard and
-   claims two slots from the boom pool so a dogfight underneath it cannot
-   starve the tail. The shape is crack -> sub drop -> long rumble, which is
-   what a distant airburst actually does: the report arrives, the ground
-   shock follows, then several seconds of decaying roar. */
+/* A duck the kick drum cannot stomp.
+   duckPump() only writes A.duckBus, and instruments.js kick() cancels and
+   rewrites that bus on EVERY kick — four times a bar — so the 2.8s release
+   nukeBoom() used to ask for never actually happened; it was gone inside a
+   couple of hundred milliseconds. This ducks the two nodes nothing else
+   automates instead:
+
+     - A.musicGain, which sits downstream of drumBus AND duckBus, so this takes
+       the whole score down including the kick. This one is close to
+       self-healing: scheduler.js's applyIntensity() re-targets it every 25ms
+       with a 0.5s time constant, so the music walks itself back up and nothing
+       written here can leave it down for long.
+     - A.sfxGain, which carries the engine drone, the dogfight and the fallout
+       crackle. Nothing else owns it, so its recovery is written out in full and
+       pinned with a final setValueAtTime, and a token-guarded watchdog puts it
+       back to 0.85 in wall-clock time in case a context suspend swallows the
+       automation. Failing toward "un-ducked" is the safe direction.
+
+   The blast front itself must not be caught by this, so nukeBoom() hangs a big
+   round straight off A.sfxShaper and bypasses A.sfxGain entirely. */
+function mixDuck(t, depth, hold, rel) {
+  if (!A.sfxGain) return;
+  var lo = Math.max(0.02, 0.85 * (1 - depth));
+  try {
+    var g = A.sfxGain.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(Math.max(0.0005, g.value), t);
+    g.linearRampToValueAtTime(lo, t + 0.012);
+    g.setValueAtTime(lo, t + hold);
+    g.exponentialRampToValueAtTime(0.85, t + hold + rel);
+    g.setValueAtTime(0.85, t + hold + rel + 0.01);
+  } catch (e) { }
+  try {
+    var m = A.musicGain.gain, base = Math.max(0.05, m.value);
+    m.cancelScheduledValues(t);
+    m.setTargetAtTime(Math.max(0.03, base * (1 - depth)), t, 0.01);
+    /* applyIntensity() would walk this back on its own, but it does NOT run
+       while the context is suspended (see scheduler()'s early return), so a
+       duck landing right before the tab is backgrounded would hold. Two
+       setTargetAtTime events in sequence are well defined and any later
+       applyIntensity target simply supersedes this one. */
+    m.setTargetAtTime(base, t + hold + 0.02, 0.45);
+  } catch (e) { }
+
+  var tok = ++duckToken;
+  setTimeout(function () {
+    if (tok !== duckToken || !A.sfxGain) return;
+    try {
+      var t2 = now();
+      A.sfxGain.gain.cancelScheduledValues(t2);
+      A.sfxGain.gain.setValueAtTime(0.85, t2);
+    } catch (e) { }
+  }, (hold + rel + 0.35) * 1000);
+}
+
+/* The blast front arriving. This is the loudest thing in the game and the only
+   cue allowed to own the mix outright.
+
+   The hydrogen round is not "the same thing louder". Peak drive is actually
+   slightly LOWER than it used to be, because everything here already saturates
+   A.sfxShaper's tanh and pushing harder only buys fizz. What makes it read as
+   overwhelming is spent on time and contrast instead:
+
+     hush -> sub shove -> crack -> reflected crack -> a roar that heaves for
+     eight seconds and comes back at you twice
+
+   The hush is the point. nuke.js deliberately gives the hydrogen round a
+   SLOWER front (HYD_WAVE 1500 vs WAVE_SPD 2400), so the player has already sat
+   through a longer silence watching the flash; landing on 85ms of near-total
+   mix cut and then opening up is the audio whiteout, and it sells scale far
+   better than another 3dB would. The tactical round gets none of that — no
+   hush, no reflection, one crack, a third of the tail — so the tier reads. */
 export function nukeBoom(big) {
   if (!A.ready || A.muted) return;
   var t = now();
@@ -1109,92 +1177,176 @@ export function nukeBoom(big) {
      barrage the fronts arrive ~2.4s apart, but a hydrogen detonation lands on
      top of a tactical tail often enough that a 1.2s gate would silently eat
      the loudest cue in the game. A big one always gets through. */
-  if (t - lastNukeBoomT < (big ? 0.5 : 1.2)) return;
+  if (t - lastNukeBoomT < (big ? 0.45 : 1.2)) return;
   if (A.boomVoices >= MAX_BOOM - 2 || !budget(big ? 18 : 14)) return;
+  /* ...but "always gets through" cannot mean "always at full size". A barrage
+     is nothing but hydrogen fronts, and four overlapping eight-second roars is
+     mud plus a duck that never lifts. A front landing inside the previous
+     one's tail plays a shortened, quieter version and does not re-duck the
+     mix; it then claims a shorter tail of its own, so the pattern settles into
+     full / reduced / full / reduced at ~4.8s. The barrage heaves instead of
+     flattening, and the mix is only ever hushed once every five seconds. */
+  var crowded = !!big && t < bigTailUntil;
   lastNukeBoomT = t;
+  if (big) bigTailUntil = t + (crowded ? 2.4 : 4.2);
   t += 0.002;
 
-  var dur = big ? 6.4 : 3.6;
-  var head = gainNode(big ? 1.15 : 0.95);
-  head.connect(A.sfxGain);
+  var dur = big ? (crowded ? 4.2 : 7.6) : 3.2;
+  /* A big round bypasses A.sfxGain so mixDuck() cannot duck the detonation
+     with everything else — the gains below already fold in that node's 0.85. */
+  var head = gainNode(big ? (crowded ? 0.80 : 1.08) : 0.9);
+  head.connect(big ? (A.sfxShaper || A.sfxGain) : A.sfxGain);
   var srcs = [];
-  duckPump(t, big ? 0.42 : 0.55, big ? 2.8 : 1.6);
 
-  // --- 1. the crack: a bright 50ms transient, the shock front arriving
-  var ch = hp(big ? 1300 : 1800);
-  var cg = pluck(t, big ? 0.85 : 0.7, big ? 0.09 : 0.05, 0.0012);
+  if (big) {
+    duckPump(t, 0.5, 1.2);                       // bass/arp/pad, as before
+    /* A crowded front ducks shallow and lets go fast. The player is still
+       flying and still shooting through a 40-second barrage, and a full hush
+       every 2.4s would leave the SFX bus below half for most of the session —
+       the engine and the guns are the only feedback they have left. */
+    if (crowded) mixDuck(t, 0.40, 0.015, 0.8);
+    else mixDuck(t, 0.85, 0.085, 2.0);
+  } else {
+    duckPump(t, 0.55, 1.6);
+  }
+
+  /* --- 1. the crack. The big one fires 55ms LATE on purpose: that gap is the
+     hush, the moment the duck has the rest of the mix on the floor and nothing
+     has arrived yet. It is also darker (hp 800, not 1800) and twice as long,
+     because a huge front is a tearing report, not a snap. */
+  var t0 = t + (big ? 0.055 : 0);
+  var ch = hp(big ? 800 : 1800);
+  var cg = pluck(t0, big ? 0.9 : 0.7, big ? 0.11 : 0.05, big ? 0.0018 : 0.0012);
   ch.connect(cg); cg.connect(head);
-  var cs = noise(t, big ? 0.13 : 0.07, 1.6); cs.connect(ch); srcs.push(cs);
+  var cs = noise(t0, big ? 0.16 : 0.07, 1.6); cs.connect(ch); srcs.push(cs);
 
-  // --- 2. sub drop: 70Hz walked down to the floor over 1.2s. The big one
-  // starts lower and takes twice as long to get there, so the floor moves
-  // under the whole cue instead of thumping once.
-  var so = osc('sine', big ? 52 : 70, t);
-  so.frequency.exponentialRampToValueAtTime(fclamp(big ? 13 : 18), t + (big ? 2.4 : 1.2));
+  /* --- 1b. the second crack: the report coming back off the deck ~190ms
+     later, duller and slower to start. Thunder does this and a firecracker
+     does not, which is most of why one reads as a mile away and huge. */
+  if (big) {
+    var t1 = t0 + 0.19;
+    var kf = bp(420, 0.8);
+    kf.frequency.exponentialRampToValueAtTime(fclamp(180), t1 + 0.4);
+    var kg = A.ctx.createGain();
+    kg.gain.setValueAtTime(0.0001, t0);
+    kg.gain.setValueAtTime(0.0001, t1);
+    kg.gain.exponentialRampToValueAtTime(crowded ? 0.45 : 0.72, t1 + 0.02);
+    kg.gain.exponentialRampToValueAtTime(0.0001, t1 + 0.34);
+    kf.connect(kg); kg.connect(head);
+    var ks = noise(t1, 0.38, 0.9); ks.connect(kf); srcs.push(ks);
+  }
+
+  /* --- 2. sub shock: a pressure pulse walked down to the floor. The big one
+     starts higher and takes twice as long to get down, so the floor MOVES
+     under the whole cue instead of thumping once. It bottoms at 15Hz rather
+     than 13 — below that it is inaudible cone excursion that only eats
+     headroom off the compressor. */
+  var so = osc('sine', big ? 58 : 70, t);
+  so.frequency.exponentialRampToValueAtTime(fclamp(big ? 15 : 18), t + (big ? 2.9 : 1.2));
   var sg = A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001, t);
-  sg.gain.exponentialRampToValueAtTime(1.0, t + 0.03);
-  sg.gain.exponentialRampToValueAtTime(0.35, t + (big ? 1.9 : 0.9));
-  sg.gain.exponentialRampToValueAtTime(0.0001, t + (big ? 3.4 : 1.9));
+  sg.gain.exponentialRampToValueAtTime(1.0, t + 0.035);
+  sg.gain.exponentialRampToValueAtTime(0.4, t + (big ? 2.1 : 0.9));
+  sg.gain.exponentialRampToValueAtTime(0.0001, t + (big ? 3.9 : 1.9));
   so.connect(sg); sg.connect(head);
-  so.start(t); so.stop(t + (big ? 3.45 : 1.95));
+  so.start(t); so.stop(t + (big ? 3.95 : 1.95));
   srcs.push(so);
 
   // --- 3. mid punch, so it hits the chest and not just the floor
-  var mo = osc('triangle', big ? 132 : 180, t);
-  mo.frequency.exponentialRampToValueAtTime(fclamp(big ? 32 : 42), t + (big ? 0.5 : 0.3));
-  var mg = pluck(t, big ? 0.75 : 0.6, big ? 0.9 : 0.55, 0.004);
+  var mo = osc('triangle', big ? 132 : 180, t0);
+  mo.frequency.exponentialRampToValueAtTime(fclamp(big ? 32 : 42), t0 + (big ? 0.5 : 0.3));
+  var mg = pluck(t0, big ? 0.72 : 0.6, big ? 0.9 : 0.55, 0.004);
   mo.connect(mg); mg.connect(head);
-  mo.start(t); mo.stop(t + (big ? 1.0 : 0.6));
+  mo.start(t0); mo.stop(t0 + (big ? 1.0 : 0.6));
   srcs.push(mo);
 
   // --- 4. the rumble: two noise layers at different rates through a lowpass
   // closing slowly, which is what turns a bang into a rolling roar
   var rf = lp(1800, 1.1);
   rf.frequency.setValueAtTime(fclamp(1800), t);
-  rf.frequency.exponentialRampToValueAtTime(fclamp(220), t + (big ? 2.2 : 1.4));
-  rf.frequency.exponentialRampToValueAtTime(fclamp(60), t + dur);
+  rf.frequency.exponentialRampToValueAtTime(fclamp(220), t + (big ? 2.4 : 1.4));
+  rf.frequency.exponentialRampToValueAtTime(fclamp(55), t + dur);
   var rg = A.ctx.createGain();
   rg.gain.setValueAtTime(0.0001, t);
-  rg.gain.exponentialRampToValueAtTime(big ? 1.0 : 0.9, t + 0.05);
-  rg.gain.exponentialRampToValueAtTime(big ? 0.62 : 0.45, t + (big ? 1.8 : 1.1));
-  rg.gain.exponentialRampToValueAtTime(0.12, t + (big ? 4.2 : 2.4));
-  rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  rf.connect(rg); rg.connect(head);
-  var r1 = noise(t, dur + 0.05, 0.55); r1.connect(rf); srcs.push(r1);
-  var r2 = noise(t, dur + 0.05, 0.22); r2.connect(rf); srcs.push(r2);
-
-  // --- 4b. the return: a second roar swelling back in ~1.5s later, the front
-  // reflecting off the deck. It is the single thing that makes the hydrogen
-  // round sound like it happened to a landscape rather than to a point.
   if (big) {
-    var ef = lp(420, 0.9);
-    ef.frequency.exponentialRampToValueAtTime(fclamp(70), t + dur);
+    /* A smooth exponential decay is a bang dying away; a landscape's worth of
+       roar SURGES. Same stepped-gain trick the debris tail uses, but thirty
+       slow steps instead of twenty fast ones, so the overall decay is still
+       exact while the roar heaves up and down inside it. Costs no extra nodes
+       and it is the single thing that makes this sound like weather. */
+    var rSteps = 30, rTc = (dur / rSteps) * 0.35;
+    for (var ri = 0; ri < rSteps; ri++) {
+      var u = ri / rSteps;
+      var env = u < 0.06 ? (u / 0.06) : Math.pow(1 - (u - 0.06) / 0.94, 1.35);
+      var ramp = 0.9 * env * (0.58 + Math.random() * 0.42);
+      rg.gain.setTargetAtTime(Math.max(0.0002, ramp), t + u * dur, rTc);
+    }
+    rg.gain.setTargetAtTime(0.00008, t + dur, 0.06);
+  } else {
+    rg.gain.exponentialRampToValueAtTime(0.9, t + 0.05);
+    rg.gain.exponentialRampToValueAtTime(0.45, t + 1.1);
+    rg.gain.exponentialRampToValueAtTime(0.12, t + 2.2);
+    rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  }
+  rf.connect(rg); rg.connect(head);
+  // sources outlast the envelope so the roar is faded out, never cut off
+  var r1 = noise(t, dur + (big ? 0.32 : 0.05), 0.55); r1.connect(rf); srcs.push(r1);
+  var r2 = noise(t, dur + (big ? 0.32 : 0.05), 0.22); r2.connect(rf); srcs.push(r2);
+
+  /* --- 4b. the returns: the roar swelling back IN, twice, off the deck and
+     then off whatever is beyond it. This is what makes the hydrogen round
+     sound like it happened to a landscape rather than to a point, so a
+     crowded barrage front keeps the near one and drops the far one. */
+  if (big) {
+    var ef = lp(380, 0.9);
+    ef.frequency.exponentialRampToValueAtTime(fclamp(80), t + dur);
     var eg = A.ctx.createGain();
     eg.gain.setValueAtTime(0.0001, t);
-    eg.gain.setValueAtTime(0.0001, t + 1.35);
-    eg.gain.exponentialRampToValueAtTime(0.55, t + 2.3);
+    eg.gain.setValueAtTime(0.0001, t + (crowded ? 0.9 : 1.5));
+    eg.gain.exponentialRampToValueAtTime(crowded ? 0.34 : 0.6, t + (crowded ? 1.6 : 2.4));
     eg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     ef.connect(eg); eg.connect(head);
-    var e1 = noise(t + 1.3, dur - 1.3, 0.4); e1.connect(ef); srcs.push(e1);
+    var eStart = t + (crowded ? 0.85 : 1.45);
+    var e1 = noise(eStart, (t + dur) - eStart + 0.1, 0.4); e1.connect(ef); srcs.push(e1);
+
+    if (!crowded) {
+      var ff = lp(210, 0.8);
+      ff.frequency.exponentialRampToValueAtTime(fclamp(65), t + dur);
+      var fg = A.ctx.createGain();
+      fg.gain.setValueAtTime(0.0001, t);
+      fg.gain.setValueAtTime(0.0001, t + 3.5);
+      fg.gain.exponentialRampToValueAtTime(0.36, t + 4.7);
+      fg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      ff.connect(fg); fg.connect(head);
+      var f1 = noise(t + 3.45, dur - 3.35, 0.3); f1.connect(ff); srcs.push(f1);
+    }
   }
 
   // --- 5. debris tail: same jittery stepped-gain trick boom() uses
+  var dStart = t + (big ? 0.24 : 0.1);
   var dh = hp(900);
   var dg = A.ctx.createGain();
-  dg.gain.setValueAtTime(0.0001, t + 0.1);
-  var steps = big ? 22 : 14, dDur = dur * 0.8;
+  dg.gain.setValueAtTime(0.0001, dStart);
+  var steps = big ? 24 : 14, dDur = dur * 0.8;
   for (var i = 0; i < steps; i++) {
-    var it = t + 0.1 + (i / steps) * dDur;
+    var it = dStart + (i / steps) * dDur;
     var amp = 0.3 * (1 - i / steps) * (0.3 + Math.random() * 0.7);
     dg.gain.setTargetAtTime(Math.max(0.0002, amp), it, dDur / (steps * 3));
   }
-  dg.gain.setTargetAtTime(0.0001, t + 0.1 + dDur, 0.12);
+  dg.gain.setTargetAtTime(0.0001, dStart + dDur, 0.12);
   dh.connect(dg); dg.connect(head);
-  var ds = noise(t + 0.1, dDur + 0.2, 1.3); ds.connect(dh); srcs.push(ds);
+  var ds = noise(dStart, dDur + 0.2, 1.3); ds.connect(dh); srcs.push(ds);
 
+  /* Two slots out of the boom pool so a dogfight underneath cannot starve the
+     front — but held only over the IMPACT, not the whole tail. The reservation
+     used to run for the full duration, and at 7.6s against a barrage's 2.4s
+     cadence four live tails put boomVoices at 8 and the `>= MAX_BOOM - 2` gate
+     at the top of this function then silently dropped every remaining warhead
+     in the session. The tail is a quiet rumble; it does not need to own the
+     pool while it decays. */
+  var holdFor = big ? 2.6 : dur + 0.2;
   A.boomVoices += 2;
-  setTimeout(function () { A.boomVoices -= 2; }, (dur + 0.2) * 1000);
+  setTimeout(function () { A.boomVoices -= 2; }, holdFor * 1000);
   voice(head, srcs);
 }
 

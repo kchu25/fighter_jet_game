@@ -125,6 +125,14 @@ export function coreR(k){
   return r0 + (R-r0)*e;
 }
 export function falloutR(k){ return coreR(k)*(k.hyd?HYD_FALL_MUL:FALL_MUL); }
+/* The fully-grown lethal radius for a tier. Read-only, and it exists for the
+   RENDERER: coreR() eases from a seed up to this over GROW seconds because the
+   hazard has to grow into its damage, but a fireball is at its widest the
+   instant it exists and it is the cloud above it that grows. Sizing the glare
+   off coreR() made the flash of a 300-radius warhead 96 units across, which is
+   most of why the set piece needed a full-frame white rect to feel like
+   anything. Nothing here may feed a damage or placement term. */
+export function coreFull(k){ return k.hyd ? HYD_CORE : CORE_R; }
 
 function mkWarhead(x, z, hyd, extra){
   const k = {
@@ -195,17 +203,36 @@ function detonate(k){
   /* One scale term drives the whole set piece so the two tiers cannot drift
      apart: h is 0 for tactical, 1 for hydrogen, and P is the linear blow-up. */
   const h = k.hyd?1:0, P = 1+h*.85;
+  /* ...except for ember RADIUS, which gets its own, far gentler blow-up. P is
+     applied to counts, speeds and offsets, and all three of those are things a
+     bigger bomb should have more of. Radius is not: the ember pass is ~370
+     additive sprites clustered on ground zero, so scaling each one 1.85x scales
+     the AREA 3.4x and every one of them lands on top of every other. Measured
+     at t=2.0 the ember pass alone carried the frame from .26 to .68 mean
+     luminance — the fireball, the cloud and the flash were all innocent, and
+     the hydrogen round was washing out because it threw more, bigger sparks.
+     More embers, spread further, each no fatter: that reads as bigger. */
+  const PS = 1+h*.25;
 
   /* the light arrives now; the SOUND and the blast front arrive later, when
-     k.wave catches up to you — that gap is most of why this reads as huge */
-  AUDIO.boom && AUDIO.boom(2);
+     k.wave catches up to you — that gap is most of why this reads as huge.
+     Which is exactly why the hydrogen round gets almost nothing here: a full
+     boom(2) runs 1.78s and paints over the deliberate silence that the 7.6s
+     hydrogen front is supposed to break. The tactical round is close enough
+     and small enough that its own crack at flash time still reads right. */
+  AUDIO.boom && AUDIO.boom(h ? .5 : 2);
   S.shake = Math.min(52+h*16, S.shake+30+h*16);
 
   /* ground zero: a white core inside a swelling fireball, plus the ground
      flash that lights the deck before anything has had time to rise */
-  S.parts.push(mk(x,y+70,z, 0,0,0, COL.white, .55+h*.5, 300*P, 0, 0, 2.6));
-  S.parts.push(mk(x,y+70,z, 0,0,0, [1,.92,.62], .85+h*.7, 420*P, 0, 0, 3.2));
-  S.parts.push(mk(x,y+40,z, 0,0,0, [1,.52,.12], 1.5+h*1.4, 520*P, 0, 0, 3.6));
+  S.parts.push(mk(x,y+70,z, 0,0,0, COL.white, .55+h*.5, 300*PS, 0, 0, 2.6));
+  S.parts.push(mk(x,y+70,z, 0,0,0, [1,.92,.62], .85+h*.7, 420*PS, 0, 0, 3.2));
+  /* ...and the outermost ground flash does NOT get a life bonus either. At 2.9s
+     it was still alive, 650 units across, when the column had scrolled to the
+     camera — a soft orange disc covering the whole frame at the one moment the
+     column is meant to be a wall going past. It is the flash, so it dies with
+     the flash. */
+  S.parts.push(mk(x,y+40,z, 0,0,0, [1,.52,.12], 1.5+h*.5, 520*PS, 0, 0, 3.6));
   shock(x,y+60,z,  50, 2600*P, 1.5+h*.7, 46, COL.white, 1.3);
   shock(x,y+20,z,  30, 1900*P, 1.1+h*.6, 66, [1,.66,.20], 1.2);
   shock(x,y,z,     40, 3200*P, 2.1+h*1.1, 30, [1,.86,.45], .9);
@@ -221,12 +248,17 @@ function detonate(k){
   for(let i=0;i<40+h*34;i++)
     S.parts.push(mk(x+rnd(-70,70)*P, y+rnd(0,120), z+rnd(-70,70)*P,
       rnd(-210,210)*P, rnd(420,1150)*P, rnd(-210,210)*P,
-      i&1?[1,.62,.16]:COL.white, rnd(.8,1.7)+h*.6, rnd(60,130)*P, 0, .5, 2.4));
-  /* base surge: dirt thrown flat along the deck in every direction */
-  for(let i=0;i<34+h*26;i++){
+      i&1?[1,.62,.16]:COL.white, rnd(.8,1.7)+h*.2, rnd(60,130)*PS, 0, .5, 2.4));
+  /* base surge: dirt thrown flat along the deck in every direction. The
+     hydrogen bonus is on SPEED, not on count or life: these are the embers that
+     are still alive when the column reaches the player, and by then they are a
+     few metres off the lens, so every extra one is another soft blob smeared
+     over the frame at the exact moment the column is supposed to be the
+     subject. Measured at t=3.3, the ember pass cost .040 of frame std. */
+  for(let i=0;i<34+h*12;i++){
     const a=rnd(0,6.2832), sp=rnd(700,1900)*P;
     S.parts.push(mk(x,y+rnd(0,50),z, Math.cos(a)*sp, rnd(20,180), Math.sin(a)*sp,
-      i%3?[.42,.30,.22]:[1,.55,.18], rnd(1.0,2.0)+h*.7, rnd(70,150)*P, 0, .35, 2.8));
+      i%3?[.42,.30,.22]:[1,.55,.18], rnd(1.0,2.0)+h*.3, rnd(70,150)*PS, 0, .35, 2.8));
   }
   for(let i=0;i<14+h*12;i++)
     shard(x+rnd(-90,90)*P, y+rnd(0,90), z+rnd(-90,90)*P,
@@ -239,11 +271,11 @@ function detonate(k){
     later(.16+i*(.19+h*.05), x, y, z, (fx,fy,fz)=>{
       const rr = (240+i*220)*P;
       shock(fx,fy+60+i*70,fz, rr*.35, rr*2.2, .8+h*.4, 22+i*5, i&1?[1,.72,.26]:COL.white, .95);
-      for(let j=0;j<10+h*6;j++){
+      for(let j=0;j<10+h*3;j++){
         const a=rnd(0,6.2832), sp=rnd(200,700)*P;
         S.parts.push(mk(fx+Math.cos(a)*rr*.4, fy+90+i*90+rnd(-40,40), fz+Math.sin(a)*rr*.4,
           Math.cos(a)*sp, rnd(180,620)*P, Math.sin(a)*sp,
-          j&1?[1,.58,.14]:[1,.86,.5], rnd(.7,1.4)+h*.5, rnd(80,170)*P, 0, .45, 2.6));
+          j&1?[1,.58,.14]:[1,.86,.5], rnd(.7,1.4)+h*.2, rnd(80,170)*PS, 0, .45, 2.6));
       }
       S.shake=Math.min(52+h*16,S.shake+7+h*5);
     });
@@ -307,8 +339,15 @@ function waveHit(k){
 export function nukeTick(dt){
   if(!S.nukes) S.nukes=[];
   S.rad = 0;
-  S.nukeFl = Math.max(0, S.nukeFl - dt*(.9+S.nukeFl*1.8));
-  S.nukeFlH = Math.max(0, S.nukeFlH - dt*1.7);
+  /* The hydrogen wash is pulled down about four times faster than the tactical
+     one. Its spike is allowed to be genuinely opaque ONLY because it does not
+     last: the nukeFlH term in the rate is what buys the knife edge, and without
+     it this decay alone (2.7/s at full) floors the frame at 0.85 white for a
+     tenth of a second no matter what curve feeds it. */
+  S.nukeFl = Math.max(0, S.nukeFl - dt*(.9 + S.nukeFl*1.8 + S.nukeFlH*9.0));
+  S.nukeFlH = Math.max(0, S.nukeFlH - dt*5.2);
+  /* the light on the world, which deliberately outlives the wash on the lens */
+  S.nukeLt = Math.max(0, S.nukeLt - dt*(.30+S.nukeLt*.55));
   if(S.nukeWarn>0) S.nukeWarn-=dt;
 
   for(let i=S.nukes.length-1;i>=0;i--){
@@ -338,16 +377,47 @@ export function nukeTick(dt){
        brighter second peak as the fireball outruns its own shock front. This
        is the whiteout — attenuated with distance, but never below a floor,
        because even a far detonation has to blind.
-       The hydrogen flash is a full whiteout and holds for ~1.3s rather than
-       ~0.9s. That is long enough to be genuinely blinding, which is why
-       hud-draw.js re-draws the break call ON TOP of the wash: the flash is
-       allowed to take the world away, it is not allowed to take the dodge. */
+
+       THE HYDROGEN CURVE CHANGED, AND THIS IS THE REASON. It used to be a
+       near-opaque hold of ~1.3s, i.e. the ENTIRE window between the detonation
+       and the column reaching the band. Measured frame by frame against the
+       tactical round at matched timestamps, it had LOWER contrast at every
+       single one of them — mean luma .92/.94 against .70/.58, standard
+       deviation .064/.069 against .090/.127. The bigger weapon literally
+       showed less picture. "More epic" had been built as "more white", and a
+       whiteout is the absence of an image: the fireball, the double cap, the
+       skirt and the silhouetted deck were all happening underneath it where
+       nobody could see them.
+
+       So the hydrogen flash is now the sharper thing, not the longer thing: a
+       genuinely opaque spike of about three frames (f1 is twice as tall and
+       half as wide as the tactical one) collapsing into a translucent bloom
+       (f2 is a THIRD of what it was) that the fireball reads through. The
+       spectacle moved into the world — nukeFX() in render/scene-draw.js now
+       carries the glare as an additive disc at ground zero, which is depth
+       tested and so silhouettes the scenery instead of erasing it. */
     const near = clamp(1 - (k.z-200)/3600, hy?.74:.55, 1);
-    const f1 = Math.exp(-Math.pow(k.t/(hy?.085:.055), 2));
-    const f2 = (hy?1.25:.95)*Math.exp(-Math.pow((k.t-(hy?.44:.30))/(hy?.44:.30), 2));
+    const f1 = (hy?2.4:1)*Math.exp(-Math.pow(k.t/(hy?.038:.055), 2));
+    const f2 = (hy?.34:.95)*Math.exp(-Math.pow((k.t-(hy?.26:.30))/(hy?.40:.30), 2));
     const fl = Math.min(1, (f1+f2)*near);
     S.nukeFl = Math.max(S.nukeFl, fl);
     if(hy) S.nukeFlH = Math.max(S.nukeFlH, fl);
+    /* the glare has to be centred on SOMETHING, and it is whichever live
+       detonation is currently the brightest — not the nearest, which would
+       snap the centre across the frame the moment a second column caught up */
+    if(fl >= S.nukeFl-1e-6){ S.nukeFlX = k.x; S.nukeFlZ = k.z; }
+    /* the light on the world runs on its own, much slower clock: the wash is
+       gone in a fifth of a second but the deck stays lit by the fireball for
+       as long as there is a fireball.
+       The hydrogen tail used to run to 3.4s at a 1.5 gain, which plateaued the
+       bleach at FULL for the first 1.1s and still had it at half strength when
+       the column arrived at the player. By then the fireball is the brightest
+       thing in the frame on its own merits and the bleach was only fogging the
+       far half of the deck — measured at t=3.3 it cost .025 of frame std and
+       made the hydrogen round LOWER contrast than the tactical one. Shorter and
+       slightly softer: still lit for the whole approach, gone by arrival. */
+    const lt = Math.min(1, (hy?1.35:.62) * clamp(1-k.t/(hy?2.4:1.8), 0, 1) * near);
+    if(lt > S.nukeLt){ S.nukeLt = lt; S.nukeLtX = k.x; S.nukeLtZ = k.z; }
 
     /* blast front, expanding from the (still scrolling) ground zero */
     if(!k.waveHit){

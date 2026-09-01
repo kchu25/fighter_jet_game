@@ -65,11 +65,18 @@ export const S = {
      the HYDROGEN round — same geometry contract, bigger everything. nukeFlH is
      how much of this frame's whiteout came from a hydrogen detonation, which is
      what lets the HUD tint it hotter and punch the break call back through it.
+     nukeFlX/nukeFlZ are the ground zero the brightest live flash came from: the
+     wash is drawn as a radial GLARE centred there rather than as a flat rect,
+     because a rect can only ever remove contrast and a glare adds it.
+     nukeLt is the same light as it falls on the WORLD — it outlives the wash by
+     seconds and drives the key direction and the horizon haze in scene-draw.js,
+     so the deck stays lit by the fireball long after the frame has cleared.
      nukeSess is a live barrage session (a single walk that keeps extending) or
      null; nukeSessT is the wall clock to the next one. hydSeen latches once a
      hydrogen round has actually been built this run, and is what lets the
      scheduler guarantee the first one instead of leaving it to a dice roll. */
   nukes: null, nukeT: 0, nukeWarn: 0, rad: 0, nukeFl: 0, nukeFlH: 0,
+  nukeFlX: 0, nukeFlZ: 1200, nukeLt: 0, nukeLtX: 0, nukeLtZ: 1200,
   nukeSess: null, nukeSessT: 0, hydSeen: false, nukeN: 0,
   /* the first-boss set piece, once per run: 0 armed, 1 release called, 2 spent */
   bossNuke: 0, bossNukeT: 0,
@@ -100,6 +107,7 @@ export function reset(){
      early the first strike can arrive: long enough to have flown a little,
      short enough that even a brief run sees one */
   S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0; S.nukeFlH=0;
+  S.nukeFlX=0; S.nukeFlZ=1200; S.nukeLt=0; S.nukeLtX=0; S.nukeLtZ=1200;
   S.hydSeen=false; S.nukeN=0;
   /* Barrage sessions are the rare escalation, not the baseline: this is the
      floor on the first one, long enough that a run has settled into its rhythm

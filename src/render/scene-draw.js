@@ -12,7 +12,7 @@ import {
 import { gl, glc, W, H, attribs, upload, Plit, Pspr, Psky, MESH, ATT, skyBuf, mesh } from './gl.js';
 import { MODELS } from './models.js';
 import { SCENERY } from '../world/scenery.js';
-import { coreR, falloutR } from '../game/nuke.js';
+import { coreR, falloutR, coreFull } from '../game/nuke.js';
 
 /* enemy kind → mesh. The three newer hulls are uploaded here (gl.js only
    carries the original set); MESH entries are reused for the rest. */
@@ -139,8 +139,41 @@ export function toScreen(x,y,z){
 export function litBegin(){
   gl.useProgram(Plit.p); attribs(3);
   gl.uniform3f(Plit.u.uCam, camP[0],camP[1],camP[2]);
-  gl.uniform3f(Plit.u.uLightDir, -0.35, 0.72, -0.60);
-  gl.uniform3f(Plit.u.uFogColor, 0.13*(1+S.bossFx), 0.03, 0.20);
+  /* A live fireball becomes the key light. There is no second light slot in
+     the lit shader and adding one would touch every draw call, but the key is
+     already a direction and a warm colour — so the detonation simply TAKES it,
+     swinging the sun round to point out of ground zero and bleaching the fog
+     it sits in. The result is the cue that actually sells yield: every tower
+     and gantry in the corridor is suddenly rim-lit from one point on the
+     horizon and standing black against a white haze. It outlives the lens wash
+     by seconds (S.nukeLt has its own slow clock) which is the whole reason the
+     wash was allowed to get short. */
+  const nl = clamp(S.nukeLt,0,1);
+  if(nl>.01){
+    let dx = S.nukeLtX - S.P.x*.30, dz = S.nukeLtZ + CAM_BACK;
+    const dl = Math.hypot(dx,dz)||1;
+    gl.uniform3f(Plit.u.uLightDir,
+      -0.35*(1-nl) + (dx/dl)*nl,
+       0.72*(1-nl) + 0.30*nl,
+      -0.60*(1-nl) + (dz/dl)*nl);
+    /* The haze bleach gets nl CUBED, and that exponent is load-bearing. The
+       desert floor is one enormous grazing-angle surface, so almost every
+       pixel below the horizon is at full fog — bleaching the fog therefore
+       raises the floor of half the frame and is the single most
+       contrast-destructive thing available here. Measured at a linear ramp it
+       cost 0.15 of frame standard deviation three seconds after the
+       detonation, which is the same mistake as the whiteout wearing a
+       different hat. Cubed, it is a hard punch on the deck for half a second
+       and effectively gone by the time the column arrives, while the light
+       DIRECTION above keeps swinging for seconds — direction adds contrast,
+       ambient removes it, so they get different clocks. */
+    const nf = nl*nl*nl;
+    gl.uniform3f(Plit.u.uFogColor,
+      0.13*(1+S.bossFx) + nf*0.46, 0.03 + nf*0.30, 0.20 + nf*0.14);
+  } else {
+    gl.uniform3f(Plit.u.uLightDir, -0.35, 0.72, -0.60);
+    gl.uniform3f(Plit.u.uFogColor, 0.13*(1+S.bossFx), 0.03, 0.20);
+  }
   gl.uniform1f(Plit.u.uFogNear, FOG_NEAR);
   gl.uniform1f(Plit.u.uFogFar, FOG_FAR);
 }
@@ -525,30 +558,137 @@ function nukeFX(){
     const hy  = k.hyd?1:0;
     const x=k.x, z=k.z, age=k.t, g=k.g;
     const e   = 1-(1-g)*(1-g);
-    const hot = clamp(1-age/(3.2+hy*2.6), 0, 1);  // how molten it still is
+    /* the hydrogen cloud stays molten for more than twice as long, because the
+       flash no longer hides the first second and a half of it and the tier now
+       has to hold up to being LOOKED at for its whole life */
+    const hot = clamp(1-age/(3.2+hy*4.4), 0, 1);  // how molten it still is
     const rc  = coreR(k), rf = falloutR(k);
-    /* the hydrogen cloud is not just wider, it is much TALLER — a column that
-       leaves the top of the frame is the whole difference in silhouette */
-    const topY = GROUND_Y + (200 + 940*e + Math.min(300, age*46))*(1+hy*1.15);
-    const capR = rc*(1.35+.55*e);
+    /* The hydrogen cloud's LOWER cap sits lower than the tactical one, which is
+       the single least intuitive number in this file and the one that finally
+       made the silhouette appear.
+       The camera leaves about one frame half-height of world above the horizon:
+       at z=1600, where the column is the subject, that is ~1270 units above the
+       deck. This term used to carry 2.15x, then 1.62x, and at BOTH the cap, the
+       skirt and the second stack were off the top of the frame at every
+       distance the column is legible at — measured, the cap was at 1650 with
+       1270 available. The tier's signature silhouette existed only in the
+       source; on screen it was a bright dome on the horizon.
+       So the lower cap takes NO height bonus at all: it sits exactly where a
+       tactical cap sits, ~1150 up, which is the tallest thing that still fits,
+       and the second cap goes above it. That is also the only height at which
+       the shape survives the sprite radii — every element here is drawn with
+       blobs about 60% as wide as the structure they describe, so at the .72x I
+       tried first the stem, the cap and the skirt all overlapped into a single
+       bell. A mushroom needs the cap to stand at least twice its own radius off
+       the deck before the gap under it is wider than the blobs drawing it.
+       The tier's extra bulk therefore goes into WIDTH (capR, skirt) and into
+       the second cap — the axes the frame has room on. */
+    const topY = GROUND_Y + (200 + 940*e + Math.min(300, age*46));
+    /* The hydrogen cap does NOT get a width bonus on top of that. rc is already
+       the hydrogen core, so the cap is wider than a tactical one for free; the
+       extra .24 on top of it put the cap radius (579) within fifty units of the
+       cap's own height off the deck (621), and a cap as wide as it is tall is a
+       DOME. What makes a mushroom read is the ratio, not the size. */
+    const capR = rc*(1.35+.55*e)*(1+hy*.05);
+
+    /* Sprites melt into the haze — see the fade in the spr fragment shader —
+       and a warhead detonates at z ~= 2650, where that fade is down to about
+       five percent. Everything else in the game wants exactly that; a nuclear
+       fireball is the one object that must not be politely absorbed by the
+       horizon, and this is the other half of why the old set piece had to lean
+       on a full-frame white rect. It was not that the fireball was too small,
+       it was that the fog had already erased it. So the glare divides the fade
+       back out and arrives at full strength however far away it is. */
+    let ff = 1 - clamp((z + CAM_BACK - FOG_NEAR)/(FOG_FAR-FOG_NEAR), 0, 1);
+    ff = ff*ff*(3-2*ff);
+    const defog = Math.min(22, 1/Math.max(.045, ff));
+    /* The cloud gets its own, much gentler share of the same correction so the
+       mushroom is legible while it is still out at the fog wall. The exponent
+       is EIGHT, and that is the whole trick: the cloud is ~190 overlapping
+       additive sprites, so a lift big enough to rescue it at 4km saturates it
+       into a featureless white bell by 2km — exactly the band where the
+       mushroom is supposed to become the subject. A high exponent keeps the
+       lift pinned to the last few hundred metres of fog and leaves the readable
+       band alone. Measured: at a quartic the t=2.0 frame was a white dome; at
+       an eighth it has a cap, a waist and sky either side of the stem. */
+    const fq = 1-ff;
+    /* ...and then the whole hydrogen cloud is scaled DOWN, which looks backwards
+       and is not. The batch is additive, and the hydrogen cloud draws roughly
+       three times the sprites of the tactical one for the same picture — a
+       fatter stem, a skirt, a second stack, a throat — so at equal per sprite
+       alpha every one of those extra layers stacks toward saturation and the
+       whole thing turns into one flat white mass with no cap, no neck and no
+       skirt in it. Detail count and per-sprite alpha have to move in opposite
+       directions or more structure buys less structure.
+       The curve is therefore a DIP, not a ramp: 1.0 at the pass-by, ~.73 in the
+       middle distance, 2.5 at the fog wall. Each end is set by a different
+       failure. Near, the column is supposed to be a WALL you fly past, and
+       anything under about .8 left a haze you could read the skyline through
+       (measured .211 frame std against the tactical round's .296). In the
+       middle it is supposed to be a SHAPE, and that is the band where 190
+       overlapping sprites clip to white and delete their own structure. Far, it
+       is supposed to still exist at all, against a fog fade of about 5%. */
+    const cd = hy ? 1.00 - .52*fq + 2.05*Math.pow(fq,8) : 1;
+
+    /* --- THE GLARE. This is the hydrogen round's whiteout, moved off the lens
+       and into the world, and moving it is the entire fix. The HUD version was
+       a fillRect: it could only push every pixel the same distance toward white
+       and so could only ever delete the picture. An additive disc at ground
+       zero is the same brightness in the middle and nothing at the corners, and
+       — because the sprite pass is depth TESTED — every tower, gantry and hull
+       nearer than the fireball punches a hard black silhouette through it. Same
+       blinding, except now there is something to be blinded BY.
+       Alphas well above 1 are deliberate: the batch is ONE,ONE and the shader
+       multiplies by the fog fade, so these are what a saturated core costs once
+       four kilometres of haze have been divided back out. */
+    const gf = clamp(1-age/(hy?.85:.50), 0, 1), gq = gf*gf;
+    if(hy && gf>0){
+      const gy = GROUND_Y+170+300*(1-gf), gr = coreFull(k)*(1+1.7*(1-gf));
+      const ga = gq*defog;
+      sprite(x,gy,z, gr*9.5, [1,.60,.22], ga*2.4);
+      sprite(x,gy,z, gr*5.4, [1,.86,.52], ga*3.2);
+      sprite(x,gy,z, gr*2.9, [1,.98,.88], ga*4.0);
+      sprite(x,gy,z, gr*1.5, COL.white,   gf*defog*5.0);
+    }
 
     /* --- the fireball, before it has climbed into a stem */
-    const fb = clamp(1-age/(1.5+hy*1.1), 0, 1);
+    /* The hydrogen fireball is SHORTER LIVED than the tactical one, which is
+       the opposite of what "more epic" wants to write and is nonetheless the
+       whole point. Its job is to blind, and the glare above already does that
+       for the first .85s; what has to be epic afterwards is the MUSHROOM, and
+       the mushroom cannot be the subject while a fireball scaled off a 300-unit
+       core is still sitting in front of it. Measured: at a 2.0s life the t=2.0
+       frame was a single saturated white ball 2.6x the height of the screen
+       with no cap, no stem and no horizon in it. So the fireball hands off at
+       ~1.05s and the cloud takes the frame. */
+    const fb = clamp(1-age/(hy?1.05:1.5), 0, 1);
     if(fb>0){
-      const fy = GROUND_Y+130 + (1-fb)*380*(1+hy*.9), fr = rc*(.95+1.5*(1-fb));
-      sprite(x,fy,z, fr*2.3, [1,.72,.30], fb*fb*1.10);
-      sprite(x,fy,z, fr*1.25, [1,.94,.72], fb*fb*1.45);
+      const fy = GROUND_Y+130 + (1-fb)*380*(1+hy*1.5);
+      /* ...and it does not balloon on the way out either. rc is ALREADY the
+         hydrogen core, so a 1.5x growth on top of it is 1.5x of something that
+         was big to begin with — the growth term is the one place the two tiers
+         must not both scale. */
+      const fr = rc*(.95 + (hy?.55:1.5)*(1-fb));
+      /* the hydrogen halo is cubed where the tactical one is squared so it gets
+         out of the way on its own; the hard white heart is the part that stays */
+      const fo = hy ? fb*fb*fb : fb*fb;
+      sprite(x,fy,z, fr*2.3, [1,.72,.30], fo*1.10);
+      sprite(x,fy,z, fr*1.25, [1,.94,.72], fo*1.45);
       sprite(x,fy,z, fr*.55,  COL.white,   fb*1.6);
       /* the hydrogen fireball keeps a hard white heart long after the tactical
          one has gone orange — the stage that is still burning, not cooling */
       if(hy){
-        sprite(x,fy,z, fr*2.9, [1,.55,.16], fb*fb*.55);
+        sprite(x,fy,z, fr*1.9, [1,.55,.16], fo*.34);
         sprite(x,fy+60,z, fr*.30, COL.white, fb*2.2);
       }
     }
 
     /* --- stem: narrow at the crater, waisted, flaring up into the cap */
-    const NS=18+hy*12, stemR=rc*.58;
+    /* the hydrogen STEM is narrower in proportion, for the same reason the cap
+       is: rc already carries the tier's scale, and a stem that arrives at the
+       cap only 1.6x narrower than the cap is not a stem, it is the bottom of a
+       dome. At .48 the ratio is 2:1 and there is sky either side of it. */
+    const NS=18+hy*14, stemR=rc*(.58-hy*.10);
     for(let i=0;i<NS;i++){
       const u=i/(NS-1);
       const sy = GROUND_Y + u*(topY-GROUND_Y);
@@ -557,8 +697,14 @@ function nukeFX(){
       const heat = clamp(hot*(1-u*.45) + (1-u)*.40, 0, 1);
       for(let j=0;j<3;j++){
         const a = S.T*.45 + j*2.0944 + u*4.3 + k.seed;
+        /* hydrogen stem blobs are TIGHTER, not fatter. At 1.55 the sprite is
+           half again as wide as the ring it sits on, so the stem's painted
+           width was ~490 against a 460 cap radius and there was no waist in the
+           silhouette at all — the thing that separates a mushroom from a bell
+           is sky either side of the stem, and that only exists if the blobs
+           drawing the stem are narrower than the gap they have to leave. */
         sprite(x+wob+Math.cos(a)*r*.55, sy, z+Math.sin(a)*r*.55,
-          r*1.55, nmix(N_ASH,N_FIRE,heat), .26+.38*heat);
+          r*(hy?1.10:1.55), nmix(N_ASH,N_FIRE,heat), (.26+.38*heat)*cd);
       }
     }
 
@@ -571,31 +717,57 @@ function nukeFX(){
         const a=i/RN[b]*6.2832 + S.T*.16 + b*.7 + k.seed;
         const pulse=1+.13*Math.sin(S.T*1.6+i+b);
         sprite(x+Math.cos(a)*rr, yy, z+Math.sin(a)*rr,
-          capR*.60*pulse, nmix(N_ASH,N_EMBER,heat), .24+.30*heat);
+          capR*.60*pulse, nmix(N_ASH,N_EMBER,heat), (.24+.30*heat)*cd);
       }
     }
-    sprite(x, topY-46, z, capR*1.35, nmix(N_ASH,N_FIRE,hot*.9), .28+.50*hot);
+    sprite(x, topY-46, z, capR*1.35, nmix(N_ASH,N_FIRE,hot*.9), (.28+.50*hot)*cd);
     /* --- hydrogen only: the skirt and the second, higher cap. A thermonuclear
        cloud reads as two stacked mushrooms with a flat condensation skirt slung
        under the lower one, and that silhouette is the whole point of the tier —
        at a glance you know which bomb just went off. */
     if(hy){
-      const skY = GROUND_Y + (topY-GROUND_Y)*.34, skR = capR*1.55;
-      for(let i=0;i<16;i++){
-        const a=i/16*6.2832 + S.T*.10 + k.seed;
-        sprite(x+Math.cos(a)*skR, skY, z+Math.sin(a)*skR,
-          capR*.52, nmix(N_ASH,N_EMBER,hot*.45), .16+.20*hot);
-      }
-      const upY = topY + 300*(.4+.6*e), upR = capR*.74;
+      /* The skirt is a flat disc, not a ring: a Wilson cloud is a sheet of
+         condensed air with nothing inside it, and drawing only the rim read as
+         a second, thinner mushroom. Two radii of sprites give it a filled
+         underside that stays legible now that it is not behind a whiteout. */
+      const skY = GROUND_Y + (topY-GROUND_Y)*.16, skR = capR*2.10;
+      /* ...and it is a SILHOUETTE element, so it is only worth drawing while the
+         column can still be seen whole. Once the pass-by starts, a disc four cap
+         radii across sits between the camera and everything else and all it does
+         is lift the frame off black: measured, it cost .034 of frame std at
+         t=3.3, which was the single reason the hydrogen round still had less
+         contrast than the tactical one at the moment of closest approach. */
+      const skV = clamp((z-380)/700, 0, 1);
       for(let b=0;b<2;b++){
-        const rr=(b?.62:1)*upR, yy=upY+b*104*(.4+.6*e);
-        for(let i=0;i<(b?7:11);i++){
-          const a=i/(b?7:11)*6.2832 + S.T*.13 + b*.9 + k.seed;
-          sprite(x+Math.cos(a)*rr, yy, z+Math.sin(a)*rr,
-            capR*.50*(1+.12*Math.sin(S.T*1.4+i)), nmix(N_ASH,N_EMBER,hot*.6), .18+.24*hot);
+        const rr = skR*(b?.58:1), nS = b?16:30;
+        for(let i=0;i<nS;i++){
+          const a=i/nS*6.2832 + S.T*.10 + b*.55 + k.seed;
+          sprite(x+Math.cos(a)*rr, skY+b*22, z+Math.sin(a)*rr,
+            capR*(b?.22:.26), nmix(N_ASH,N_EMBER,hot*.45), ((b?.20:.30)+.30*hot)*cd*skV);
         }
       }
-      sprite(x, upY-30, z, capR*.95, nmix(N_ASH,N_FIRE,hot*.8), .18+.34*hot);
+      /* ...and the upper cap takes the height the lower one gave up, so the pair
+         still stand taller than a tactical column while both remaining inside
+         the frame. Its crown grazes the top edge at closest approach, which is
+         wanted: a shape you cannot quite fit in view reads as bigger than one
+         that sits comfortably inside it. */
+      const upY = topY + 330*(.4+.6*e), upR = capR*.80;
+      for(let b=0;b<3;b++){
+        const rr=[1,.74,.42][b]*upR, yy=upY+b*116*(.4+.6*e), nS=[14,10,6][b];
+        for(let i=0;i<nS;i++){
+          const a=i/nS*6.2832 + S.T*.13 + b*.9 + k.seed;
+          sprite(x+Math.cos(a)*rr, yy, z+Math.sin(a)*rr,
+            capR*.56*(1+.12*Math.sin(S.T*1.4+i)), nmix(N_ASH,N_EMBER,hot*.6), (.20+.28*hot)*cd);
+        }
+      }
+      sprite(x, upY-30, z, capR*1.05, nmix(N_ASH,N_FIRE,hot*.8), (.20+.38*hot)*cd);
+      /* the throat between the two caps, so they read as one column that
+         necked rather than as two clouds that happen to be stacked */
+      for(let i=0;i<7;i++){
+        const u=i/6, yy=topY+90+(upY-topY-90)*u;
+        sprite(x+Math.sin(S.T*.8+u*3+k.seed)*capR*.10, yy, z,
+          capR*(.46-.10*u), nmix(N_ASH,N_FIRE,hot*.75), (.16+.26*hot)*cd);
+      }
     }
 
     /* --- base surge: the dirt ring thrown flat along the deck */

@@ -1,6 +1,6 @@
 /* ===== render/hud-draw.js — 2D HUD overlay (reticles, bars, banners) ===== */
 import { clamp, css } from '../core/utils.js';
-import { S, COL, FOVY } from '../game/state.js';
+import { S, COL, FOVY, GROUND_Y } from '../game/state.js';
 import { h2d, W, H, DPR } from './gl.js';
 import { lockOn } from '../game/combat.js';
 import { coreR, falloutR } from '../game/nuke.js';
@@ -298,17 +298,46 @@ export function drawHUD(){
   // superlinearly so ordinary hits strobe and clear, whereas the Teller
   // double-flash has to hang long enough to actually blind.
   if(S.nukeFl>.004){
-    h2d.globalAlpha=clamp(S.nukeFl,0,1);
+    const fa = clamp(S.nukeFl,0,1), fh = clamp(S.nukeFlH,0,1);
+    /* A GLARE, NOT A RECTANGLE. This used to be fillRect at globalAlpha=nukeFl
+       and that is a strictly contrast-DESTROYING operation: every pixel moves
+       the same distance toward white, so the standard deviation of the frame
+       is multiplied by (1-alpha) and nothing else happens. At the hydrogen
+       round's old ~0.93 hold that left a literally blank card on screen for
+       the whole money shot.
+       Drawn as a radial gradient pinned to ground zero instead, the same
+       average brightness buys a bright core and dark corners — it ADDS
+       structure, it reads as light arriving from a place, and it leaves the
+       bottom of the frame (where the lane strip lives) comparatively clear.
+       The tactical round keeps a nearly flat falloff so it still reads as the
+       diffuse fission wash it always was; only the hydrogen one is shaped. */
+    const p = toScreen(S.nukeFlX, GROUND_Y+320, S.nukeFlZ);
+    const cx = p.vis ? clamp(p.x, -W*.6, W*1.6) : W*.5;
+    const cy = p.vis ? clamp(p.y, -H*.6, H*1.6) : H*.42;
+    /* radius measured to the far corner so the falloff is resolution- and
+       position-independent: the dimmest pixel is always the furthest one */
+    const R = Math.max(Math.hypot(cx,cy), Math.hypot(W-cx,cy),
+                       Math.hypot(cx,H-cy), Math.hypot(W-cx,H-cy)) * 1.02;
     /* a hydrogen flash is hotter and cleaner than a fission one — it washes
        toward pure white rather than the tungsten cream of the tactical round */
-    h2d.fillStyle = S.nukeFlH>.15 ? '#fffdf6' : '#fff6e4';
+    const hot = fh>.15;
+    const rim = hot ? .30 : .88;   // edge brightness as a fraction of the core
+    const g = h2d.createRadialGradient(cx,cy,0, cx,cy,R);
+    const tint = hot ? '255,253,246' : '255,246,228';
+    g.addColorStop(0,    'rgba('+tint+',1)');
+    g.addColorStop(.34,  'rgba('+tint+','+(rim+(1-rim)*.66).toFixed(3)+')');
+    g.addColorStop(.68,  'rgba('+tint+','+(rim+(1-rim)*.22).toFixed(3)+')');
+    g.addColorStop(1,    'rgba('+tint+','+rim.toFixed(3)+')');
+    h2d.globalAlpha=fa; h2d.fillStyle=g;
     h2d.fillRect(0,0,W,H); h2d.globalAlpha=1;
-    /* THE FAIRNESS VALVE. The hydrogen whiteout holds near-opaque for ~1.3s,
-       which is most of the time between its detonation and its column reaching
-       the band — long enough to genuinely blind, which is the point, and long
-       enough to make the dodge a coin flip, which is not. So the break call is
-       re-drawn ON TOP of the wash in ink, using the SAME safe side computed
-       above. The flash takes the world away; it never takes the dodge away. */
+    /* THE FAIRNESS VALVE. The wash is allowed to take the world away; it is
+       never allowed to take the dodge away. So the break call is re-drawn ON
+       TOP of it in ink, using the SAME safe side computed above.
+       The hydrogen spike is now ~3 frames rather than a 1.3s hold, so this
+       fires for a much shorter window than it used to — but the threshold is
+       unchanged and deliberately low, because the frames where the wash is
+       merely bright are exactly the frames where the ordinary neon break call
+       underneath is least readable. Ink on white always wins. */
     if(bDir && S.nukeFl>.28){
       const a=clamp((S.nukeFl-.28)/.35,0,1);
       h2d.textAlign='center'; h2d.globalAlpha=a*.92;
