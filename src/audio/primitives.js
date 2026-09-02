@@ -108,10 +108,17 @@ export function duckPump(t, amt, rel) {
   if (!A.duckBus) return;
   var v = Math.max(0.05, 1 - amt);
   try {
-    A.duckBus.gain.cancelScheduledValues(t);
-    A.duckBus.gain.setValueAtTime(Math.max(0.0001, A.duckBus.gain.value), t);
-    A.duckBus.gain.linearRampToValueAtTime(v, t + 0.014);
-    A.duckBus.gain.exponentialRampToValueAtTime(1, t + rel);
+    var g = A.duckBus.gain;
+    /* Read the anchor value BEFORE cancelScheduledValues: cancelling a
+       mid-flight release ramp snaps .value back to the ducked floor the ramp
+       started from, and anchoring there would re-dip audibly. Each call then
+       schedules dip + full release-to-1 as one atomic sequence, so overlapping
+       pumps always end at rest no matter whose release got cancelled. */
+    var cur = Math.max(0.0001, g.value);
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(cur, t);
+    g.linearRampToValueAtTime(v, t + 0.014);
+    g.exponentialRampToValueAtTime(1, t + rel);
   } catch (e) { }
 }
 export function budget(n) { return A.voices + (n || 1) <= MAX_VOICES; }

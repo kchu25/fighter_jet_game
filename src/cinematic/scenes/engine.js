@@ -93,8 +93,15 @@ export function txt(s, x, y, size, col, sp, align, weight) {
 
 /* ------------------------------------------------------- particles */
 export const parts = [];
+/* Logical start of the live pool.  Slots before it have been dropped
+   (oldest-first, when the pool is at capacity) and are reclaimed by
+   the next stepParts() compaction.  This replaces a shift() per spawn
+   at the cap and a splice() per expiry -- each of those memmoved the
+   whole ~1400-entry array, and scene 5's sub-stepped contrails run
+   this pool saturated, so it was thousands of element moves a frame. */
+let partsHead = 0;
 export function part(x, y, vx, vy, life, r, col, o) {
-  if (parts.length > 1400) parts.shift();
+  if (parts.length - partsHead > 1400) partsHead++;   /* drop the oldest, O(1) */
   o = o || {};
   parts.push({
     x: x, y: y, vx: vx, vy: vy, l: life, L: life, r: r, c: col,
@@ -103,20 +110,28 @@ export function part(x, y, vx, vy, life, r, col, o) {
   });
 }
 export function stepParts(dt, dcam) {
-  for (let i = parts.length - 1; i >= 0; i--) {
+  /* one forward compaction pass: survivors slide down over the expired
+     and over anything part() dropped off the head since the last step.
+     Relative order is preserved, so the source-over smoke layering and
+     draw order are exactly what splice()/shift() produced. */
+  let w = 0;
+  for (let i = partsHead; i < parts.length; i++) {
     const p = parts[i];
     p.l -= dt;
-    if (p.l <= 0) { parts.splice(i, 1); continue; }
+    if (p.l <= 0) continue;
     p.x += p.vx * dt; p.y += p.vy * dt + (dcam || 0);
     p.vy += p.g * dt;
     const dd = Math.pow(p.d, dt * 60);
     p.vx *= dd; p.vy *= dd;
     p.r += p.gr * dt; p.rot += p.vr * dt;
     if (p.r < 0.4) p.r = 0.4;
+    parts[w++] = p;
   }
+  parts.length = w;
+  partsHead = 0;
 }
 export function drawParts(filterAdd) {
-  for (let i = 0; i < parts.length; i++) {
+  for (let i = partsHead; i < parts.length; i++) {
     const p = parts[i];
     if (filterAdd !== undefined && p.add !== filterAdd) continue;
     const a = sat(p.l / p.L) * p.a;
@@ -162,7 +177,7 @@ export function burst(x, y, n, spd, col, life, r, o) {
    disorientation beats dial it in, everything else leaves it off */
 export function streakParts(amt) {
   if (amt <= 0.01) return;
-  for (let i = 0; i < parts.length; i++) {
+  for (let i = partsHead; i < parts.length; i++) {
     const p = parts[i];
     if (!p.sq) continue;
     const spd = Math.hypot(p.vx, p.vy);
@@ -403,7 +418,7 @@ export function frame(ms) {
 
   /* hand the frame over to the live game underneath, then fade out */
   if (I.phase === 'play' && I.t >= HANDOFF) {
-    if (!I.ended) { I.ended = true; if (I.cbEnd) { try { I.cbEnd(); } catch (e) { } } }
+    if (!I.ended) { I.ended = true; I.done = true; if (I.cbEnd) { try { I.cbEnd(); } catch (e) { } } }
     const k = sat((I.t - HANDOFF) / (T6 - HANDOFF));
     I.cv.style.opacity = String(1 - k);
     if (k >= 1) finish('end');
@@ -437,6 +452,12 @@ export function begin() {
 
 export function skip() {
   if (I.phase !== 'play') return;
+  /* Late skip: past the HANDOFF the phase is still 'play' while the
+     tail fades, but cbEnd has already fired and the game is live under
+     the canvas.  A skip here must be a no-op -- routing it through
+     finish('skip') would fire cbSkip and slam the intro menu on top of
+     the running game.  Let the tail finish fading on its own. */
+  if (I.done) return;
   I.phase = 'out'; I.outMode = 'skip'; I.outT = 0;
   sfx('stopCine'); I.rumbleH = null; I.sirenH = null;
   sfx('setIntensity', 0.15);
@@ -448,10 +469,15 @@ export function finish(mode) {
   if (I.raf) { cancelAnimationFrame(I.raf); I.raf = 0; }
   listen(false);
   sfx('stopCine'); I.rumbleH = null; I.sirenH = null;
-  parts.length = 0;
+  parts.length = 0; partsHead = 0;
   if (I.cv) { I.cv.style.display = 'none'; I.cv.style.opacity = '1'; }
-  if (mode === 'skip' && I.cbSkip) { try { I.cbSkip(); } catch (e) { } }
-  if (mode === 'end' && !I.ended && I.cbEnd) { I.ended = true; try { I.cbEnd(); } catch (e) { } }
+  /* terminal-callback latch: whichever of cbSkip/cbEnd fires first
+     wins, in either order; every later finish() is cleanup-only.  (The
+     natural end after the HANDOFF already fired cbEnd arrives here as
+     mode 'end' with I.ended set -- guarded twice below.) */
+  if (I.done) return;
+  if (mode === 'skip' && I.cbSkip) { I.done = true; try { I.cbSkip(); } catch (e) { } }
+  if (mode === 'end' && !I.ended && I.cbEnd) { I.done = true; I.ended = true; try { I.cbEnd(); } catch (e) { } }
 }
 
 export function play(opts) {
@@ -464,8 +490,8 @@ export function play(opts) {
   I.cv.style.display = 'block'; I.cv.style.opacity = '1';
   fit();
   for (const k in fired) delete fired[k];
-  parts.length = 0;
-  I.t = 0; I.last = performance.now(); I.shake = 0; I.flash = 0; I.ended = false;
+  parts.length = 0; partsHead = 0;
+  I.t = 0; I.last = performance.now(); I.shake = 0; I.flash = 0; I.ended = false; I.done = false;
   I.phase = 'attract';
   listen(true);
   I.raf = requestAnimationFrame(frame);

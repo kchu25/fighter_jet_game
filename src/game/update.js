@@ -653,7 +653,11 @@ export function update(dt){
   if((S.comboT-=dt)<=0 && S.combo>1){ S.combo=Math.max(1,S.combo-1); S.comboT=1.1; }
   /* superlinear decay: a big S.flash strobes and clears instead of washing the frame */
   S.shake*=Math.pow(.03,dt); S.flash=Math.max(0,S.flash-dt*(2.4+S.flash*14));
-  S.hitT=Math.max(0,S.hitT-dt); S.tipT=Math.max(0,S.tipT-dt);
+  /* hintT ages HERE, not in drawHUD where it used to sit: the HUD draws every
+     frame including pause and menus, so the controls hint was burning down at
+     a hard-coded 1/60 while the game was frozen (and at half speed on a 120Hz
+     display). Timers live with the other timers, on dt. */
+  S.hitT=Math.max(0,S.hitT-dt); S.tipT=Math.max(0,S.tipT-dt); S.hintT=Math.max(0,S.hintT-dt);
   if(S.bossWarn>0) S.bossWarn-=dt;
   if(S.P.hp<35 && (S.alarmT-=dt)<=0){ AUDIO.alarm(); S.alarmT = S.P.hp<18?.4:.8; }
   if(S.P.hp<=0) gameOver();

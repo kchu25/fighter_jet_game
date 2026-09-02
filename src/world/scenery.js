@@ -585,6 +585,68 @@ export function pShip() {                  /* beached warship, listing on the dr
   return { d: M.d, rad: 360, h: 260 };
 }
 
+export function pCool() {                  /* cracked cooling tower — city band */
+  var M = MB(), i, n = 10, sd = 103;
+  /* hyperboloid shell: the waisted profile reads "reactor" at any distance */
+  var ys = [0, 95, 185, 265, 330], rs = [148, 110, 86, 92, 106];
+  var rings = [];
+  for (i = 0; i < ys.length; i++) rings.push(ringN(n, rs[i], ys[i], i ? 8 : 0, sd + i));
+  for (i = 0; i < rings.length - 1; i++) M.skin(rings[i], rings[i + 1], i & 1 ? STONE2 : STONE, 0.8);
+  /* ragged crown, one flank shorn away where the blast bit through */
+  var top = rings[rings.length - 1], jag = [];
+  for (i = 0; i < n; i++) {
+    var q = ih(i, 4, sd); q = q * q * 1.6;
+    var bite = ss(2.6, 0.6, abs(i - 3));
+    jag.push([top[i][0] * 0.96, top[i][1] + (10 + 44 * q) * (1 - 0.85 * bite), top[i][2] * 0.96]);
+  }
+  M.skin(top, jag, STONE3, 0.72);
+  M.cap(jag, DARKS, -34);                  /* hollow throat */
+  /* the shell that let go, heaped below the notch */
+  for (i = 0; i < 4; i++) {
+    var a = 1.9 + 0.5 * ih(i, 21, sd), rr = 150 + 60 * ih(i, 22, sd);
+    M.box(cos(a) * rr, 9 + 12 * ih(i, 23, sd), sin(a) * rr,
+          26 + 18 * ih(i, 24, sd), 10, 16 + 12 * ih(i, 25, sd),
+          a, (ih(i, 26, sd) - 0.5) * 0.8, i & 1 ? STONE2 : STONE);
+  }
+  /* one aircraft-warning light still riding the rim */
+  M.box(jag[7][0], jag[7][1] - 4, jag[7][2], 4, 16, 4, 0, 0, NEONM);
+  return { d: M.d, rad: 240, h: 400 };
+}
+
+export function pMast() {                  /* toppling radar mast, dish still hung */
+  var M = MB(), i, LEAN = 0.36, sl = sin(LEAN), cn = cos(LEAN), H = 250;
+  /* stacked lattice segments walked along the lean — cheaper than a true
+     truss and reads the same at flyby speed */
+  for (i = 0; i < 3; i++) {
+    var y = H * (i + 0.5) / 3, hw = 12 - i * 2.5;
+    M.box(-sl * y, cn * y, 0, hw, H / 6, hw, 0, LEAN, i & 1 ? METAL2 : METAL);
+  }
+  for (i = 1; i <= 3; i++) {               /* cross-braces, pylon-style */
+    var y2 = H * i / 3 - 20, k = 26 - i * 4;
+    M.box(-sl * y2, cn * y2, 0, k, 3.5, 3.5, 0, LEAN, METAL2);
+    M.box(-sl * y2, cn * y2, 0, 3.5, 3.5, k, 0, LEAN, METAL2);
+  }
+  /* dish annulus still hanging at the head, tipped past vertical — pDish's trick */
+  var hx = -sl * H, hy = cn * H, tilt = LEAN + 0.55, ct = cos(tilt), st = sin(tilt), n = 9;
+  var outer = [], inner = [];
+  for (i = 0; i < n; i++) {
+    var a = i / n * TAU, ro = 60, ri = 20;
+    var x1 = cos(a) * ro, y1 = sin(a) * ro;
+    outer.push([hx + x1, hy + y1 * ct, y1 * st]);
+    x1 = cos(a) * ri; y1 = sin(a) * ri;
+    inner.push([hx + x1, hy + y1 * ct, y1 * st - 12]);
+  }
+  M.skin(outer, inner, METAL, 0.7);
+  /* snapped guys flung downwind + the deadmen that held them */
+  M.box(96, 4, 40, 88, 2, 2, 0.3, 0.02, RUST);
+  M.box(60, 4, -70, 70, 2, 2, -0.5, 0.03, RUST);
+  M.box(120, 10, 90, 14, 10, 12, 0.4, 0, STONE2);
+  M.box(-88, 9, -60, 12, 9, 12, 1.1, 0, STONE2);
+  /* head beacon, still live */
+  M.box(hx, hy + 18, 0, 5, 10, 5, 0, LEAN, NEONM);
+  return { d: M.d, rad: 190, h: 280 };
+}
+
 /* ================================================================ creep
    The desert corrupts with distance. creepAt() maps total distance flown
    to a 0..1 dread level: nothing before 10 km, saturated by 60 km. This
@@ -695,9 +757,9 @@ export function pHorde() {                 /* shambling mob — 8 humanoids in o
 
 var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
                 pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash,
-                pBlocks, pShip];
+                pBlocks, pShip, pCool, pMast];
 var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11,
-    P_ARCHR = 12, P_CRASH = 13, P_BLOCKS = 14, P_SHIP = 15;
+    P_ARCHR = 12, P_CRASH = 13, P_BLOCKS = 14, P_SHIP = 15, P_COOL = 16, P_MAST = 17;
 
 /* ------------------------------------------------------------ placement */
 export function lcg(seed) {
@@ -718,16 +780,16 @@ export function makeSpots() {
      the dune sea stays nearly empty (the contrast IS the variety) while
      the city crowds in. This replaces the old sine-belt clumping. */
   var POOL = [
-    /* 0 open dune sea      */ { fil: [P_ROCKA, P_RUBBLE, P_ROCKA], mid: [6, P_CRASH, P_ROCKB],
+    /* 0 open dune sea      */ { fil: [P_ROCKA, P_RUBBLE, P_ROCKA], mid: [6, P_CRASH, P_ROCKB, P_MAST],
                                  big: [P_CRASH, 6, 1], horiz: [P_BUTTE, P_SPIRE],
                                  gap: 2.4, filP: 0.60, midP: 0.78, bigGap: 3400 },
-    /* 1 shattered city     */ { fil: [P_RUBBLE, P_RUBBLE, P_ROCKA], mid: [0, 2, 3, 5, P_BLOCKS, 1, P_BLOCKS],
-                                 big: [P_BLOCKS, 0, 3, 2], horiz: [3, 0],
+    /* 1 shattered city     */ { fil: [P_RUBBLE, P_RUBBLE, P_ROCKA], mid: [0, 2, 3, 5, P_BLOCKS, 1, P_BLOCKS, P_COOL],
+                                 big: [P_BLOCKS, 0, 3, 2, P_COOL], horiz: [3, 0, P_COOL],
                                  gap: 0.5, filP: 0.32, midP: 0.68, bigGap: 1400 },
     /* 2 canyon-lands       */ { fil: [P_ROCKA, P_ROCKB, P_ROCKB], mid: [P_SPIRE, P_ROCKB, P_ARCHR, 6],
                                  big: [P_BUTTE, P_ARCHR, P_SPIRE], horiz: [P_BUTTE, P_BUTTE, P_SPIRE],
                                  gap: 0.85, filP: 0.38, midP: 0.62, bigGap: 1800 },
-    /* 3 dry seabed         */ { fil: [P_RUBBLE, P_ROCKA], mid: [4, P_CRASH, 5],
+    /* 3 dry seabed         */ { fil: [P_RUBBLE, P_ROCKA], mid: [4, P_CRASH, 5, P_MAST],
                                  big: [P_SHIP, 4], horiz: [P_SPIRE, P_BUTTE],
                                  gap: 1.6, filP: 0.48, midP: 0.66, bigGap: 2400 },
   ];
@@ -1124,7 +1186,7 @@ export function draw(d) {
       var cols = 0;
       for (i = 0; i < spots.length && cols < 5; i++) {
         var sp2 = spots[i];
-        if (sp2.p !== P_BLOCKS && sp2.p !== P_TOWER) continue;
+        if (sp2.p !== P_BLOCKS && sp2.p !== P_TOWER && sp2.p !== P_COOL) continue;
         wz = (sp2.z - d) % L; if (wz < 0) wz += L;
         if (wz > ZFAR) wz -= L;
         if (wz < ZNEAR || wz > ZFAR - 400) continue;

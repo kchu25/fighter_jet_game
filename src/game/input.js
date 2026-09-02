@@ -25,6 +25,9 @@ addEventListener('mouseup',   e=>{ if(e.button===0) mouse.fire=false; if(e.butto
 addEventListener('contextmenu', e=>e.preventDefault());
 addEventListener('blur', ()=>{
   for(const k in keys) keys[k]=false; mouse.fire=mouse.alt=false;
+  /* the roll detector runs on wall clock, so a tap left stamped here could
+     pair with the first tap after refocus and fire a roll nobody asked for */
+  tap.a=0; tap.d=0;
   if(S.gameOn) setPaused(true); else AUDIO.suspend();   // auto-pause mid-run (suspends audio itself)
 });
 addEventListener('focus', ()=>{ if(!paused) AUDIO.resume(); });  // no auto-resume; unpause is a deliberate keypress

@@ -35,6 +35,11 @@ export function bar(x,y,w,h,v,c){
   h2d.shadowColor=c; h2d.shadowBlur=10; h2d.fillStyle=c;
   h2d.fillRect(x,y,w*clamp(v,0,1),h); h2d.shadowBlur=0;
 }
+/* score pop — animation state lives HERE, not in S: draw never mutates state.
+   Clocked off S.T, which only advances in update, so the pop freezes on pause
+   instead of decaying through it. Score can only change while update runs, so
+   the two can never disagree. */
+let scPrev=-1, scPopT=-1e9;
 export function drawHUD(){
   h2d.setTransform(DPR,0,0,DPR,0,0);
   h2d.clearRect(0,0,W,H);
@@ -122,9 +127,14 @@ export function drawHUD(){
   h2d.fillStyle='#7fa8bd'; h2d.fillText('BOOST', W-m, by-30);
   bar(W-m-bw, by-24, bw, 9, S.P.boost/100, css(COL.amber));
 
-  // S.score / distance
-  h2d.textAlign='left'; h2d.font='bold 30px "Courier New",monospace';
-  h2d.fillStyle='#eaffff'; h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=14;
+  // S.score / distance — the readout swells and glows for a beat on gain.
+  // scPrev>=0 gates the arm: the first drawn frame (and any restart, where
+  // score falls rather than rises) latches silently instead of popping.
+  if(S.score!==scPrev){ if(scPrev>=0 && S.score>scPrev) scPopT=S.T; scPrev=S.score; }
+  if(S.T<scPopT) scPopT=-1e9; /* clock rewound (a T-resetting restart) — disarm */
+  let scp=clamp(1-(S.T-scPopT)/.35,0,1); scp*=scp; // sharp attack, soft tail
+  h2d.textAlign='left'; h2d.font='bold '+(30+6*scp).toFixed(1)+'px "Courier New",monospace';
+  h2d.fillStyle='#eaffff'; h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=14+12*scp;
   h2d.fillText(String(S.score).padStart(6,'0'), m, m+24); h2d.shadowBlur=0;
   if(S.combo>1){ h2d.font='bold 17px "Courier New",monospace'; h2d.fillStyle=css(COL.mag);
     h2d.shadowColor=css(COL.mag); h2d.shadowBlur=12; h2d.fillText('x'+S.combo,m,m+48); h2d.shadowBlur=0; }
@@ -164,7 +174,7 @@ export function drawHUD(){
     const hit=clamp(S.boss.hit||0,0,1);
     let c=S.boss.phase===3?css(COL.red):css(bc);
     if(hit>0){ c='rgba(255,255,255,'+(.4+.6*hit).toFixed(2)+')'; }
-    bar(x,y,w,12, S.boss.hp/S.boss.max, c);
+    bar(x,y,w,12, S.boss.hp/(S.boss.max||1), c);
     h2d.fillStyle='rgba(0,0,0,.55)';
     h2d.fillRect(x+w*.66-1, y, 2, 12); h2d.fillRect(x+w*.33-1, y, 2, 12);
   }
@@ -360,7 +370,8 @@ export function drawHUD(){
     h2d.shadowColor=css(COL.red); h2d.shadowBlur=50; h2d.strokeRect(0,0,W,H);
     h2d.shadowBlur=0; h2d.globalAlpha=1; }
   if(S.hintT>0){
-    S.hintT-=1/60;
+    /* aged in update.js with dt — drawing must not mutate state, and this
+       used to tick at 1/60 per DRAWN frame, so it decayed during pause */
     const a=Math.min(1,S.hintT)*.9;
     h2d.globalAlpha=a; h2d.textAlign='center';
     h2d.font='600 '+Math.round(H*.021)+'px "Courier New",monospace';

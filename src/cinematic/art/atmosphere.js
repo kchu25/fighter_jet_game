@@ -107,14 +107,24 @@ export function cloudBank(c, y, h, tt, tint, alpha) {
   /* soft haze band underneath ties the lobes into one air mass, and
      stops the bank from reading as objects floating on a clean sky */
   const md = (T[0] | 0) + ',' + (T[1] | 0) + ',' + (T[2] | 0);
-  const bg = lg(c, 'cb.' + (y | 0) + '.' + (h | 0) + '.' + md, 0, y - h * 0.9, 0, y + h * 0.9, [
+  /* Paint the haze band through a translate/scale so its gradient
+     lives in a normalised space and is cached ONCE per tint.  Linear
+     gradients resolve in paint-time user space, so this is exact —
+     whereas keying on (y|0)/(h|0) minted a fresh CanvasGradient
+     nearly every frame while scene4/scene5 pan the horizon, and every
+     one of them stayed in the per-context cache forever. */
+  const bg = lg(c, 'cb.' + md, 0, -0.9, 0, 0.9, [
     [0.00, 'rgba(' + md + ',0)'],
     [0.46, 'rgba(' + md + ',0.26)'],
     [1.00, 'rgba(' + (T[0] * 0.34 | 0) + ',' + (T[1] * 0.30 | 0) + ',' + (T[2] * 0.46 | 0) + ',0)']
   ]);
   c.globalAlpha = alpha;
+  c.save();
+  c.translate(0, y);
+  c.scale(1, h);
   c.fillStyle = bg;
-  c.fillRect(0, y - h * 0.9, VW, h * 1.8);
+  c.fillRect(0, -0.9, VW, 1.8);
+  c.restore();
 
   const span = VW * 1.3;
   for (let i = 0; i < CB_N; i++) {

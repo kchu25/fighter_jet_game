@@ -46,9 +46,16 @@ export function init() {
   A.preComp.connect(A.comp);
 
   A.musicGain = gainNode(0.62);
+  /* musicDuck: dedicated series duck stage for the whole score. The obvious
+     duck target was musicGain itself, but scheduler.js's applyIntensity()
+     re-targets that param every ~25ms tick, so any duck written there was
+     stomped within a tick and never heard. sfx.js's mixDuck() writes ONLY
+     this node and the scheduler keeps writing musicGain — one writer each. */
+  A.musicDuck = gainNode(1);
   A.musicFilter = lp(1200, 0.9);
   A.musicFilter.connect(A.musicGain);
-  A.musicGain.connect(A.preComp);
+  A.musicGain.connect(A.musicDuck);
+  A.musicDuck.connect(A.preComp);
 
   A.sfxShaper = A.ctx.createWaveShaper();
   A.sfxShaper.curve = makeSoftCurve(1.55);

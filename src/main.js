@@ -13,6 +13,9 @@ import { update } from './game/update.js';
 import { render } from './render/scene-draw.js';
 import { drawHUD } from './render/hud-draw.js';
 import { burst, shock, sparks, shard } from './game/fx.js';
+/* circular with input.js (input imports togglePause/setPaused from here) —
+   safe for the same reason as main⇄update: only touched inside functions */
+import { keys, mouse, tap } from './game/input.js';
 
 /* ------------------------------------------------------------------ loop */
 export let last=0, paused=false;
@@ -72,10 +75,23 @@ export function start(){
   }
   introEl.classList.add('hidden'); overEl.classList.add('hidden');
   paused=false; pausedEl.classList.add('hidden');
+  /* swallow the input that LAUNCHED us: pressing Space on the menu both
+     starts the run (here) and, via input.js, leaves keys[' '] latched — so
+     frame 1 of every Space-launched run silently fired a missile. Same for a
+     held mouse button carried across the button click. The keyup that
+     eventually arrives just re-writes false onto false. */
+  for(const k in keys) keys[k]=false; mouse.fire=mouse.alt=false; tap.a=0; tap.d=0;
   S.gameOn=true; S.hintT=firstRun?9:5.5; last=performance.now();
 }
 export function gameOver(){
   S.gameOn=false; S.everDied=true;
+  /* fold the ambient beds down NOW rather than letting the watchdog notice on
+     its own: a quick RE-LAUNCH otherwise rebuilds swarm/creep on top of the
+     old ones still fading, and the geiger has no other off switch at all —
+     its only caller is gated on S.rad>.04, which is false once you're dead */
+  AUDIO.swarm && AUDIO.swarm(false);
+  AUDIO.creep && AUDIO.creep(0);
+  AUDIO.geiger && AUDIO.geiger(0);
   burst(S.P.x,S.P.y,0,COL.red,90,2.2); AUDIO.boom(1.8); AUDIO.setIntensity(.15);
   shock(S.P.x,S.P.y,0, 20,520,.6, 16, COL.white, 1);
   sparks(S.P.x,S.P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);

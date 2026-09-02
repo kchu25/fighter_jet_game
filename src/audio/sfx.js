@@ -1105,16 +1105,26 @@ export function nukeAlert(tier) {
    couple of hundred milliseconds. This ducks the two nodes nothing else
    automates instead:
 
-     - A.musicGain, which sits downstream of drumBus AND duckBus, so this takes
-       the whole score down including the kick. This one is close to
-       self-healing: scheduler.js's applyIntensity() re-targets it every 25ms
-       with a 0.5s time constant, so the music walks itself back up and nothing
-       written here can leave it down for long.
+     - A.musicDuck, the dedicated series stage after musicGain that exists for
+       exactly this. The obvious target was musicGain itself, but scheduler.js's
+       applyIntensity() re-targets that param every ~25ms tick, which stomped
+       the duck just as thoroughly as the kick stomps duckBus. Nothing else
+       writes musicDuck, so ownership is clean: applyIntensity owns musicGain,
+       this function owns musicDuck.
      - A.sfxGain, which carries the engine drone, the dogfight and the fallout
-       crackle. Nothing else owns it, so its recovery is written out in full and
-       pinned with a final setValueAtTime, and a token-guarded watchdog puts it
-       back to 0.85 in wall-clock time in case a context suspend swallows the
-       automation. Failing toward "un-ducked" is the safe direction.
+       crackle. Nothing else owns it.
+
+   Overlap safety — a barrage lands fronts as little as 0.45s apart, each one
+   ducking again: every call re-anchors at the CURRENT audible value (read
+   BEFORE cancelScheduledValues — cancelling a mid-flight release ramp snaps
+   param.value back to the ducked floor it started from) and then schedules its
+   dip AND its full release back to the resting CONSTANT (0.85 / 1, never a
+   sampled "base", which during an overlap would itself be a ducked reading) as
+   one atomic sequence. A later call may wipe an earlier call's release, but it
+   always installs a complete replacement, so N piled-up ducks still end at
+   rest. A token-guarded watchdog additionally pins both params back to rest in
+   wall-clock time in case a context suspend swallows the automation. Failing
+   toward "un-ducked" is the safe direction.
 
    The blast front itself must not be caught by this, so nukeBoom() hangs a big
    round straight off A.sfxShaper and bypasses A.sfxGain entirely. */
@@ -1123,23 +1133,25 @@ function mixDuck(t, depth, hold, rel) {
   var lo = Math.max(0.02, 0.85 * (1 - depth));
   try {
     var g = A.sfxGain.gain;
+    var cur = Math.max(0.0005, g.value);          // read before cancel
     g.cancelScheduledValues(t);
-    g.setValueAtTime(Math.max(0.0005, g.value), t);
+    g.setValueAtTime(cur, t);
     g.linearRampToValueAtTime(lo, t + 0.012);
     g.setValueAtTime(lo, t + hold);
     g.exponentialRampToValueAtTime(0.85, t + hold + rel);
     g.setValueAtTime(0.85, t + hold + rel + 0.01);
   } catch (e) { }
   try {
-    var m = A.musicGain.gain, base = Math.max(0.05, m.value);
+    var m = A.musicDuck.gain;
+    var mcur = Math.max(0.03, m.value);           // read before cancel
     m.cancelScheduledValues(t);
-    m.setTargetAtTime(Math.max(0.03, base * (1 - depth)), t, 0.01);
-    /* applyIntensity() would walk this back on its own, but it does NOT run
-       while the context is suspended (see scheduler()'s early return), so a
-       duck landing right before the tab is backgrounded would hold. Two
-       setTargetAtTime events in sequence are well defined and any later
-       applyIntensity target simply supersedes this one. */
-    m.setTargetAtTime(base, t + hold + 0.02, 0.45);
+    m.setValueAtTime(mcur, t);                    // terminates a running setTarget
+    m.setTargetAtTime(Math.max(0.03, 1 - depth), t, 0.01);
+    /* Unconditional release to 1. applyIntensity() cannot walk this node back
+       up — it no longer writes any param this function touches — so the return
+       must be scheduled here, in the same call that dipped. Two setTargetAtTime
+       events in sequence are well defined. */
+    m.setTargetAtTime(1, t + hold + 0.02, 0.45);
   } catch (e) { }
 
   var tok = ++duckToken;
@@ -1149,6 +1161,11 @@ function mixDuck(t, depth, hold, rel) {
       var t2 = now();
       A.sfxGain.gain.cancelScheduledValues(t2);
       A.sfxGain.gain.setValueAtTime(0.85, t2);
+    } catch (e) { }
+    try {
+      var t3 = now();
+      A.musicDuck.gain.cancelScheduledValues(t3);
+      A.musicDuck.gain.setValueAtTime(1, t3);
     } catch (e) { }
   }, (hold + rel + 0.35) * 1000);
 }

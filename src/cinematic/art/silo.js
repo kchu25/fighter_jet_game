@@ -112,7 +112,7 @@ export function silo(c, x, y, w, open, glowCol) {
     c.save();
     c.globalCompositeOperation = 'lighter';
     c.globalAlpha = 1;
-    const spill = rg(c, 'sl.spill', 0, 0, 1, 0, 0, 200, [
+    const spill = rg(c, 'sl.spill.' + (G[0] | 0) + (G[1] | 0) + (G[2] | 0), 0, 0, 1, 0, 0, 200, [
       [0.00, rgba(G, 0.55)], [0.28, rgba(G, 0.22)], [1.00, rgba(G, 0)]
     ]);
     c.save();
@@ -141,7 +141,7 @@ export function silo(c, x, y, w, open, glowCol) {
     c.globalAlpha = 1;
 
     /* upward light bloom */
-    const upG = lg(c, 'sl.up', 0, 0, 0, -300, [
+    const upG = lg(c, 'sl.up.' + (G[0] | 0) + (G[1] | 0) + (G[2] | 0), 0, 0, 0, -300, [
       [0.00, rgba(G, 0.42)], [0.35, rgba(G, 0.16)], [1.00, rgba(G, 0)]
     ]);
     /* Sliced, not one quad.  A single filled trapezoid gives the shaft

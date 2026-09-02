@@ -6,7 +6,7 @@ export const A = {
   ctx: null, ready: false, muted: false, nyq: 20000,
 
   // busses (built by index.js's init())
-  preComp: null, comp: null, master: null, musicGain: null, sfxGain: null, sfxShaper: null,
+  preComp: null, comp: null, master: null, musicGain: null, musicDuck: null, sfxGain: null, sfxShaper: null,
   musicFilter: null, drumBus: null, bassBus: null, arpBus: null, padBus: null, duckBus: null,
   fxDelay: null, fxFeedback: null, fxTone: null,
 

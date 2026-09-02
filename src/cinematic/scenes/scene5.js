@@ -3,7 +3,7 @@
    hazeVeil() (the air between the planes) is local to this scene. */
 import { I } from './state.js';
 import { VW, VH, T4, T5, C, rgba, rnd, sat, ramp, pulse, once, sfx, glow, txt,
-  part, stepParts, drawParts, burst, vignette, art, dawnSky, neonGround } from './engine.js';
+  part, stepParts, drawParts, burst, scanlines, vignette, art, dawnSky, neonGround } from './engine.js';
 
 /* ================================================================
    SCENE 5 — the launch that bleeds.  Four depth planes, each with its
@@ -300,6 +300,7 @@ export function scene5(u, dt) {
     txt('INTERCEPTOR 03 +2 — STILL CLIMBING', VW / 2, 806, 22,
       rgba(C.cyan, a * 0.85), 7, 'center');
   }
+  scanlines(0.10);
   vignette(0.62);
   const fo = ramp(T5 - 0.45, T5, u + T4);
   if (fo > 0) { I.c.fillStyle = 'rgba(0,0,0,' + fo * 0.85 + ')'; I.c.fillRect(0, 0, VW, VH); }

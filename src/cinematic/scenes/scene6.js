@@ -10,7 +10,7 @@
    u = 6.38 (HANDOFF = T6 - 0.62). */
 import { I } from './state.js';
 import { VW, VH, T5, C, rgba, rnd, sat, ramp, once, sfx, glow, txt,
-  part, stepParts, drawParts, vignette, art, dawnSky, neonGround } from './engine.js';
+  part, stepParts, drawParts, scanlines, vignette, art, dawnSky, neonGround } from './engine.js';
 
 /* ================================================================
    SCENE 6 — the encounter, handing off to the 3D game
@@ -173,5 +173,6 @@ export function scene6(u, dt) {
     txt('INTERCEPTOR 03 — LEAD THE SURVIVORS. HUNT THE HIVE.', VW / 2, 820, 26, rgba(C.cyan, a), 8, 'center');
   }
   once('c6flash', T5 + 6.05, function () { I.flash = 0.9; I.flashCol = C.ice; I.shake = 22; });
+  scanlines(0.10);
   vignette(0.55);
 }

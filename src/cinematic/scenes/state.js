@@ -9,6 +9,10 @@ export const I = {
   phase: 'idle',              // idle | attract | play | out
   outT: 0, outMode: '',
   cbEnd: null, cbSkip: null, ended: false,
+  done: false,                /* latched once EITHER terminal callback (cbEnd/cbSkip) has
+                                 fired -- after that, no later skip/finish may fire the
+                                 other one (a late skip after the HANDOFF must not slam
+                                 the menu on top of the already-running game) */
   shake: 0, flash: 0, flashCol: [255, 255, 255],
   rumbleH: null, sirenH: null
 };
