@@ -8,7 +8,11 @@ import { mk, sparks, shard, shock, later } from './fx.js';
 import { fireGuns, fireMissiles, hitScan, nearestAhead, volley, hurt, take, explode,
          carrierLaunch, carrierVolley, dreadLance, dreadWall,
          sporeBarrage, levBirth, levLance,
-         wardenPinwheel, wardenRing, hunterRake, hunterSpread, pushComms } from './combat.js';
+         wardenPinwheel, wardenRing, hunterRake, hunterSpread, pushComms,
+         batSpit, phanPincer, phanNova, reapCurtain, reapSpread,
+         motherSweep, motherSpore, motherBirth, motherLance,
+         arbMortar, arbBeamTick, golSweep, golBarrage,
+         hedraLattice, hedraBurst, hedraShard } from './combat.js';
 import { directorTick } from './director.js';
 import { nukeTick } from './nuke.js';
 import { gameOver } from '../main.js';
@@ -273,11 +277,21 @@ export function update(dt){
     const type=b.type||'mothership';
     /* the carrier hangs deeper — its threat launches at you, it doesn't.
        The hunter hangs closest: its rake has to arrive fast enough that
-       sitting still in its lane is punished. */
+       sitting still in its lane is punished. The siege giants (goliath,
+       arbalest, hivemother) sit deepest of all — their hulls need the room
+       and their patterns cross the whole arena anyway; the bat hangs
+       nearest because its entire fight is closing that gap on you. */
     const holdZ = type==='carrier'?1700 : type==='dreadnought'?1600 : type==='leviathan'?1650
-                : type==='warden'?1550 : type==='hunter'?1400 : 1500;
+                : type==='warden'?1550 : type==='hunter'?1400 : type==='bat'?1250
+                : type==='phantom'?1300 : type==='hivemother'?1520 : type==='goliath'?2000
+                : type==='hedra'?1500 : type==='arbalest'?1900 : type==='reaper'?1550 : 1500;
     if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true;
-      if(type==='leviathan') AUDIO.screech && AUDIO.screech(); } }
+      if(type==='leviathan') AUDIO.screech && AUDIO.screech();
+      else if(type==='bat'){ AUDIO.screech && AUDIO.screech();
+        pushComms('WOLF',"THAT THING'S ALIVE — WATCH ITS DIVE",.8); }
+      else if(type==='hivemother'){ AUDIO.motherScream && AUDIO.motherScream();
+        pushComms('CONTROL','PRIMARY TARGET — THE HIVE MOTHER. END HER.',1); }
+      else if(type==='goliath') pushComms('CONTROL','ARMOR RATED BEYOND YOUR GUNS — HIT IT ANYWAY',.8); } }
     else{
       const rage=1-b.hp/b.max;
       b.phase = b.hp/b.max>.66?1 : b.hp/b.max>.33?2:3;
@@ -443,6 +457,267 @@ export function update(dt){
             }
           }
         }
+      } else if(type==='bat'){
+        /* organic, not a ship: the wings never stop, and their beat rate is
+           the state readout — slow deliberate strokes through the windup,
+           frantic during the dive, a steady 9.5 on the circle. The fight is
+           circle → scream (frozen, rearing) → committed dive at a SNAPSHOT
+           of your position → climb out. Moving after the scream is the
+           whole dodge; the bite only lands if you sit on the snapshot. */
+        b.wingT += dt*(b.mode==='dive'?16 : b.mode==='windup'?5 : 9.5);
+        if(b.phase===3 && !b.scr3){ b.scr3=true; AUDIO.screech && AUDIO.screech(); }
+        if(b.mode==='windup'){
+          /* drift freezes to a 30Hz tremble — stillness is the tell, same
+             language as the lancer; chg drives the rear-up (list overlay) */
+          b.x += Math.sin(b.t*30)*60*dt;
+          b.yaw = Math.PI; b.roll = Math.sin(b.t*22)*.06;
+          b.chg = Math.min(1,b.chg+dt);
+          if(b.chg>=1){
+            b.tx=S.P.x; b.ty=S.P.y; b.diveN++;
+            b.mode='dive'; b.chg=0;
+            AUDIO.strafe && AUDIO.strafe();
+          }
+        } else if(b.mode==='dive'){
+          /* straight-line lunge at the snapshot. The z component is floored
+             so the plunge always punches through your depth plane instead
+             of stalling above it chasing x. */
+          const spd=1750+b.phase*150,
+                dx=b.tx-b.x, dy=b.ty-b.y, dz=Math.min(-140,30-b.z),
+                dl=Math.max(1,Math.hypot(dx,dy,dz));
+          b.x+=dx/dl*spd*dt; b.y+=dy/dl*spd*dt; b.z+=dz/dl*spd*dt;
+          b.yaw=Math.PI; b.roll=Math.sin(b.wingT)*.1;
+          if(b.z<160 && b.z>-40 && Math.abs(b.x-S.P.x)<85 && Math.abs(b.y-S.P.y)<75){
+            /* the BITE — melee; hurt's .65s inv gate makes it one bite per
+               pass. src stays null: passing the boss would explode it. */
+            hurt(24,null,b);
+            AUDIO.bite && AUDIO.bite(); AUDIO.screech && AUDIO.screech();
+            S.shake=Math.max(S.shake,10);
+          }
+          if(b.z<=20) b.mode='recover';
+        } else if(b.mode==='recover'){
+          b.z+=1250*dt;
+          b.y += (70-b.y)*Math.min(1,dt*3);
+          b.yaw=Math.PI; b.roll=Math.sin(b.wingT)*.15;
+          if(b.z>=holdZ){
+            b.z=holdZ; b.mode='circle';
+            /* phase 3: every other pass comes straight back around — the
+               odd-dive quick turnaround is the phase's whole escalation */
+            b.cd = (b.phase===3 && (b.diveN&1)) ? .9
+                 : b.phase===1?4.2 : b.phase===2?3.2 : 2.4;
+          }
+        } else {
+          /* circle: banking figure-8 that loosely shadows your x, chase
+             rate capped so it can never snap onto you */
+          const cx=Math.sin(b.t*.85)*200 + S.P.x*.25;
+          b.x += clamp((cx-b.x)*2.5,-300,300)*dt;
+          b.y = 70+Math.sin(b.t*1.7)*60;
+          b.z = holdZ+Math.sin(b.t*.6)*90;
+          b.yaw = Math.PI + Math.sin(b.t*.85)*.3;
+          b.roll = Math.cos(b.t*.85)*.5;
+          if((b.fcd-=dt)<=0){ b.fcd = b.phase===1?2.6 : b.phase===2?2.1 : 1.7; batSpit(b); }
+          if((b.cd-=dt)<=0){ b.mode='windup'; b.chg=1e-4; AUDIO.screech && AUDIO.screech(); }
+        }
+      } else if(type==='phantom'){
+        /* teleporter: blink 0 hover / 1 collapse (.32s) / 2 reform (.28s).
+           R draws the implosion and the ghost straight off blink/bt — this
+           branch only keeps the clock honest and fires the volleys. The
+           nova punishes standing ON the blink-in point, and the reform IS
+           its telegraph, so nothing here may cheat the timings. */
+        if(b.blink===1){
+          b.bt+=dt;                        // collapsing: position frozen
+          if(b.bt>=.32){
+            /* reappear on a flank — never on top of you, always beside */
+            b.x = clamp(S.P.x + (Math.random()<.5?-1:1)*rnd(140,240), -260,260);
+            b.y = clamp(S.P.y + rnd(-60,90), -100,150);
+            b.z = holdZ + rnd(-80,80);
+            b.blink=2; b.bt=0;
+          }
+        } else if(b.blink===2){
+          b.bt+=dt;
+          if(b.bt>=.28){
+            b.blink=0; b.bt=0;
+            if(b.phase>=2){ phanNova(b); b.cd=Math.max(b.cd,.9); }
+          }
+        } else {
+          /* hover: lazy shadowing drift while the pincers and the blink
+             timer both run — the pincer's safe corridor is at your CURRENT
+             x, so holding still through a volley is actually correct */
+          b.x += clamp((S.P.x*.3-b.x)*1.2,-160,160)*dt;
+          b.y = 40+Math.sin(b.t*.8)*40;
+          b.z = holdZ+Math.sin(b.t*.45)*60;
+          if((b.cd-=dt)<=0){ b.cd = b.phase===1?2.4 : b.phase===2?1.9 : 1.5; phanPincer(b); }
+          b.bt+=dt;
+          if(b.bt >= (b.phase===1?3.2 : b.phase===2?2.6 : 2.2)){
+            b.blink=1; b.bt=0; b.ox=b.x; b.oy=b.y; b.oz=b.z;
+            AUDIO.blink && AUDIO.blink();
+          }
+        }
+        b.yaw = Math.PI + Math.sin(b.t*.6)*.1;
+        b.roll = Math.sin(b.t*.7)*.12 + rage*.10*Math.sin(b.t*3.0);
+      } else if(type==='hivemother'){
+        /* the intro's jelly, grown colossal. Everything about her is slow
+           and vast; the fight is the MEMBRANE — a 6.8s breathing cycle,
+           open for the first 4.2s of it. Open she attacks and takes full
+           damage; closed she turtles behind .35x armor (damage() side) and
+           only seeps spores. Learn the breath, burn the open windows. */
+        if(b.phase===3 && !b.scr3){ b.scr3=true; AUDIO.motherScream && AUDIO.motherScream(); }
+        b.pulse+=dt;
+        /* target read before AND after the clock tick so the flip itself is
+           caught without a latch field — each flip gets the sub throb */
+        const pT=(b.openT%6.8)<4.2?1:0;
+        b.openT+=dt;
+        const oT=(b.openT%6.8)<4.2?1:0;
+        if(oT!==pT) AUDIO.motherPulse && AUDIO.motherPulse();
+        b.open = oT>b.open ? Math.min(oT,b.open+2.2*dt) : Math.max(oT,b.open-2.2*dt);
+        b.y = 20+Math.sin(b.t*.4)*50;
+        b.z = holdZ+Math.sin(b.t*.27)*120;
+        b.yaw = Math.PI + Math.sin(b.t*.3)*.08;
+        b.roll = Math.sin(b.t*.37)*.10 + rage*.10*Math.sin(b.t*2.6);
+        if(b.flash>0) b.flash-=dt;
+        if(b.chg>0){
+          /* maw lance: 1.3s charge, x-drift frozen — the stillness is the
+             tell, same language as the leviathan */
+          b.chg=Math.min(1,b.chg+dt/1.3);
+          if(b.chg>=1){ motherLance(b); b.chg=0; b.cd=1.8; }
+        } else {
+          b.x += b.dir*55*dt;
+          if(Math.abs(b.x)>160) b.dir*=-1;
+          if(b.open>.5){
+            if((b.cd-=dt)<=0){
+              if(b.phase===1){
+                /* phase 1 keeps it legible: sweep and spore only */
+                if(b.alt=!b.alt){ motherSweep(b); b.cd=2.8; }
+                else { motherSpore(b); b.cd=2.6; }
+              } else {
+                b.mode = b.mode==='sweep'?'spore' : b.mode==='spore'?'birth'
+                       : (b.mode==='birth'&&b.phase===3)?'lance' : 'sweep';
+                if(b.mode==='sweep'){ motherSweep(b); b.cd=2.4; }
+                else if(b.mode==='spore'){ motherSpore(b); b.cd=2.2; }
+                /* capped birth returns false — retry soon, carrier idiom */
+                else if(b.mode==='birth') b.cd = motherBirth(b) ? 2.8 : .8;
+                else b.chg=1e-4;
+              }
+            }
+          } else if(b.open<.4 && (b.fcd-=dt)<=0){
+            /* armored turtle: nothing but a slow seep of spores — the quiet
+               half of the breath, when shooting her is mostly wasted */
+            b.fcd=2.2; motherSpore(b);
+          }
+        }
+      } else if(type==='goliath'){
+        /* siege fortress: it barely moves — the mass is the statement. The
+           guns alternate a rolling hull-length sweep with an aimed cluster;
+           from phase 2 the dread lattice rides its own clock so the two
+           patterns drift out of sync and no memorised loop clears both.
+           Its death is not the end — combat.js owns the reveal. */
+        b.x += b.dir*30*dt;
+        if(Math.abs(b.x)>70) b.dir*=-1;
+        b.y = 10+Math.sin(b.t*.35)*25;
+        b.z = holdZ+Math.sin(b.t*.25)*70;
+        b.yaw = Math.PI + Math.sin(b.t*.3)*.04;
+        b.roll = Math.sin(b.t*.4)*.03 + rage*.06*Math.sin(b.t*4.1);
+        if(b.flash>0) b.flash-=dt;
+        if((b.cd-=dt)<=0){
+          if(b.alt=!b.alt){ golSweep(b); b.cd = b.phase===1?2.6 : b.phase===2?2.1 : 1.6; }
+          else { golBarrage(b); b.cd = b.phase===1?2.2 : b.phase===2?1.8 : 1.4; }
+        }
+        if(b.phase>=2 && (b.fcd-=dt)<=0){
+          b.fcd = b.phase===2?5:4;
+          dreadWall(b);
+        }
+      } else if(type==='hedra'){
+        /* crystal tumble: one spin clock scaled by three incommensurate
+           factors (.53/.71/1) across list/yaw/roll — the orientation never
+           repeats, so the lattice's rotation can't be memorised, only read
+           off the hull. list rides the post-skeleton overlay below. */
+        b.spin += dt*(.5+.25*b.phase);
+        b.yaw = b.spin*.71 + Math.PI;
+        b.roll = b.spin;
+        /* eased onto the drift track so arrival doesn't snap it sideways */
+        b.x += (Math.sin(b.t*.5)*140 - b.x)*Math.min(1,dt*3);
+        b.y = 30+Math.sin(b.t*.8)*50;
+        b.z = holdZ+Math.sin(b.t*.4)*100;
+        if(b.flash>0) b.flash-=dt;
+        if((b.cd-=dt)<=0){
+          if(b.phase===1){ hedraLattice(b); b.cd=3.0; }
+          else if(b.phase===2){
+            if(b.alt=!b.alt) hedraLattice(b); else hedraBurst(b);
+            b.cd=2.4;
+          } else {
+            /* mode arrives here as spawn's 'lance' — normalise once so the
+               cycle opens on the lattice, its signature */
+            if(b.mode!=='lat'&&b.mode!=='burst'&&b.mode!=='shard') b.mode='shard';
+            b.mode = b.mode==='lat'?'burst' : b.mode==='burst'?'shard' : 'lat';
+            if(b.mode==='lat') hedraLattice(b);
+            else if(b.mode==='burst') hedraBurst(b);
+            else hedraShard(b);
+            b.cd=1.9;
+          }
+        }
+      } else if(type==='arbalest'){
+        /* siege beam: bmX locks where you WERE when the whine starts — the
+           1.4s charge is the dodge window; once firing the column only
+           walks 70-100/s toward you, always outrunnable. Mortars arc in
+           between so parking at the far wall isn't free. The platform
+           braces (x freezes) for the whole beam cycle — that stillness is
+           the long tell. */
+        if(b.bmS===0){ b.x += b.dir*40*dt; if(Math.abs(b.x)>90) b.dir*=-1; }
+        b.y = 30+Math.sin(b.t*.4)*25;
+        b.z = holdZ+Math.sin(b.t*.3)*60;
+        b.yaw = Math.PI + Math.sin(b.t*.3)*.05;
+        b.roll = Math.sin(b.t*.45)*.05 + rage*.08*Math.sin(b.t*3.3);
+        if(b.bmS===1){
+          b.bmT+=dt;
+          if(b.bmT>=1.4){
+            b.bmS=2; b.bmT=0; b.bmD = S.P.x>b.bmX?1:-1;
+            AUDIO.beamFire && AUDIO.beamFire();
+          }
+        } else if(b.bmS===2){
+          b.bmT+=dt;
+          b.bmX += b.bmD*(55+15*b.phase)*dt;
+          arbBeamTick(b,dt);
+          if(b.bmT >= (b.phase===3?2.2:1.6)){
+            b.bmS=0;
+            b.cd = b.phase===1?3.6 : b.phase===2?2.8 : 2.2;
+          }
+        } else if((b.cd-=dt)<=0){
+          b.bmS=1; b.bmT=0; b.bmX=S.P.x;
+          AUDIO.beamUp && AUDIO.beamUp();
+        }
+        if((b.fcd-=dt)<=0){ b.fcd = b.phase===1?4 : b.phase===2?3 : 2.4; arbMortar(b); }
+      } else if(type==='reaper'){
+        /* racetrack strafer: parks at a wall, banks hard over — the bank
+           is the telegraph — then commits to a full crossing dropping a
+           bolt curtain with ONE wandering gap. The dodge is finding the
+           gap early and riding its random walk, or slipping in behind the
+           run before the fence closes. */
+        if(b.flash>0) b.flash-=dt;
+        if(b.mode==='cross'){
+          b.x += b.dir*(520+60*b.phase+(b.phase===3?80:0))*dt;
+          b.y += (b.ry-b.y)*Math.min(1,dt*4);
+          b.z = holdZ+Math.sin(b.t*.7)*40;
+          b.roll = lerp(b.roll, b.dir*.35 + rage*.10*Math.sin(b.t*4.2), Math.min(1,dt*6));
+          b.yaw = Math.PI + b.dir*.22;
+          if((b.cd-=dt)<=0){ b.cd = b.phase===3?.075:.09; reapCurtain(b); }
+          /* one aimed spread per run at centre-arena, phases 2+ — punishes
+             tailgating the reaper itself through the gap */
+          if(b.phase>=2 && !b.alt && Math.abs(b.x)<30){ b.alt=true; reapSpread(b); }
+          if(Math.abs(b.x)>340){ b.mode='turn'; b.dir*=-1; b.cd=.9; }
+        } else {
+          /* turn: hold at the wall it just reached, wings coming over into
+             the NEXT run's bank while the curtain rack reloads */
+          b.x += (-b.dir*350-b.x)*Math.min(1,dt*3);
+          b.y += (40+Math.sin(b.t*.9)*30-b.y)*Math.min(1,dt*3);
+          b.z = holdZ+Math.sin(b.t*.7)*40;
+          b.roll = lerp(b.roll, b.dir*1.1, Math.min(1,dt*5));
+          b.yaw = Math.PI + b.dir*.35;
+          if((b.cd-=dt)<=0){
+            b.mode='cross'; b.alt=false;
+            b.ry = clamp(S.P.y+rnd(-40,60), -90, 140);
+            b.cd = .09;
+            AUDIO.strafe && AUDIO.strafe();
+          }
+        }
       } else {
         /* mothership — unchanged */
         b.x += b.dir*(190+180*rage)*dt;
@@ -457,6 +732,28 @@ export function update(dt){
         }
       }
       b.list = rage*.26*Math.sin(b.t*2.1);
+      /* the two types whose identity lives in the nose add their list on
+         top of the shared rage sag AFTER it, or the skeleton line would
+         clobber them: the bat rears through its windup (-.35 at full
+         charge) and whips nose-over as the dive commits, easing back level
+         through the climb-out; the hedra's tumble needs its third axis. */
+      if(type==='bat') b.list += b.mode==='windup'? -.35*b.chg
+        : b.mode==='dive'? -.35+.85*clamp((holdZ+100-b.z)/220,0,1)
+        : b.mode==='recover'? .5*clamp(1-(b.z-20)/400,0,1) : 0;
+      else if(type==='hedra') b.list += b.spin*.53;
+      /* nuke stagger: a tactical round just slapped it — the hull reels on
+         two decaying wobbles and vomits fire, so the hit reads as a WOUND
+         on the airframe, not just a number off the bar */
+      if(b.stagT>0){ b.stagT-=dt;
+        b.list += Math.sin(b.stagT*22)*.12*b.stagT;
+        b.roll += Math.sin(b.stagT*17)*.09*b.stagT;
+        if(Math.random()<.75){
+          const sx=b.x+rnd(-b.r*.7,b.r*.7), sy=b.y+rnd(-50,70), sz=b.z+rnd(-120,120);
+          S.parts.push(mk(sx,sy,sz, rnd(-90,90),rnd(40,190),-rnd(300,700),
+            Math.random()<.5?COL.red:COL.amber, rnd(.5,1.1), rnd(40,80), 0, .3, 1.5));
+          if(Math.random()<.4) sparks(sx,sy,sz, 3, 800, .9, COL.amber, 0,0,0, 0);
+        }
+      }
       if(rage>.25 && (b.smk-=dt)<=0){
         b.smk = .07-rage*.045;
         const hx=b.x+rnd(-250,250), hy=b.y+rnd(-40,60), hz=b.z+rnd(-130,150);

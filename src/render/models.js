@@ -1233,6 +1233,791 @@ export const MODELS = (function () {
     return M;
   }
 
+  /* ================================================================== VESPER
+     Boss #7: a living thing, not a hull — nothing on it is machined. Lumpy
+     fur-ridged torso, a big eared head with an open fanged maw (the bite
+     tell: sprites ride batMaw and the batEye pits), hind claws tucked up
+     under the rump for the dive. The wings are NOT here — they are separate
+     meshes rooted at the shoulders, so scene-draw can roll them about their
+     own origin as the flap hinge. Nose at +z; attach points negated in z. */
+  function buildBat() {
+    var M = Mesh();
+    var FUR = [0.100, 0.085, 0.115];
+    var FUR2 = [0.072, 0.060, 0.088];
+    var CHEST = [0.160, 0.140, 0.170];
+    var BONE = [0.55, 0.50, 0.44];
+    var TOOTH = [0.85, 0.82, 0.74];
+    var DARK = [0.032, 0.026, 0.042];
+    var MAW = [0.40, 0.075, 0.105];
+
+    /* lumpy ring: two sine harmonics on the radius, phase per ring, so the
+       ridges wander down the body like matted fur instead of tiling */
+    function lump(z, rx, ry, y, j, ph) {
+      var o = [], n = 10, i, a, k;
+      for (i = 0; i < n; i++) {
+        a = i / n * TAU + PI / n;
+        k = 1 + j * sin(a * 3 + ph) + j * 0.6 * sin(a * 5 + ph * 2.1);
+        o.push([rx * k * cos(a), y + ry * k * sin(a), z]);
+      }
+      return o;
+    }
+    /* the belly facets get the lighter chest fur */
+    function skinF(A, B) {
+      for (var i = 0; i < A.length; i++) {
+        var jn = (i + 1) % A.length;
+        M.quad(A[i], A[jn], B[jn], B[i], (i >= 5 && i <= 8) ? CHEST : (i & 1 ? FUR2 : FUR));
+      }
+    }
+
+    // torso loft, neck to rump — fat in the middle, sagging slightly
+    var S = [
+      lump(50, 25, 24, 10, 0.05, 0.7),
+      lump(40, 38, 35, 6, 0.07, 2.1),
+      lump(10, 50, 46, 0, 0.08, 4.4),
+      lump(-25, 55, 50, -4, 0.08, 1.3),
+      lump(-60, 42, 38, -2, 0.07, 3.6),
+      lump(-85, 22, 20, 2, 0.05, 5.2)
+    ];
+    for (var i = 0; i < S.length - 1; i++) skinF(S[i], S[i + 1]);
+    M.capCenter(S[S.length - 1], FUR2, [0, -2, -14]);  // rump, tucked tail stub
+
+    // head: brow-heavy skull, short muzzle
+    var H = [
+      lump(118, 20, 16, 8, 0.04, 0.4),
+      lump(101, 30, 26, 12, 0.05, 2.8),
+      lump(76, 34, 30, 14, 0.05, 5.0),
+      lump(56, 27, 25, 12, 0.04, 1.9)
+    ];
+    for (i = 0; i < H.length - 1; i++) skinF(H[i], H[i + 1]);
+    M.skin(H[3], S[0], FUR2, FUR);                     // nape into shoulders
+
+    // open maw: the muzzle ring puckers forward into a lip, then funnels
+    // back into a red throat (batMaw glow rides at the mouth plane)
+    var mw = ringXY(0, 3, 121, 14, 10, 10, PI / 10);
+    var th = ringXY(0, 2, 98, 6, 4, 10, PI / 10);
+    M.skin(H[0], mw, FUR2, DARK);
+    M.skin(mw, th, MAW, shade(MAW, 0.6));
+    M.capCenter(th, DARK);
+    // teeth ring the lip: thin double-sided fangs, canines longest, uppers
+    // pointing down and lowers up so the mouth reads open even in silhouette
+    for (i = 0; i < 8; i++) {
+      var a = i / 8 * TAU + PI / 8, up = sin(a) > 0 ? 1 : -1;
+      var tx = 14 * cos(a), ty = 3 + 10 * sin(a);
+      var dx = -sin(a) * 3.2, dy = cos(a) * 2.4;
+      var fl = (i === 1 || i === 2 || i === 5 || i === 6) ? 11 : 6;
+      var p0 = [tx + dx, ty + dy, 120.5], p1 = [tx - dx, ty - dy, 120.5];
+      var ap = [tx * 0.55, ty - up * fl, 124];
+      M.tri(p0, p1, ap, TOOTH); M.tri(ap, p1, p0, shade(TOOTH, 0.62));
+    }
+    // nose-leaf: the little upturned flap that says "bat" from the front
+    M.tri([-3.5, 11, 120], [3.5, 11, 120], [0, 19, 116], FUR2);
+    M.tri([0, 19, 116], [3.5, 11, 120], [-3.5, 11, 120], CHEST);
+
+    // tall pointed ears, leaning out and back, with a dark inner notch
+    [1, -1].forEach(function (s) {
+      var b = ringXZ(s * 19, 72, 40, 9, 7, 5, s * 0.6);
+      M.capFan(b, [s * 30, 96, 62], FUR2);
+      M.tri([s * 14, 46, 78], [s * 24, 46, 74], [s * 28, 86, 63], DARK);
+      M.tri([s * 28, 86, 63], [s * 24, 46, 74], [s * 14, 46, 78], shade(DARK, 0.7));
+      // brow ridge shelving over the eye pit
+      M.quad([s * 5, 22, 108], [s * 20, 20, 103], [s * 18, 16, 110], [s * 4, 18, 113], FUR2);
+      // the pit itself — the eye ember sprite sits here (batEyeL/R)
+      M.quad([s * 9, 20, 106], [s * 17, 19, 103], [s * 16, 14, 105], [s * 8, 15, 108], DARK);
+    });
+
+    // shoulder knots the wing meshes socket into (batWing attach roots)
+    [1, -1].forEach(function (s) {
+      var a2 = ringXY(s * 30, 22, 30, 10, 9, 6, PI / 6);
+      var b2 = ringXY(s * 30, 22, 6, 11, 10, 6, PI / 6);
+      M.skin(a2, b2, FUR, FUR2);
+      M.capCenter(a2, FUR2);
+    });
+
+    // hind claws tucked under the rump, bone hooks raked back
+    [1, -1].forEach(function (s) {
+      var a3 = ringXY(s * 20, -30, -58, 6, 6, 4, PI / 4);
+      var b3 = ringXY(s * 26, -40, -80, 3.6, 3.6, 4, PI / 4);
+      M.skin(a3, b3, FUR2, FUR);
+      M.capFan(b3, [s * 30, -35, -94], BONE);
+    });
+
+    // matted fur tufts scattered down the back
+    [[8, 46, 30, 1], [-14, 44, 6, -1], [20, 40, -18, 1], [-6, 47, -34, -1],
+    [26, 30, 52, 1], [-24, 34, -52, -1], [0, 45, -8, 1], [15, 43, 14, -1]]
+      .forEach(function (p) {
+        var x = p[0], y = p[1], z = p[2], d = p[3];
+        M.tri([x - 4, y - 2, z], [x + 4, y - 2, z], [x + d * 5, y + 9, z - 5], FUR2);
+        M.tri([x + d * 5, y + 9, z - 5], [x + 4, y - 2, z], [x - 4, y - 2, z], FUR);
+      });
+
+    return M;
+  }
+
+  /* bat wing: arm bone lofted shoulder->elbow->wrist, four finger-bone
+     ridges fanning from the wrist, dark membrane cambered between them.
+     The ORIGIN is the shoulder hinge — scene-draw composes the mesh at the
+     batWing attach point and adds the flap into roll, so nothing here may
+     stray to -x (it would sweep through the body on the upstroke). Built
+     per side; the ring angle runs backwards on the mirror so lofted tube
+     normals stay outward. Membranes and ridges are double-sided anyway. */
+  function buildBatWing(s) {
+    var M = Mesh();
+    var BONE = [0.55, 0.50, 0.44];
+    var BONE2 = [0.40, 0.36, 0.32];
+    var MEMB = [0.150, 0.090, 0.150];
+    var MEMB2 = [0.095, 0.055, 0.100];
+    var FUR = [0.100, 0.085, 0.115];
+
+    function ring(cx, cy, cz, r, n, ph) {
+      var o = [], i, a;
+      for (i = 0; i < n; i++) {
+        a = (ph || 0) + s * (i / n) * TAU;
+        o.push([s * cx, cy + r * sin(a), cz + r * cos(a)]);
+      }
+      return o;
+    }
+    // arm: furred at the shoulder, bone at the wrist, a thumb hook on top
+    var A0 = ring(0, 0, 0, 10, 6, 0.3),
+      A1 = ring(58, -4, 10, 7.5, 6, 0.3),
+      A2 = ring(102, 0, 20, 5.5, 6, 0.3);
+    M.skin(A0, A1, FUR, BONE2);
+    M.skin(A1, A2, BONE2, BONE);
+    M.capCenter(A0, FUR);
+    M.capFan(ring(102, 2, 24, 3.2, 4, 0.5), [s * 112, 12, 40], BONE);
+
+    // four fingers fan from the wrist; membrane sags -y between them
+    var W = [102, 0, 20];
+    var TIP = [[170, -7, 38], [176, -11, 4], [158, -15, -30], [122, -17, -58]];
+    function fp(f, t) {
+      var e = TIP[f];
+      return [s * (W[0] + (e[0] - W[0]) * t),
+      W[1] + (e[1] - W[1]) * t - 7 * sin(PI * t),
+      W[2] + (e[2] - W[2]) * t];
+    }
+    var TS = [0, 0.45, 0.75, 1], f, k;
+    for (f = 0; f < 3; f++) {
+      for (k = 0; k < TS.length - 1; k++) {
+        var qa = fp(f, TS[k]), qb = fp(f, TS[k + 1]),
+          qc = fp(f + 1, TS[k + 1]), qd = fp(f + 1, TS[k]);
+        M.quad(qa, qb, qc, qd, k & 1 ? MEMB2 : MEMB);
+        M.quad(qd, qc, qb, qa, shade(k & 1 ? MEMB2 : MEMB, 0.62));
+      }
+    }
+    // trailing web from the last finger back to the wing root
+    var R = [s * 10, -6, -46], SH = [s * 2, -2, -8];
+    for (k = 0; k < TS.length - 1; k++) {
+      var wa = fp(3, TS[k]), wb = fp(3, TS[k + 1]);
+      M.tri(wa, wb, R, MEMB2); M.tri(R, wb, wa, shade(MEMB2, 0.62));
+    }
+    M.tri(fp(3, 0), R, SH, MEMB); M.tri(SH, R, fp(3, 0), shade(MEMB, 0.62));
+
+    // finger-bone ridges standing proud of the membrane, following its sag
+    for (f = 0; f < 4; f++) {
+      var P = [fp(f, 0), fp(f, 0.5), fp(f, 1)];
+      for (k = 0; k < 2; k++) {
+        var q0 = P[k], q1 = P[k + 1];
+        M.quad([q0[0], q0[1] + 2.2, q0[2]], [q1[0], q1[1] + 2.2, q1[2]],
+          [q1[0], q1[1] - 2.2, q1[2]], [q0[0], q0[1] - 2.2, q0[2]], f & 1 ? BONE2 : BONE);
+        M.quad([q0[0], q0[1] - 2.2, q0[2]], [q1[0], q1[1] - 2.2, q1[2]],
+          [q1[0], q1[1] + 2.2, q1[2]], [q0[0], q0[1] + 2.2, q0[2]], shade(BONE2, 0.7));
+      }
+    }
+    // one claw off the leading finger tip
+    M.tri(fp(0, 1), [s * 182, -12, 44], [s * 172, -2, 40], BONE);
+    M.tri([s * 172, -2, 40], [s * 182, -12, 44], fp(0, 1), BONE2);
+
+    return M;
+  }
+
+  /* ================================================================= PHANTOM
+     Boss #8: a blade that is mostly absence — a thin manta body split into
+     twin forward prongs bracketing a hollow intake throat (phanCore glows
+     in it). It teleports: scene-draw shrinks and blackens this hull through
+     the blink, so the read must survive tiny scale — few, large,
+     high-contrast facets, one hot ring. Nose at +z; attach negated in z. */
+  function buildPhantom() {
+    var M = Mesh();
+    var HULL = [0.120, 0.080, 0.180];
+    var HULL2 = [0.082, 0.052, 0.130];
+    var PLATE = [0.048, 0.030, 0.082];
+    var STEEL = [0.185, 0.130, 0.270];
+    var TRIM = [1.00, 0.24, 0.94];
+    var DARK = [0.030, 0.018, 0.050];
+    var GLOW = [1.00, 0.52, 0.96];
+
+    // wide flat manta body
+    var S = [
+      slabLoop(140, 26, 11, 5, 0),
+      slabLoop(80, 74, 19, 8, 0),
+      slabLoop(10, 122, 25, 10, -2),
+      slabLoop(-70, 92, 20, 8, -2),
+      slabLoop(-135, 42, 13, 5, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? HULL2 : HULL, STEEL);
+    M.capCenter(S[S.length - 1], DARK);
+
+    // split prow: twin tines bracketing the intake (phanGuns at the tips)
+    [1, -1].forEach(function (s) {
+      function pr(z, w, h) {
+        var l = slabLoop(z, w, h, Math.min(w, h) * 0.36, 0), o = [], k;
+        for (k = 0; k < l.length; k++) o.push([l[k][0] + s * 34, l[k][1] + 2, l[k][2]]);
+        return o;
+      }
+      var p0 = pr(130, 16, 9), p1 = pr(190, 10, 6), p2 = pr(226, 5, 3);
+      M.skin(p0, p1, STEEL, HULL2);
+      M.skin(p1, p2, HULL, PLATE);
+      M.capFan(p2, [s * 32, 2, 246], TRIM);
+      // magenta razor strip down each prong's inner face
+      M.quad([s * 26, 5, 224], [s * 26, 5, 136], [s * 26, -2, 136], [s * 26, -2, 224], TRIM);
+    });
+
+    // the hollow: an intake throat between the prongs, glow plate deep in it
+    var t0 = ringXY(0, 2, 132, 26, 15, 8, PI / 8);
+    var t1 = ringXY(0, 2, 96, 11, 7, 8, PI / 8);
+    M.skin(S[0], t0, HULL2, PLATE);                    // nose lip
+    M.skin(t0, t1, DARK);
+    M.capCenter(t1, GLOW);
+    // proud emitter ring around the mouth — the one thing that stays bright
+    // as the collapse tint drags everything else to black
+    M.skin(ringXY(0, 2, 134, 30, 18, 8, PI / 8), ringXY(0, 2, 127, 33, 21, 8, PI / 8), TRIM, shade(TRIM, 0.5));
+
+    // razor wings with a raked tip barb past the trailing edge
+    [1, -1].forEach(function (s) {
+      var w0 = [s * 48, 6, 66], w1 = [s * 196, -6, -34], w2 = [s * 168, -8, -66], w3 = [s * 44, 4, -52];
+      if (s < 0) M.plate(w3, w2, w1, w0, [0, -1, 0], 5, STEEL, HULL2);
+      else M.plate(w0, w1, w2, w3, [0, -1, 0], 5, STEEL, HULL2);
+      M.quad([s * 50, 6.6, 66], [s * 196, -5.4, -34], [s * 190, -5.4, -40], [s * 52, 6.6, 58], TRIM);
+      var b0 = [s * 188, -6, -38], b1 = [s * 226, -10, -90], b2 = [s * 214, -10, -102], b3 = [s * 176, -7, -58];
+      if (s < 0) M.plate(b3, b2, b1, b0, [0, -1, 0], 3.5, HULL, PLATE);
+      else M.plate(b0, b1, b2, b3, [0, -1, 0], 3.5, HULL, PLATE);
+    });
+
+    // canted twin tail blades, ventral keel, dorsal seam ridge
+    [1, -1].forEach(function (s) {
+      M.plate([s * 22, 8, -96], [s * 58, 44, -128], [s * 52, 42, -150], [s * 19, 7, -146], [s * 1, 0, 0], 4, HULL2, TRIM);
+    });
+    M.plate([0.5, -10, -60], [0.5, -34, -104], [0.5, -32, -128], [0.5, -9, -132], [-1, 0, 0], 3.5, HULL2, PLATE);
+    M.plate([1.5, 12, 96], [1.5, 22, 20], [1.5, 20, -60], [1.5, 10, -96], [-1, 0, 0], 3, STEEL, HULL2);
+    M.quad([1.55, 21.2, 10], [1.55, 21.2, -50], [-1.55, 21.2, -50], [-1.55, 21.2, 10], TRIM);
+
+    return M;
+  }
+
+  /* ============================================================= HIVE MOTHER
+     Boss #9: the colossal jelly from the intro cinematic, grown to the
+     game's biggest organic. Deliberately not a dome — the apex sits well
+     off-centre and a low spur runs out the other side, so the silhouette
+     says "creature" before any surface detail lands (same trick as the
+     cinematic carapace). Jittered disc lofts, two scalloped skirt frills,
+     eight pustule blisters (spore sprites ride them), a maw funnel under
+     the bell biased toward the player, and purple vein runs matching the
+     cinematic's flesh tone. Tentacles are separate chained meshes. The
+     membrane armor cycle is all sprites — the mesh is always the open
+     animal. Attach points negated in z. */
+  function buildHiveMother() {
+    var M = Mesh();
+    var FLESH = [0.185, 0.260, 0.075];
+    var FLESH2 = [0.130, 0.195, 0.055];
+    var CARAP = [0.080, 0.105, 0.040];
+    var DARK = [0.030, 0.045, 0.020];
+    var BIO = [0.55, 0.95, 0.25];
+    var GLOW = [0.68, 1.00, 0.34];
+    var VEIN = [0.375, 0.205, 0.305];
+    var THROAT = [0.32, 0.16, 0.10];
+    var RZ = 0.76, i;
+
+    /* jittered bell disc: two sine harmonics on the radius so the rim
+       scallops and no two heights line up; ox drifts the apex off-centre */
+    function disc(y, r, ox, j, ph) {
+      var o = [], n = 14, k, a, w;
+      for (k = 0; k < n; k++) {
+        a = k / n * TAU;
+        w = 1 + j * sin(a * 3 + ph) + j * 0.55 * sin(a * 5 + ph * 2.3);
+        o.push([ox + r * w * sin(a), y, RZ * r * w * cos(a)]);
+      }
+      return o;
+    }
+
+    // the bell, rim to apex — apex walks toward -x as it climbs
+    var B = [
+      disc(-40, 275, 0, 0.06, 1.1),
+      disc(10, 262, -8, 0.07, 3.0),
+      disc(58, 225, -18, 0.06, 5.2),
+      disc(98, 170, -26, 0.05, 0.6),
+      disc(128, 105, -30, 0.05, 2.4),
+      disc(148, 48, -26, 0.04, 4.1)
+    ];
+    for (i = 0; i < B.length - 1; i++) M.skin(B[i], B[i + 1], i & 1 ? FLESH2 : FLESH, CARAP);
+    M.capCenter(B[B.length - 1], FLESH, [0, 14, 0]);   // rounded apex
+
+    // the low spur off the +x rim — the asymmetry that reads at any distance
+    var sp0 = disc(-34, 64, 246, 0.08, 0.2), sp1 = disc(-2, 40, 268, 0.08, 1.7);
+    for (i = 0; i < sp0.length; i++) { sp0[i][2] *= 0.72; sp1[i][2] *= 0.72; }
+    M.skin(sp0, sp1, FLESH2, CARAP);
+    M.capCenter(sp1, FLESH2, [10, 10, 0]);
+
+    // two layered skirt frills under the rim, scalloped hard, double-sided
+    // (the underside is what the player mostly sees)
+    var s1a = disc(-42, 268, 0, 0.05, 2.0), s1b = disc(-80, 300, 4, 0.09, 2.0);
+    var s2a = disc(-56, 225, -6, 0.06, 4.2), s2b = disc(-96, 250, -2, 0.10, 4.2);
+    M.skin(s1b, s1a, FLESH2, CARAP);
+    M.skin(s1a, s1b, shade(FLESH2, 0.55));
+    M.skin(s2b, s2a, FLESH, CARAP);
+    M.skin(s2a, s2b, shade(FLESH, 0.5));
+
+    // under-bell: a dark ceiling drawing in to the maw funnel, biased +z
+    // (mesh +z is the player side under yaw≈PI) — motherMaw rides the mouth
+    var uB = disc(-55, 150, 0, 0.05, 3.3);
+    var mw = ringXZ(0, 40, -88, 58, 46, 14, 0.2);
+    var gu = ringXZ(0, 34, -58, 24, 19, 14, 0.2);
+    M.skin(uB, B[0], shade(FLESH2, 0.6), shade(CARAP, 0.8));
+    M.skin(mw, uB, DARK, shade(DARK, 0.8));
+    M.skin(mw, gu, THROAT, shade(THROAT, 0.62));
+    M.capCenter(gu, GLOW, [0, -6, 0]);
+    // palps around the mouth rim, glowing tips hanging into the gape
+    for (i = 0; i < 7; i++) {
+      var pa = i / 7 * TAU + 0.4;
+      var px = 62 * sin(pa), pz = 40 + 50 * cos(pa);
+      M.tri([px - 5, -86, pz], [px + 5, -86, pz], [px * 1.08, -108, pz * 1.08 - 3], BIO);
+      M.tri([px * 1.08, -108, pz * 1.08 - 3], [px + 5, -86, pz], [px - 5, -86, pz], shade(BIO, 0.5));
+    }
+
+    // eight pustule blisters erupting from the upper bell (motherPusts —
+    // positions are duplicated in the attach table, keep them in sync)
+    [[61, 70, 146, 17], [212, 36, 67, 20], [143, 82, -74, 15], [50, 22, -187, 18],
+    [-128, 76, -129, 14], [-240, 44, -55, 16], [-209, 66, 76, 13], [-104, 29, 174, 15]]
+      .forEach(function (p, k) {
+        var b = ringXZ(p[0], p[2], p[1] - 4, p[3], p[3] * 0.82, 6, k);
+        var t = ringXZ(p[0] + 2, p[2] - 2, p[1] + p[3] * 0.5, p[3] * 0.6, p[3] * 0.5, 6, k);
+        M.skin(b, t, FLESH2, CARAP);
+        M.capCenter(t, BIO, [0, p[3] * 0.35, 0]);
+      });
+
+    // purple vein runs crawling rim-to-apex, a hair proud of the bell
+    var PROF = [[-40, 275, 0], [10, 262, -8], [58, 225, -18], [98, 170, -26], [126, 108, -30]];
+    [0.5, 1.35, 2.6, 3.4, 4.5, 5.6].forEach(function (a, vi) {
+      var dw = 0.055 + 0.02 * sin(vi * 3.1), lim = 4 - (vi & 1);
+      var pt = function (row, da) {
+        return [row[2] + row[1] * 1.025 * sin(a + da), row[0], RZ * row[1] * 1.025 * cos(a + da)];
+      };
+      for (var k = 0; k < lim; k++) {
+        var A = PROF[k], Bb = PROF[k + 1];
+        M.quad(pt(A, -dw), pt(A, dw), pt(Bb, dw * 0.8), pt(Bb, -dw * 0.8), VEIN);
+        M.quad(pt(Bb, -dw * 0.8), pt(Bb, dw * 0.8), pt(A, dw), pt(A, -dw), shade(VEIN, 0.6));
+      }
+    });
+
+    // root nubs under the rim where the tentacle chains hang (motherRoots —
+    // same coordinates, z negated, in the attach table)
+    [[61, 180], [154, 103], [239, 13], [162, -89], [84, -179],
+    [-75, -153], [-201, -107], [-195, -2], [-196, 99], [-69, 150]]
+      .forEach(function (p, k) {
+        var a = ringXZ(p[0], p[1], -46, 13, 11, 6, k * 0.9);
+        var b = ringXZ(p[0], p[1], -70, 8, 7, 6, k * 0.9);
+        M.skin(b, a, k & 1 ? FLESH : FLESH2, CARAP);
+        M.capCenter(b, CARAP);
+      });
+
+    return M;
+  }
+
+  /* hive mother tentacle segment: a tapered ~55-long tube rooted at its TOP
+     (origin), hanging -y. scene-draw chains A->B->C with analytic sway
+     offsets, so the segment carries wobble and sucker nubs but no built-in
+     curl that would fight the chain. A is the trunk, C tapers to a lit tip. */
+  function buildMotherTent(r0, r1, ph, tip) {
+    var M = Mesh();
+    var FLESH = [0.185, 0.260, 0.075];
+    var FLESH2 = [0.130, 0.195, 0.055];
+    var CARAP = [0.080, 0.105, 0.040];
+    var BIO = [0.55, 0.95, 0.25];
+    var rings = [], NR = 4, i;
+    for (i = 0; i < NR; i++) {
+      var t = i / (NR - 1);
+      var r = (r0 + (r1 - r0) * t) * (1 + 0.08 * sin(t * 9 + ph));
+      rings.push(ringXZ(sin(ph + t * 2.4) * 2.5, cos(ph * 1.7 + t * 2) * 2, -55 * t, r, r * 0.92, 7, ph + t));
+    }
+    for (i = NR - 1; i > 0; i--) M.skin(rings[i], rings[i - 1], i & 1 ? FLESH : FLESH2, CARAP);
+    M.capCenter(rings[0], FLESH2);                     // plug hides the joint
+    if (tip) M.capFan(rings[NR - 1], [sin(ph) * 4, -68, 2], BIO);
+    else M.capCenter(rings[NR - 1], FLESH2, [0, -3, 0]);
+    // sucker nubs spiralling down one side
+    for (i = 0; i < 5; i++) {
+      var ty = -8 - i * 9.5, a = ph + i * 1.9;
+      var rr = (r0 + (r1 - r0) * (-ty / 55)) * 1.02;
+      var nx = rr * sin(a), nz = rr * 0.92 * cos(a);
+      M.tri([nx, ty + 3, nz], [nx * 1.18, ty - 1, nz * 1.18], [nx, ty - 4, nz], BIO);
+      M.tri([nx, ty - 4, nz], [nx * 1.18, ty - 1, nz * 1.18], [nx, ty + 3, nz], shade(BIO, 0.5));
+    }
+    return M;
+  }
+
+  /* ================================================================= GOLIATH
+     Boss #10: the biggest hull in the game, and it must LOOK it — wider than
+     the warden's ring, deeper than the carrier's deck. A layered slab
+     fortress: central citadel stack, flanking armour wings, a six-gun chin
+     row spanning the ~600-unit rake width, gantry masts and a comm dish up
+     top, four engine banks aft. All of it proudly machined — box and
+     rectFrust greebles everywhere the organics forbid them. The shell is a
+     coffin: when it breaks a leviathan crawls out, so the amber power seams
+     double as the crack lines the reveal FX will trace. Nose at +z; attach
+     points negated in z. */
+  function buildGoliath() {
+    var M = Mesh();
+    var GUN = [0.160, 0.170, 0.190];
+    var GUN2 = [0.100, 0.110, 0.130];
+    var PLATE = [0.062, 0.068, 0.082];
+    var STEEL = [0.230, 0.240, 0.270];
+    var TRIM = [1.00, 0.60, 0.17];
+    var DARK = [0.034, 0.037, 0.046];
+    var GLOW = [1.00, 0.74, 0.34];
+    var i;
+
+    // main hull: five armoured slab stations, blunt ram bow
+    var S = [
+      slabLoop(400, 120, 55, 22, 0),
+      slabLoop(240, 255, 92, 34, 0),
+      slabLoop(40, 300, 100, 40, 0),
+      slabLoop(-180, 272, 96, 36, 0),
+      slabLoop(-345, 195, 72, 26, 0)
+    ];
+    for (i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? GUN2 : GUN, PLATE);
+    M.capCenter(S[0], PLATE, [0, 0, 40]);              // blunt ram face
+    M.capCenter(S[S.length - 1], DARK);
+
+    // flanking armour wings: the width that dwarfs everything else
+    [1, -1].forEach(function (s) {
+      M.box(s * 352, 8, -30, 130, 85, 470, GUN2, PLATE);
+      M.box(s * 352, 56, -60, 110, 22, 380, PLATE, GUN);
+      var f = M.rectFrust(s * 352, 8, 205, 305, 60, 40, 26, 16, GUN);
+      M.quad(f[0], f[1], f[2], f[3], PLATE);           // wedge cap
+      // amber power seam down the outboard face — the reveal's crack line
+      M.quad([s * 417.2, 22, 120], [s * 417.2, 22, -180], [s * 417.2, 10, -180], [s * 417.2, 10, 120], TRIM);
+      M.box(s * 352, -42, 150, 90, 26, 120, PLATE, GUN2);   // underslung sponson
+    });
+
+    // citadel stack + gantry masts (one deliberately taller — asymmetry)
+    M.box(0, 128, -70, 230, 75, 270, GUN, STEEL);
+    M.box(0, 186, -100, 130, 44, 150, GUN2, STEEL);
+    M.quad([-52, 152, 65.4], [52, 152, 65.4], [52, 138, 65.4], [-52, 138, 65.4], TRIM);  // command glass
+    M.box(70, 230, -130, 12, 52, 12, PLATE);
+    M.box(-34, 244, -150, 8, 62, 8, PLATE);
+    // forward gantry arms reaching over the foredeck
+    [1, -1].forEach(function (s) {
+      M.box(s * 105, 152, 70, 26, 16, 230, GUN2, PLATE);
+      M.box(s * 105, 122, 150, 12, 46, 14, PLATE);     // support strut
+    });
+    // comm dish, offset starboard: a shallow funnel facing forward
+    var dA = ringXY(150, 205, -36, 34, 34, 8, PI / 8);
+    var dB = ringXY(150, 205, -14, 10, 10, 8, PI / 8);
+    M.skin(dA, dB, STEEL, GUN);
+    M.capCenter(dB, DARK);
+    M.box(150, 178, -44, 10, 30, 10, PLATE);
+
+    // chin bar and the six-gun rake row (golGuns — mirrored in attach)
+    M.box(0, -78, 275, 570, 52, 95, GUN2, PLATE);
+    [-280, -180, -80, 80, 180, 280].forEach(function (x, k) {
+      M.box(x, -78, 335, 54, 42, 65, k & 1 ? GUN : GUN2, STEEL);
+      M.box(x, -78, 390, 17, 17, 58, STEEL);
+      M.box(x, -78, 421, 25, 25, 10, DARK);
+    });
+
+    // reactor eye on the bow face, recessed behind a proud collar (golCore)
+    var r0 = ringXY(0, 20, 404, 58, 44, 8, PI / 8);
+    M.skin(ringXY(0, 20, 407, 68, 52, 8, PI / 8), r0, STEEL, GUN);
+    M.skin(r0, ringXY(0, 20, 372, 22, 17, 8, PI / 8), DARK);
+    M.capCenter(ringXY(0, 20, 372, 22, 17, 8, PI / 8), GLOW);
+
+    // spine armour ribs + deck greeble row — texture at fortress scale
+    [[180, 76], [90, 88], [-30, 92], [-150, 88], [-260, 78]].forEach(function (p) {
+      M.plate([-150, p[1], p[0] + 20], [150, p[1], p[0] + 20], [150, p[1], p[0] - 20], [-150, p[1], p[0] - 20],
+        [0, 1, 0], 10, GUN2, PLATE);
+    });
+    [-190, -95, 0, 95, 190].forEach(function (x, k) {
+      M.box(x, 86, 160, 36, 18, 52, k & 1 ? PLATE : GUN2, GUN);
+    });
+
+    // keel armour + ventral fins
+    M.box(0, -98, -60, 220, 40, 340, GUN2, PLATE);
+    [1, -1].forEach(function (s) {
+      M.plate([s * 80, -110, -180], [s * 120, -170, -240], [s * 110, -170, -300], [s * 74, -110, -310],
+        [s * 1, 0, 0], 10, GUN2, PLATE);
+    });
+
+    // amber seams along the hull chines: the fortress is already cracked,
+    // it just doesn't know it yet
+    [1, -1].forEach(function (s) {
+      M.quad([s * 260, 60, 230], [s * 302, 52, 60], [s * 302, 42, 60], [s * 260, 50, 230], TRIM);
+      M.quad([s * 116, 148, 66.2], [s * 116, 148, -200], [s * 116, 136, -200], [s * 116, 136, 66.2], shade(TRIM, 0.7));
+    });
+    M.quad([-286, -51.6, 300], [286, -51.6, 300], [286, -51.6, 268], [-286, -51.6, 268], shade(TRIM, 0.55));
+
+    // four engine banks aft (golVents)
+    [[85, 5, 56], [-85, 5, 56], [205, -5, 44], [-205, -5, 44]].forEach(function (e) {
+      var a = ringXY(e[0], e[1], -340, e[2], e[2], 8, PI / 8);
+      var b = ringXY(e[0], e[1], -420, e[2] * 0.78, e[2] * 0.78, 8, PI / 8);
+      M.skin(a, b, GUN2, PLATE);
+      var c = ringXY(e[0], e[1], -412, e[2] * 0.5, e[2] * 0.5, 8, PI / 8);
+      M.skin(b, c, DARK);
+      M.capCenter(c, GLOW);
+    });
+
+    return M;
+  }
+
+  /* =================================================================== HEDRA
+     Boss #11: the engine's aesthetic distilled — a regular icosahedron
+     generated from the golden ratio rather than tabulated, flat-shaded by
+     construction. Faces alternate two crystal tones with per-face jitter:
+     a tumbling solid with identical faces strobes into a static shimmer,
+     while jittered values keep every facet readable as its own plane
+     through the spin. A bright seam inset on every third face and a small
+     growth spike at each vertex break the perfect hull just enough to say
+     "mineral", not "primitive". It tumbles on incommensurate axes, so
+     there is no nose and no handedness; attach is the centre. */
+  function buildHedra() {
+    var M = Mesh();
+    var LT = [0.30, 0.55, 0.70];
+    var DK = [0.14, 0.28, 0.42];
+    var SEAM = [0.13, 0.88, 1.00];
+    var TIPC = [0.62, 0.90, 1.00];
+
+    var PHI = (1 + Math.sqrt(5)) / 2;
+    var R = 170 / Math.sqrt(1 + PHI * PHI);            // circumradius 170
+    var V = [], F = [], i, j, k;
+    [[0, 1, PHI], [0, 1, -PHI], [0, -1, PHI], [0, -1, -PHI],
+    [1, PHI, 0], [1, -PHI, 0], [-1, PHI, 0], [-1, -PHI, 0],
+    [PHI, 0, 1], [-PHI, 0, 1], [PHI, 0, -1], [-PHI, 0, -1]]
+      .forEach(function (p) { V.push([p[0] * R, p[1] * R, p[2] * R]); });
+    // 20 faces = every vertex triple at mutual edge distance, wound outward
+    function d2(a, b) {
+      var x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
+      return x * x + y * y + z * z;
+    }
+    var e2 = 4 * R * R * 1.02;
+    for (i = 0; i < 12; i++) for (j = i + 1; j < 12; j++) for (k = j + 1; k < 12; k++)
+      if (d2(V[i], V[j]) < e2 && d2(V[j], V[k]) < e2 && d2(V[i], V[k]) < e2) F.push([i, j, k]);
+    F.forEach(function (f, fi) {
+      var a = V[f[0]], b = V[f[1]], c = V[f[2]];
+      var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+      var vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      if (nx * a[0] + ny * a[1] + nz * a[2] < 0) { var t = b; b = c; c = t; }
+      M.tri(a, b, c, shade(fi & 1 ? LT : DK, 1 + 0.10 * sin(fi * 7.7)));
+      if (fi % 3) return;
+      // crystal veining: a thin lit seam inset along one edge, lifted a
+      // hair off the face so it survives the flat shading
+      var g = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
+      function iv(p, w) {
+        return [(p[0] * (1 - w) + g[0] * w) * 1.004, (p[1] * (1 - w) + g[1] * w) * 1.004,
+        (p[2] * (1 - w) + g[2] * w) * 1.004];
+      }
+      M.quad(iv(a, 0.05), iv(b, 0.05), iv(b, 0.14), iv(a, 0.14), shade(SEAM, 0.8 + 0.2 * sin(fi * 3.3)));
+    });
+    // a crystal growth at each vertex — 3-sided spike along the radius
+    V.forEach(function (v, vi) {
+      var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      var u = [v[0] / l, v[1] / l, v[2] / l];
+      var w = Math.abs(u[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+      var t1 = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+      var tl = Math.sqrt(t1[0] * t1[0] + t1[1] * t1[1] + t1[2] * t1[2]);
+      t1 = [t1[0] / tl, t1[1] / tl, t1[2] / tl];
+      var t2 = [u[1] * t1[2] - u[2] * t1[1], u[2] * t1[0] - u[0] * t1[2], u[0] * t1[1] - u[1] * t1[0]];
+      var br = 13 + 3 * sin(vi * 5.3), base = [], q, aq;
+      for (q = 0; q < 3; q++) {
+        aq = q / 3 * TAU + vi;
+        base.push([u[0] * l * 0.94 + (cos(aq) * t1[0] + sin(aq) * t2[0]) * br,
+        u[1] * l * 0.94 + (cos(aq) * t1[1] + sin(aq) * t2[1]) * br,
+        u[2] * l * 0.94 + (cos(aq) * t1[2] + sin(aq) * t2[2]) * br]);
+      }
+      var ex = l + 26 + 9 * sin(vi * 3.3);
+      M.capFan(base, [u[0] * ex, u[1] * ex, u[2] * ex], vi & 1 ? TIPC : shade(TIPC, 0.68));
+    });
+
+    return M;
+  }
+
+  /* ================================================================ ARBALEST
+     Boss #12: a siege platform, not a flyer — a broad armoured crescent
+     built around one enormous lens barrel dead centre. Everything on it
+     exists to aim that beam column: the crescent arms brace forward, the
+     nacelles are ballast, the mortar pods hang under the arms for the
+     between-beams harassment. Ice-blue accents; the lens recess is where
+     the bmS charge sprite swells. Nose at +z; attach points negated in z. */
+  function buildArbalest() {
+    var M = Mesh();
+    var GUN = [0.140, 0.155, 0.185];
+    var GUN2 = [0.090, 0.100, 0.125];
+    var PLATE = [0.055, 0.062, 0.080];
+    var STEEL = [0.210, 0.235, 0.270];
+    var ICE = [0.55, 0.80, 1.00];
+    var ICE2 = [0.28, 0.44, 0.62];
+    var DARK = [0.030, 0.034, 0.044];
+    var GLOW = [0.78, 0.92, 1.00];
+
+    // squat central core
+    var S = [
+      slabLoop(130, 70, 34, 13, 0),
+      slabLoop(40, 150, 48, 18, 0),
+      slabLoop(-60, 165, 50, 19, 0),
+      slabLoop(-160, 110, 38, 15, 0)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? GUN2 : GUN, PLATE);
+    M.capCenter(S[0], PLATE, [0, 0, 26]);
+    M.capCenter(S[S.length - 1], DARK);
+
+    // crescent arms bracing forward, layered armour steps, horn tips
+    [1, -1].forEach(function (s) {
+      var a0 = [s * 58, 20, 96], a1 = [s * 292, 6, 150], a2 = [s * 310, 4, 60], a3 = [s * 70, 16, -80];
+      if (s < 0) M.plate(a3, a2, a1, a0, [0, -1, 0], 40, GUN, GUN2);
+      else M.plate(a0, a1, a2, a3, [0, -1, 0], 40, GUN, GUN2);
+      var b0 = [s * 80, 34, 44], b1 = [s * 252, 24, 96], b2 = [s * 260, 22, 34], b3 = [s * 92, 32, -34];
+      if (s < 0) M.plate(b3, b2, b1, b0, [0, -1, 0], 12, PLATE, GUN);
+      else M.plate(b0, b1, b2, b3, [0, -1, 0], 12, PLATE, GUN);
+      // ice leading edge along the brace
+      M.quad([s * 64, 21, 98], [s * 288, 7, 151], [s * 282, 7, 142], [s * 70, 21, 89], ICE);
+      // forward horn on the tip, lit at the point
+      M.box(s * 296, 8, 130, 42, 32, 95, GUN2, PLATE);
+      var f = M.rectFrust(s * 296, 8, 177, 218, 18, 13, 7, 5, GUN);
+      M.quad(f[0], f[1], f[2], f[3], ICE2);
+    });
+
+    // the lens barrel: fat, forward, unmistakable (arbLens in the recess)
+    var b2r = ringXY(0, 14, 205, 60, 54, 10, PI / 10);
+    var b1r = ringXY(0, 14, 130, 68, 60, 10, PI / 10);
+    var b0r = ringXY(0, 14, 55, 76, 68, 10, PI / 10);
+    M.skin(b2r, b1r, GUN, GUN2);
+    M.skin(b1r, b0r, GUN2, PLATE);
+    // proud emitter ring, then the recessed lens throat with its glow plate
+    M.skin(ringXY(0, 14, 200, 66, 60, 10, PI / 10), ringXY(0, 14, 190, 72, 66, 10, PI / 10), ICE, shade(ICE, 0.5));
+    var rim = ringXY(0, 14, 208, 52, 47, 10, PI / 10);
+    M.skin(b2r, rim, PLATE);
+    M.skin(rim, ringXY(0, 14, 160, 18, 16, 10, PI / 10), DARK);
+    M.capCenter(ringXY(0, 14, 160, 18, 16, 10, PI / 10), GLOW);
+    // cradle clamping the barrel to the core
+    M.box(0, -28, 90, 90, 34, 170, GUN2, PLATE);
+    M.box(0, 54, 60, 60, 26, 120, PLATE, GUN);
+    [1, -1].forEach(function (s) {
+      M.plate([s * 34, 44, 110], [s * 62, 20, 150], [s * 58, 14, 120], [s * 30, 36, 84], [0, -1, 0], 8, GUN2, PLATE);
+    });
+
+    // ballast nacelles with aft nozzles
+    [1, -1].forEach(function (s) {
+      M.box(s * 150, 26, -70, 110, 64, 230, GUN, GUN2);
+      M.box(s * 150, 62, -80, 90, 12, 180, PLATE);
+      M.quad([s * 205.2, 42, 20], [s * 205.2, 42, -150], [s * 205.2, 32, -150], [s * 205.2, 32, 20], ICE2);
+      var a = ringXY(s * 150, 18, -188, 34, 30, 6, PI / 6);
+      var b = ringXY(s * 150, 18, -224, 26, 23, 6, PI / 6);
+      M.skin(a, b, GUN2, PLATE);
+      M.capCenter(b, GLOW);
+    });
+
+    // underslung mortar pods, tubes proud at the muzzle (arbMortars)
+    [[110, -52, -10, 56, 44, 100, -40, 48, 74], [225, -44, 30, 48, 38, 85, -34, 88, 106]]
+      .forEach(function (p) {
+        [1, -1].forEach(function (s) {
+          M.box(s * p[0], p[1], p[2], p[3], p[4], p[5], GUN2, PLATE);
+          M.box(s * p[0], p[6], p[7] - 18, 19, 19, 38, STEEL);
+          M.box(s * p[0], p[6], p[8] - 2, 25, 25, 9, DARK);
+        });
+      });
+
+    // ice seam under the chin — the platform's one running light
+    M.quad([-120, -44.6, 60], [120, -44.6, 60], [120, -44.6, 36], [-120, -44.6, 36], shade(ICE, 0.6));
+
+    return M;
+  }
+
+  /* ================================================================== REAPER
+     Boss #13: a strafer that lives in profile — it crosses the arena
+     broadside, so the budget goes to the wing silhouette: two scythe
+     crescents with notched trailing edges and raked tip barbs. Narrow
+     fuselage with a red visor slit instead of a canopy, oversized engine
+     banks for the run, curtain racks slung under the wings (reapRack — the
+     bolt fences fall from them). Nose at +z; attach points negated in z. */
+  function buildReaper() {
+    var M = Mesh();
+    var HULL = [0.115, 0.100, 0.130];
+    var HULL2 = [0.078, 0.068, 0.092];
+    var PLATE = [0.048, 0.042, 0.060];
+    var STEEL = [0.175, 0.150, 0.190];
+    var TRIM = [1.00, 0.17, 0.30];
+    var TRIM2 = [0.52, 0.09, 0.16];
+    var DARK = [0.030, 0.026, 0.038];
+    var GLOW = [1.00, 0.42, 0.36];
+
+    // lean fuselage, needle nose
+    var S = [
+      hexLoop(150, 26, 16, 14, 0),
+      hexLoop(70, 44, 26, 22, -2),
+      hexLoop(-20, 50, 30, 24, -2),
+      hexLoop(-110, 36, 22, 18, 2),
+      hexLoop(-165, 20, 13, 11, 4)
+    ];
+    for (var i = 0; i < S.length - 1; i++) M.skin(S[i], S[i + 1], i & 1 ? HULL2 : HULL, STEEL);
+    M.capFan(S[0], [0, -4, 208], STEEL);
+    M.capCenter(S[S.length - 1], DARK);
+    // the visor: one narrow red slit where a canopy would be
+    M.quad([-12, 17.8, 148], [12, 17.8, 148], [9, 13.6, 163], [-9, 13.6, 163], TRIM);
+
+    // scythe wings: inner panel, outer crescent blade, tip barb
+    [1, -1].forEach(function (s) {
+      var p0 = [s * 44, 6, 60], p1 = [s * 140, -4, 10], p2 = [s * 132, -6, -66], p3 = [s * 40, 4, -44];
+      var q0 = [s * 136, -4, 6], q1 = [s * 252, -16, -78], q2 = [s * 232, -18, -140], q3 = [s * 126, -6, -58];
+      var r0 = [s * 246, -16, -84], r1 = [s * 272, -22, -140], r2 = [s * 260, -22, -158], r3 = [s * 236, -17, -120];
+      if (s < 0) {
+        M.plate(p3, p2, p1, p0, [0, -1, 0], 7, STEEL, HULL2);
+        M.plate(q3, q2, q1, q0, [0, -1, 0], 5, HULL, PLATE);
+        M.plate(r3, r2, r1, r0, [0, -1, 0], 3.5, HULL2, TRIM2);
+      } else {
+        M.plate(p0, p1, p2, p3, [0, -1, 0], 7, STEEL, HULL2);
+        M.plate(q0, q1, q2, q3, [0, -1, 0], 5, HULL, PLATE);
+        M.plate(r0, r1, r2, r3, [0, -1, 0], 3.5, HULL2, TRIM2);
+      }
+      // blood-red leading edge in two runs
+      M.quad([s * 46, 6.6, 60], [s * 138, -3.4, 10], [s * 132, -3.4, 2], [s * 48, 6.6, 51], TRIM);
+      M.quad([s * 140, -3.4, 4], [s * 250, -15.4, -78], [s * 242, -15.4, -86], [s * 136, -3.4, -6], TRIM);
+      // notched trailing edge: dark wedges biting forward into the blade
+      [[160, -8, -74], [192, -11, -100], [222, -15, -124]].forEach(function (n) {
+        var n0 = [s * (n[0] - 12), n[1] + 0.5, n[2] - 14], n1 = [s * (n[0] + 12), n[1] + 0.5, n[2] - 18],
+          ap = [s * n[0], n[1] + 0.5, n[2] + 16];
+        M.tri(n0, n1, ap, DARK); M.tri(ap, n1, n0, DARK);
+      });
+    });
+
+    // oversized engine banks (reapEngines at the nozzles)
+    [1, -1].forEach(function (s) {
+      var a = ringXY(s * 58, 12, -40, 30, 27, 8, PI / 8);
+      var b = ringXY(s * 58, 12, -150, 26, 24, 8, PI / 8);
+      M.skin(a, b, s > 0 ? HULL : HULL2, STEEL);
+      var c = ringXY(s * 58, 12, -196, 20, 18, 8, PI / 8);
+      M.skin(b, c, HULL2, PLATE);
+      var d = ringXY(s * 58, 12, -188, 12, 11, 8, PI / 8);
+      M.skin(c, d, DARK);
+      M.capCenter(d, GLOW);
+      M.capCenter(a, DARK, [0, 0, 6]);                 // intake face
+      // red strip along the nacelle flank
+      M.quad([s * 88.2, 20, -52], [s * 88.2, 20, -140], [s * 88.2, 12, -140], [s * 88.2, 12, -52], TRIM2);
+    });
+
+    // curtain racks under the wings: long dispensers with drop pips
+    [1, -1].forEach(function (s) {
+      M.box(s * 118, -24, -34, 70, 16, 96, HULL2, PLATE);
+      [-70, -44, -14, 8].forEach(function (z) {
+        M.box(s * 118, -34, z, 52, 6, 9, PLATE);
+      });
+      M.quad([s * 100, -37.2, 12], [s * 136, -37.2, 12], [s * 136, -37.2, 4], [s * 100, -37.2, 4], TRIM2);
+    });
+
+    // canted twin tails + dorsal razor fin
+    [1, -1].forEach(function (s) {
+      M.plate([s * 20, 14, -120], [s * 58, 62, -158], [s * 52, 60, -184], [s * 18, 12, -172], [s * 1, 0, 0], 5, HULL2, TRIM);
+    });
+    M.plate([0.6, 22, -30], [0.6, 46, -84], [0.6, 44, -112], [0.6, 20, -116], [-1, 0, 0], 3.5, STEEL, TRIM2);
+
+    return M;
+  }
+
   /* =================================================================== CRATE */
   function buildCrate() {
     var M = Mesh();
@@ -1374,7 +2159,14 @@ export const MODELS = (function () {
     lancer = buildLancer(),
     carrier = buildCarrier(), dreadnought = buildDreadnought(),
     wasp = buildWasp(), ravager = buildRavager(), leviathan = buildLeviathan(),
-    warden = buildWarden(), hunter = buildHunter();
+    warden = buildWarden(), hunter = buildHunter(),
+    bat = buildBat(), batWingL = buildBatWing(1), batWingR = buildBatWing(-1),
+    phantom = buildPhantom(), hivemother = buildHiveMother(),
+    motherTentA = buildMotherTent(15, 12, 0.9, false),
+    motherTentB = buildMotherTent(12, 8.5, 2.2, false),
+    motherTentC = buildMotherTent(8.5, 3.6, 3.8, true),
+    goliath = buildGoliath(), hedra = buildHedra(),
+    arbalest = buildArbalest(), reaper = buildReaper();
 
   return {
     jet: jet.build(),
@@ -1392,6 +2184,18 @@ export const MODELS = (function () {
     leviathan: leviathan.build(),
     warden: warden.build(),
     hunter: hunter.build(),
+    bat: bat.build(),
+    batWingL: batWingL.build(),
+    batWingR: batWingR.build(),
+    phantom: phantom.build(),
+    hivemother: hivemother.build(),
+    motherTentA: motherTentA.build(),
+    motherTentB: motherTentB.build(),
+    motherTentC: motherTentC.build(),
+    goliath: goliath.build(),
+    hedra: hedra.build(),
+    arbalest: arbalest.build(),
+    reaper: reaper.build(),
     crate: crate.build(),
     shard: shard.build(),
     attach: {
@@ -1438,7 +2242,44 @@ export const MODELS = (function () {
       wardenArm: [298, 0, -84],
       wardenIris: [0, 0, -46],
       hunterNose: [0, -6, -234],
-      hunterGuns: [[62, -34, -154], [-62, -34, -154]]
+      hunterGuns: [[62, -34, -154], [-62, -34, -154]],
+      /* boss-roster expansion — same convention throughout: mesh points with
+         z negated, applied raw in world space. Wing/tentacle entries are the
+         ROOTS the separate meshes are composed at, not points on this hull. */
+      batEyeL: [-13, 17, -105],
+      batEyeR: [13, 17, -105],
+      batMaw: [0, 3, -121],
+      batWingL: [-30, 22, -18],
+      batWingR: [30, 22, -18],
+      phanCore: [0, 2, -132],
+      phanGuns: [[32, 2, -244], [-32, 2, -244]],
+      motherMaw: [0, -88, -40],
+      motherCore: [-16, 50, 0],
+      /* pustule blisters — coordinates mirror the dome table in
+         buildHiveMother, lifted a hair so the sprite clears the cap */
+      motherPusts: [
+        [61, 76, -146], [212, 43, -67], [143, 88, 74], [50, 29, 187],
+        [-128, 81, 129], [-240, 50, 55], [-209, 71, -76], [-104, 35, -174]
+      ],
+      /* irregular ring of tentacle roots under the rim, matching the nub
+         cones — scene-draw hangs a 3-segment chain from each */
+      motherRoots: [
+        [61, -60, -180], [154, -60, -103], [239, -60, -13], [162, -60, 89],
+        [84, -60, 179], [-75, -60, 153], [-201, -60, 107], [-195, -60, 2],
+        [-196, -60, -99], [-69, -60, -150]
+      ],
+      golGuns: [
+        [280, -78, -424], [-280, -78, -424],
+        [180, -78, -424], [-180, -78, -424],
+        [80, -78, -424], [-80, -78, -424]
+      ],
+      golCore: [0, 20, -404],
+      golVents: [[85, 5, 424], [-85, 5, 424], [205, -5, 424], [-205, -5, 424]],
+      hedraCore: [0, 0, 0],
+      arbLens: [0, 14, -206],
+      arbMortars: [[110, -40, -78], [-110, -40, -78], [225, -34, -108], [-225, -34, -108]],
+      reapEngines: [[58, 12, 194], [-58, 12, 194]],
+      reapRack: [[118, -32, 30], [-118, -32, 30]]
     }
   };
 })();

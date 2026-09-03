@@ -7,7 +7,7 @@ import { A } from './state.js';
 import { STEP, LOOKAHEAD_MS } from './constants.js';
 import { gainNode, lp, now, makeSoftCurve } from './primitives.js';
 import { buildEngine, setEngine } from './engine.js';
-import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance, spit, squish, screech, mayday, radio, groan, swarm, creep, nukeAlert, nukeBoom, geiger } from './sfx.js';
+import { laser, missile, boom, thud, pickup, alarm, siren, sectorClear, strafe, mineArm, lance, spit, squish, screech, mayday, radio, groan, swarm, creep, nukeAlert, nukeBoom, geiger, beamUp, beamFire, blink, motherPulse, motherScream, bite } from './sfx.js';
 import { applyIntensity, scheduler, setIntensity } from './scheduler.js';
 import { rumble, sirenLoop, stopCine } from './cine-loops.js';
 import { warp, plasma, explode, helmetOn, breath, beep, cineRiser, jetPass } from './cine-oneshots.js';
@@ -155,6 +155,15 @@ export const AUDIO = {
   nukeAlert: nukeAlert,
   nukeBoom: nukeBoom,
   geiger: geiger,
+
+  /* boss-roster one-shots */
+  beamUp: beamUp,
+  beamFire: beamFire,
+  blink: blink,
+  motherPulse: motherPulse,
+  motherScream: motherScream,
+  bite: bite,
+
   setIntensity: setIntensity,
   toggle: toggle,
   suspend: suspend,

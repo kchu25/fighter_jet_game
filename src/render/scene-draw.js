@@ -26,16 +26,30 @@ const KMESH = {
   ravager: mesh(MODELS.ravager)
 };
 const BOMBMESH = mesh(MODELS.bomb);
-/* boss type → mesh (bosses rotate: mothership / carrier / dreadnought /
-   leviathan / warden / hunter) */
+/* boss type → mesh (the full 13-slot rotation; spawnBoss owns the order) */
 const BOSSMESH = {
   mothership:  MESH.mothership,
   carrier:     mesh(MODELS.carrier),
   dreadnought: mesh(MODELS.dreadnought),
   leviathan:   mesh(MODELS.leviathan),
   warden:      mesh(MODELS.warden),
-  hunter:      mesh(MODELS.hunter)
+  hunter:      mesh(MODELS.hunter),
+  bat:         mesh(MODELS.bat),
+  phantom:     mesh(MODELS.phantom),
+  hivemother:  mesh(MODELS.hivemother),
+  goliath:     mesh(MODELS.goliath),
+  hedra:       mesh(MODELS.hedra),
+  arbalest:    mesh(MODELS.arbalest),
+  reaper:      mesh(MODELS.reaper)
 };
+/* the bat's wings and the mother's tentacle segments are their own hulls,
+   composed per frame in the boss draw: the wings hinge (roll) at their
+   shoulder origins, the tentacle segments chain top-to-tip down -y */
+const BATWING = [mesh(MODELS.batWingL), mesh(MODELS.batWingR)];
+const MTENT   = [mesh(MODELS.motherTentA), mesh(MODELS.motherTentB), mesh(MODELS.motherTentC)];
+/* fixed hull-space points where the goliath's armor seams burn once it is
+   badly hurt — decorative only, so cheaper as consts than as attach entries */
+const GOLSEAMS = [[-215,26,-48],[-96,-30,58],[8,52,-14],[118,-42,44],[228,14,-58]];
 /* per-type phase tints, same idiom as the old inline mothership pick */
 const BOSSPH = {
   mothership:  [null, [.16,0,.16], [.45,0,0]],
@@ -43,7 +57,19 @@ const BOSSPH = {
   dreadnought: [null, [.18,.02,0], [.50,0,0]],
   leviathan:   [null, [.10,.14,0], [.38,.16,0]],
   warden:      [null, [.22,.11,0], [.48,.14,0]],
-  hunter:      [null, [.18,0,.16], [.44,0,.30]]
+  hunter:      [null, [.18,0,.16], [.44,0,.30]],
+  bat:         [null, [.16,.04,.12], [.42,.04,0]],
+  phantom:     [null, [.20,0,.22], [.46,0,.18]],
+  /* phase 1 is not null on purpose: her hull mesh is dun chitin, and at hold
+     range the fog eats it — a standing bio cast keeps her reading GREEN and
+     ALIVE from the first frame, then the phases push it toward sick-bright */
+  hivemother:  [[.05,.16,.05], [.16,.28,.06], [.40,.32,.08]],
+  goliath:     [null, [.18,.10,0], [.46,.06,0]],
+  /* the crystal is "lit from inside" — a standing cyan cast through every
+     facet from phase 1, cooling harder in 2, then igniting red in the rage */
+  hedra:       [[.05,.15,.19], [.08,.22,.26], [.36,.12,.16]],
+  arbalest:    [null, [.10,.14,.24], [.42,.08,0]],
+  reaper:      [null, [.20,.02,0], [.5,0,0]]
 };
 
 /* ------------------------------------------------------------------ additive batch */
@@ -250,10 +276,54 @@ export function render(){
     litDraw(MESH.jet, model, a.state==='dying'?[.55,.08,-.05]:null, 1);
   }
   if(S.boss){
-    compose(model, S.boss.x,S.boss.y,S.boss.z, S.boss.list||0, S.boss.yaw, S.boss.roll, 1);
-    const type=S.boss.type||'mothership';
-    const ph=(BOSSPH[type]||BOSSPH.mothership)[S.boss.phase-1]||null;
-    litDraw(BOSSMESH[type]||MESH.mothership, model, hitTint(S.boss,0)||ph, 1);
+    const b=S.boss, type=b.type||'mothership';
+    const ph=(BOSSPH[type]||BOSSPH.mothership)[b.phase-1]||null;
+    const bmesh=BOSSMESH[type]||MESH.mothership;
+    const tint=hitTint(b,0)||ph;
+    if(type==='phantom' && b.blink){
+      /* the lit pass runs with blending off, so uAlpha cannot fade the hull —
+         the teleport is sold with scale and tint instead: the ship crushes to
+         a point while its colour is pulled down to black (collapse), and the
+         same ramp runs backwards on arrival (reform) */
+      const k0=clamp((b.bt||0)/(b.blink===1?.32:.28),0,1);
+      const k=b.blink===1?k0:1-k0, d=.9*k;
+      /* a near-full-size ghost hangs at the departure point the whole blink:
+         a black afterimage with a magenta edge — the "it was HERE" marker the
+         arrival nova is dodged against */
+      compose(model, b.ox,b.oy,b.oz, b.list||0, b.yaw, b.roll, .97);
+      litDraw(bmesh, model, [-.45,-.95,-.40], 1);
+      compose(model, b.x,b.y,b.z, b.list||0, b.yaw, b.roll, 1-.95*k);
+      litDraw(bmesh, model, [(tint?tint[0]:0)-d,(tint?tint[1]:0)-d,(tint?tint[2]:0)-d], 1);
+    } else {
+      compose(model, b.x,b.y,b.z, b.list||0, b.yaw, b.roll, 1);
+      litDraw(bmesh, model, tint, 1);
+      if(type==='bat'){
+        /* the wings are separate meshes rooted at the shoulder, so rolling
+           them IS the flap hinge; the dive beats much harder than the cruise */
+        const flap=Math.sin(b.wingT||0)*(b.mode==='dive'?.95:.55);
+        const L=ATT.batWingL, R=ATT.batWingR;
+        compose(model, b.x+L[0],b.y+L[1],b.z+L[2], b.list||0, b.yaw, b.roll+flap, 1);
+        litDraw(BATWING[0], model, tint, 1);
+        compose(model, b.x+R[0],b.y+R[1],b.z+R[2], b.list||0, b.yaw, b.roll-flap, 1);
+        litDraw(BATWING[1], model, tint, 1);
+      } else if(type==='hivemother'){
+        /* ten tentacle chains, three segments each, swaying analytically off
+           b.pulse — the lag grows down the chain so it drags like kelp, with
+           no physics state to tick or reset */
+        const pu=b.pulse||0;
+        for(let i=0;i<ATT.motherRoots.length;i++){
+          const rt=ATT.motherRoots[i], sway=Math.sin(pu*1.3+i*1.7);
+          for(let s=0;s<3;s++){
+            compose(model,
+              b.x+rt[0]+sway*(6+s*14),
+              b.y+rt[1]-s*54,
+              b.z+rt[2]+Math.cos(pu*1.1+i)*(4+s*10),
+              0, b.yaw, sway*(.18+s*.14), 1);
+            litDraw(MTENT[s], model, tint, 1);
+          }
+        }
+      }
+    }
   }
   for(const d of S.debris){
     const a=clamp(d.life/d.max,0,1);
@@ -506,6 +576,158 @@ export function buildFX(){
          are not occluded by it — they carry the rake's muzzle flash */
       for(const g of ATT.hunterGuns)
         sprite(b.x+g[0],b.y+g[1],b.z+g[2], 11+34*fl, COL.mag, .55+fl*3);
+    } else if(type==='bat'){
+      /* the eyes are its only lights — it is an animal, not a machine — and
+         the uneven pulse keeps them alive-looking rather than lamp-like */
+      for(const g of [ATT.batEyeL,ATT.batEyeR])
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 7+2.5*Math.sin(b.t*7+g[0]), COL.red, .95);
+      if(b.mode==='windup'){
+        /* the maw lights while it rears back and two screech rings roll out of
+           it — the full second of tell the committed dive is dodged on */
+        const ch=b.chg||0, mw=ATT.batMaw;
+        sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], 12+70*ch, COL.red, .5+.9*ch);
+        sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], 5+26*ch, COL.white, .4+.7*ch);
+        ring(b.x+mw[0],b.y+mw[1],b.z+mw[2], 30+230*ch, 5, COL.red, .7*(1-ch*.55), 14);
+        ring(b.x+mw[0],b.y+mw[1],b.z+mw[2], 10+140*ch, 3.5, COL.purple, .55*(1-ch*.4), 12);
+      }
+      if(b.mode==='dive')
+        /* speed streaks off the wing roots — it is ordnance now, not a flier */
+        for(const g of [ATT.batWingL,ATT.batWingR])
+          beam(b.x+g[0],b.y+g[1],b.z+g[2], b.x+g[0],b.y+g[1]+14,b.z+g[2]+170, 7, COL.purple, .4);
+    } else if(type==='phantom'){
+      const bl=b.blink||0, c=ATT.phanCore;
+      if(bl===0){
+        /* core + gun-tip swell (the ravager idiom) only while the hull is
+           actually here to carry them */
+        sprite(b.x+c[0],b.y+c[1],b.z+c[2], 30+8*Math.sin(b.t*4), COL.mag, .85);
+        sprite(b.x+c[0],b.y+c[1],b.z+c[2], 12, COL.white, .7);
+        const sw=b.cd<.5?1-b.cd/.5:0;
+        for(const g of ATT.phanGuns)
+          sprite(b.x+g[0],b.y+g[1],b.z+g[2], (9+4*Math.sin(b.t*6+g[0]))*(1+sw*1.2), COL.mag, .5+sw*.8);
+      } else if(bl===1){
+        /* implosion: a ring crushing onto the departure point plus sparks
+           spiralling in — covers the mesh crush and marks where it WAS */
+        const k=clamp((b.bt||0)/.32,0,1), rr=130-110*k;
+        ring(b.ox,b.oy,b.oz, 12+150*(1-k), 5, COL.mag, .5+.7*k, 16);
+        sprite(b.ox,b.oy,b.oz, 20+60*k, COL.white, .5+.8*k);
+        for(let i=0;i<6;i++){
+          const a=i*1.047+b.t*9;
+          sprite(b.ox+Math.cos(a)*rr, b.oy+Math.sin(a)*rr*.7, b.oz, 8, COL.mag, .8);
+        }
+      } else {
+        /* reform: a flash ring expanding off the arrival point — phase 3 puts
+           a nova here, so this IS the "get off the blink-in spot" warning */
+        const k=clamp((b.bt||0)/.28,0,1);
+        ring(b.x,b.y,b.z, 20+190*k, 6*(1-k*.6), COL.mag, .9*(1-k*.7), 16);
+        sprite(b.x,b.y,b.z, 12+90*(1-k), COL.white, 1.1*(1-k*.5));
+        sprite(b.x,b.y,b.z, 160*(1-k), COL.mag, .5);
+      }
+    } else if(type==='hivemother'){
+      const op=b.open==null?1:b.open, pu=b.pulse||0, ch=b.chg||0, fl=Math.max(0,b.flash||0);
+      /* pustules breathe out of phase, and all swell together just before a
+         spore volley — whichever clock (open cd / closed fcd) is about to fire */
+      const nc=Math.min(b.cd??9,b.fcd??9), sw=nc<.4?1-nc/.4:0;
+      /* pustule glows are sized for her hold range — anything under ~20 world
+         units projects to a couple of pixels out there and vanishes */
+      for(const g of ATT.motherPusts)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2],
+          (22+8*Math.sin(pu*2.1+g[0]*.13+g[1]*.09))*(1+sw*.8), COL.bio, .6+sw*.6);
+      /* standing bioluminescent aura: the "it is a living thing" read that the
+         chitin mesh alone cannot give at fog distance — breathes with pulse */
+      const au=.22+.07*Math.sin(pu*1.15);
+      sprite(b.x,b.y+26,b.z, 470+26*Math.sin(pu*.9), COL.bio, au);
+      sprite(b.x,b.y-40,b.z+30, 320, COL.bio, au*.7);
+      /* maw: lance charge growth + birth flare, the leviathan idiom */
+      const mw=ATT.motherMaw;
+      sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], (34+12*Math.sin(pu*1.7))*(1+fl*2)+220*ch, COL.bio, .5+1.1*ch+fl);
+      sprite(b.x+mw[0],b.y+mw[1],b.z+mw[2], 12+80*ch, COL.white, .35+.9*ch);
+      /* the core is the armor gauge: the open bell glows hot, closed goes dim */
+      const co=ATT.motherCore;
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], (40+90*op)*pl, COL.bio, .3+.9*op);
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], (14+34*op)*pl, COL.white, .2+.8*op);
+      if(op<.4){
+        /* membrane film: dim overlapping bio haze sheathing the bell plus a
+           slow shimmer ring — the "your shots are eating armor" tell */
+        const sh=(.25+.10*Math.sin(b.t*2.3))*(1-op*2);
+        sprite(b.x,b.y+20,b.z, 300, COL.bio, sh);
+        sprite(b.x-70,b.y-30,b.z+40, 220, COL.bio, sh*.7);
+        sprite(b.x+80,b.y+60,b.z-30, 240, COL.bio, sh*.6);
+        ring(b.x,b.y+10,b.z, 265+14*Math.sin(b.t*1.3), 7, COL.bio, .30*(1-op*2), 18);
+      }
+    } else if(type==='goliath'){
+      const fl=Math.max(0,b.flash||0), co=ATT.golCore;
+      /* the reactor eye is the one soft-looking point on a hull this armored */
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], (60+14*Math.sin(b.t*2.4))*(1+fl), COL.amber, .9+fl*.8);
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], 24*pl, COL.white, .8);
+      for(const g of ATT.golVents)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 20+7*Math.sin(b.t*3+g[0]*.02), COL.amber, .75);
+      /* the chin row strobes on every sweep/barrage beat (b.flash) */
+      for(const g of ATT.golGuns){
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 12+30*fl, COL.amber, .5+fl*2.2);
+        if(fl>0) sprite(b.x+g[0],b.y+g[1],b.z+g[2], 8+18*fl, COL.white, fl*1.2);
+      }
+      /* past the midpoint the hull itself starts burning: fixed seam embers
+         whose glow tracks how hurt it is — a fortress-sized health bar */
+      const rage=1-b.hp/b.max;
+      if(rage>.4) for(const g of GOLSEAMS)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 13+6*Math.sin(b.t*5+g[0]*.05), COL.amber, (rage-.4)*1.4);
+    } else if(type==='hedra'){
+      const fl=Math.max(0,b.flash||0), sp=b.spin||0, co=ATT.hedraCore;
+      /* the crystal is lit from inside, and the whole core strobes on an
+         attack — the only muzzle it has */
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], (80+18*Math.sin(b.t*2.1))*(1+fl*1.6), COL.cyan, .85+fl*1.2);
+      sprite(b.x+co[0],b.y+co[1],b.z+co[2], 26+12*Math.sin(b.t*3.3)+50*fl, COL.white, .6+fl);
+      /* vertex glints riding the tumble — decorative, but they sell the spin
+         the lattice orientation is keyed to. Sized for hold range: under ~10
+         world units they project to a pixel and die. */
+      for(let i=0;i<6;i++){
+        const a1=sp*1.31+i*1.0472, a2=sp*.87+i*2.4;
+        sprite(b.x+Math.cos(a1)*Math.cos(a2)*165, b.y+Math.sin(a2)*135, b.z+Math.sin(a1)*Math.cos(a2)*140,
+          13+5*Math.sin(b.t*7+i), COL.cyan, .6+.35*Math.sin(b.t*9+i*2.6));
+      }
+    } else if(type==='arbalest'){
+      const ln=ATT.arbLens, s=b.bmS||0;
+      if(s===1){
+        /* charge: the lens swells over the full 1.4s, and a thin pulsing line
+           marks the locked column — locked at charge START, so the line never
+           follows you: the dodge is simply not being on it when it fires */
+        const k=clamp((b.bmT||0)/1.4,0,1);
+        sprite(b.x+ln[0],b.y+ln[1],b.z+ln[2], 20+150*k, COL.ice, .5+1.0*k);
+        sprite(b.x+ln[0],b.y+ln[1],b.z+ln[2], 8+60*k, COL.white, .4+.9*k);
+        beam(b.bmX,GROUND_Y,300, b.bmX,CEIL_Y,300, 3+2*Math.sin(S.T*18), COL.ice, .35+.25*Math.sin(S.T*14));
+      } else if(s===2){
+        /* fire: the column drawn at several z slices so it reads as a wall of
+           light, not a line — hot white core inside a soft ice sheath, plus a
+           splash where it grinds along the deck */
+        const fz=.85+.15*Math.sin(S.T*47);
+        for(const zz of [0,450,900,1350]){
+          beam(b.bmX,GROUND_Y,zz, b.bmX,CEIL_Y,zz, 26, COL.ice, .55*fz);
+          beam(b.bmX,GROUND_Y,zz, b.bmX,CEIL_Y,zz, 9, COL.white, .8*fz);
+        }
+        sprite(b.bmX,GROUND_Y+40,180, 130*fz, COL.ice, .9);
+        sprite(b.bmX,GROUND_Y+26,180, 55, COL.white, .9*fz);
+        sprite(b.x+ln[0],b.y+ln[1],b.z+ln[2], 120*fz, COL.ice, 1.2);
+        sprite(b.x+ln[0],b.y+ln[1],b.z+ln[2], 46, COL.white, 1.1);
+      } else
+        sprite(b.x+ln[0],b.y+ln[1],b.z+ln[2], 24+7*Math.sin(b.t*2.6), COL.ice, .6);
+      /* mortar pods swell before a lob (the ravager idiom, on the mortar fcd) */
+      const msw=b.fcd<.4?1-b.fcd/.4:0;
+      for(const g of ATT.arbMortars)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], (10+4*Math.sin(b.t*3+g[0]*.06))*(1+msw), COL.ice, .45+msw*.7);
+    } else if(type==='reaper'){
+      /* reapCurtain only sets flash to .08, so the rack strobe normalizes it —
+         at ~10 drops/s that reads as a near-continuous burn during a run */
+      const fs=clamp((b.flash||0)/.08,0,1), cross=b.mode==='cross', dir=b.dir||1;
+      for(const g of ATT.reapEngines)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], (13+4*Math.sin(b.t*8+g[0]))*(cross?1.7:1), COL.red, cross?.95:.6);
+      if(cross)
+        /* wingtip streaks trailing against the travel — pure speed read */
+        for(const s2 of [-1,1])
+          beam(b.x+s2*170, b.y+18, b.z, b.x+s2*170-dir*150, b.y+18, b.z, 6, COL.red, .4);
+      for(const g of ATT.reapRack){
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 10+16*fs, COL.red, .45+fs*.9);
+        if(fs>0) sprite(b.x+g[0],b.y+g[1],b.z+g[2], 6+10*fs, COL.white, fs*.8);
+      }
     } else {
       const c=ATT.bossCore;
       sprite(b.x+c[0],b.y+c[1],b.z+c[2], 120*pl, b.phase===3?COL.red:COL.green, 1.1);

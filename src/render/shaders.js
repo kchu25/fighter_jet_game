@@ -109,6 +109,12 @@ void main() {
   /* additive emissive (damage flashes / boss phases) */
   col += uTint * (0.85 + 0.95 * fres);
 
+  /* Floor at black BEFORE the rolloff: col/(1+col) has a pole at -1, so a
+     strongly negative tint (the phantom's decloak drives channels to ~-1.7
+     at grazing fresnel) flips to a huge POSITIVE there and a blackout tint
+     renders as neon. Sub--1 was never a meaningful colour — clamp it. */
+  col = max(col, vec3(0.0));
+
   /* gentle highlight rolloff so neons bloom instead of clipping flat */
   col = mix(col, col / (1.0 + col), 0.35);
 

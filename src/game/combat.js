@@ -177,28 +177,50 @@ export function spawnBoss(){
      ~20-30s of sustained accurate fire for a first-time S.boss encounter;
      +150/S.boss keeps later encounters escalating without runaway growth.
 
-     Boss TYPE rotates with bossN: mothership (bolt volleys), hive carrier
-     (summons trash from its bays), dreadnought (telegraphed lance + bolt
-     walls), leviathan (bio shotgun + wasp births), warden (rotating pinwheel
-     platform), hunter-killer (tracks your lane, rakes it, pounces). All six
-     stay ONE S.boss object — lockOn/hitScan/missiles/HUD concat [S.boss] and
-     must keep working unchanged. Mothership stays index 0: the first boss of
-     a run is scripted as one elsewhere. The carrier runs 0.9x HP (its escorts
-     soak your fire), the dreadnought 1.1x, the hunter 0.95x (it spends whole
-     seconds out of your guns on a pounce). */
-  const type = ['mothership','carrier','dreadnought','leviathan','warden','hunter'][S.bossN%6];
+     Boss TYPE rotates with bossN, thirteen deep: mothership (bolt volleys),
+     hive carrier (summons trash from its bays), vesper the bat (figure-8,
+     screech windup, committed dive-and-bite), dreadnought (telegraphed lance
+     + bolt walls), phantom (teleporting blade-ship — pincers, blink-in nova),
+     hive mother (the cinematic's jelly grown colossal: membrane armor cycle,
+     marquee kill), hedra (tumbling crystal, lattice geometry), goliath (siege
+     fortress whose shell death is only stage one — see the reveal in
+     damage()), arbalest (locked beam column + mortars), warden (rotating
+     pinwheel platform), reaper (crossing bolt-curtain fences), hunter-killer
+     (tracks your lane, rakes it, pounces), leviathan (bio shotgun + wasp
+     births). All thirteen stay ONE S.boss object — lockOn/hitScan/missiles/
+     HUD concat [S.boss] and must keep working unchanged. Mothership stays
+     index 0: the first boss of a run is scripted as one elsewhere. HP mults
+     track how much of your fire a hull actually soaks: the carrier .9 and
+     phantom .85 spend escorts or blinks instead of hit points, the bat .9 is
+     small and half-melee, the reaper and hunter .95 spend whole seconds out
+     of your guns, the dreadnought 1.1, arbalest 1.15, goliath 1.25 and
+     mother 1.5 are walls that sit there and take it. */
+  const type = ['mothership','carrier','bat','dreadnought','phantom','hivemother','hedra',
+                'goliath','arbalest','warden','reaper','hunter','leviathan'][S.bossN%13];
   const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT'
              : type==='leviathan'?'LEVIATHAN' : type==='warden'?'WARDEN'
-             : type==='hunter'?'HUNTER-KILLER' : 'MOTHERSHIP';
+             : type==='hunter'?'HUNTER-KILLER' : type==='bat'?'VESPER'
+             : type==='phantom'?'PHANTOM' : type==='hivemother'?'HIVE MOTHER'
+             : type==='goliath'?'GOLIATH' : type==='hedra'?'HEDRA'
+             : type==='arbalest'?'ARBALEST' : type==='reaper'?'REAPER' : 'MOTHERSHIP';
   const c    = type==='carrier'?COL.green : type==='dreadnought'?COL.red
              : type==='leviathan'?COL.bio : type==='warden'?COL.amber
-             : type==='hunter'?COL.mag : COL.purple;
+             : type==='hunter'?COL.mag : type==='bat'?COL.purple
+             : type==='phantom'?COL.mag : type==='hivemother'?COL.bio
+             : type==='goliath'?COL.amber : type==='hedra'?COL.cyan
+             : type==='arbalest'?COL.ice : type==='reaper'?COL.red : COL.purple;
   const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1
-             : type==='leviathan'?1.05 : type==='hunter'?.95 : 1));
+             : type==='leviathan'?1.05 : type==='hunter'?.95 : type==='bat'?.9
+             : type==='phantom'?.85 : type==='hivemother'?1.5 : type==='goliath'?1.25
+             : type==='arbalest'?1.15 : type==='reaper'?.95 : 1));
   const r  = type==='carrier'?240 : type==='dreadnought'?170 : type==='leviathan'?230
-           : type==='warden'?200 : type==='hunter'?150 : 210;
+           : type==='warden'?200 : type==='hunter'?150 : type==='bat'?130
+           : type==='phantom'?150 : type==='hivemother'?260 : type==='goliath'?300
+           : type==='hedra'?170 : type==='arbalest'?230 : type==='reaper'?190 : 210;
   const rz = type==='carrier'?140 : type==='dreadnought'?210 : type==='leviathan'?170
-           : type==='warden'?160 : type==='hunter'?190 : 150;
+           : type==='warden'?160 : type==='hunter'?190 : type==='bat'?130
+           : type==='phantom'?160 : type==='hivemother'?200 : type==='goliath'?220
+           : type==='hedra'?170 : type==='arbalest'?160 : type==='reaper'?150 : 150;
   /* every field ANY type's update branch reads is initialised here, so a
      branch can never touch an undefined on its first frame:
      chg/mode = dreadnought lance state (leviathan reuses both for its maw
@@ -209,13 +231,38 @@ export function spawnBoss(){
      phase-3 direct-fire cd (warden: iris-ring cd), scr3 = leviathan phase-3
      screech latch, spin/sdir = warden pinwheel angle and its direction,
      pph = last frame's phase, so a branch can react to a phase CHANGE,
-     rkN = hunter rake rounds left in the burst */
+     rkN = hunter rake rounds left in the burst,
+     stagT = nuke-stagger reel (nuke.js sets it when a proximity detonation
+     wounds a NUKEHURT platform; the shared skeleton shakes the hull while it
+     runs), assisted = the once-per-boss tactical-assist latch (nuke.js),
+     bmS/bmT/bmX/bmD = arbalest beam column: state (0 idle/1 charge/2 fire),
+     clock, locked column x, sweep dir, blink/bt = phantom teleport state
+     (0 hover/1 collapse/2 reform) and its clock, ox/oy/oz = the point it
+     collapsed FROM (the ghost/implosion anchor), gy/ry = reaper curtain gap
+     y (random walk) and run height, open/openT/pulse = hive mother membrane
+     openness 0..1, cycle clock, tentacle/pustule clock, wingT/tx/ty/diveN =
+     bat wing-flap clock, dive target snapshot and dives flown */
   S.boss={k:'boss',type,name,x:0,y:40,z:SPAWN_Z+600,hp,max:hp,r,rz,c,
         phase:1,t:0,cd:1.2,dir:1,here:false,yaw:0,roll:0,list:0,hit:0,smk:0,
-        chg:0,mode:type==='hunter'?'stalk':'lance',alt:false,flash:0,fcd:2.4,scr3:false,
-        spin:0,sdir:1,pph:1,rkN:0};
-  /* hud prints the warn phrase raw — the leviathan's carries its own verb */
-  S.bossWarn=2.4; S.bossWarnName = type==='leviathan'?'LEVIATHAN RISING' : name+' INBOUND';
+        chg:0,
+        mode: type==='hunter'?'stalk' : type==='bat'?'circle' : type==='reaper'?'turn'
+            : (type==='hivemother'||type==='goliath')?'sweep' : 'lance',
+        alt:false,flash:0,fcd:2.4,scr3:false,
+        spin:0,sdir:1,pph:1,rkN:0,
+        stagT:0,assisted:false,
+        bmS:0,bmT:0,bmX:0,bmD:1,
+        blink:0,bt:0,ox:0,oy:40,oz:0,
+        gy:0,ry:60,
+        open:1,openT:0,pulse:0,
+        wingT:0,tx:0,ty:0,diveN:0};
+  /* hud prints the warn phrase raw — the organic arrivals carry their own verbs */
+  S.bossWarn=2.4;
+  S.bossWarnName = type==='leviathan'?'LEVIATHAN RISING'
+    : type==='bat'?'VESPER TAKES WING'
+    : type==='phantom'?'PHANTOM DECLOAKING'
+    : type==='hivemother'?'THE MOTHER SURFACES'
+    : type==='hedra'?'HEDRA MANIFESTING'
+    : name+' INBOUND';
   pushComms('CONTROL','ALL BIRDS — HEAVY SIGNATURE INBOUND',.9);
   AUDIO.siren();
 }
@@ -420,6 +467,234 @@ export function hunterSpread(b){
   }
   AUDIO.thud();
 }
+/* ----------------------------------------------------- vesper (bat) attacks */
+export function batSpit(b){
+  /* three globs out of the maw: the centre one aimed dead-on, the outer pair
+     fanned ±140 of lateral — centred fire is beaten by a strafe, but the fan
+     closes off a lazy lean, so the answer is a real move committed early */
+  const mw=ATT.batMaw, gx=b.x+mw[0], gy=b.y+mw[1], gz=b.z+mw[2];
+  const V=1600, t=gz/V;
+  for(let i=-1;i<=1;i++)
+    S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t+i*140,vy:(S.P.y-gy)/t,vz:-V,
+      dmg:8,c:COL.purple,r:24});
+  AUDIO.spit && AUDIO.spit();
+}
+/* --------------------------------------------------------- phantom attacks */
+export function phanPincer(b){
+  /* two mirrored arcs launched off the flanks, closing on you like jaws —
+     every bolt converges toward your lane but none is allowed within ~70 of
+     your CURRENT x (sporeBarrage's guarantee, made angular): the corridor you
+     already hold stays clean and the trap only closes on a panic strafe */
+  const n = b.phase===1?4 : b.phase===2?5 : 6;
+  const V=1700, t=b.z/V;
+  for(const s of [-1,1])
+    for(let i=0;i<n;i++){
+      const gx=b.x+s*b.r, gy=b.y+(i/(n-1)-.5)*120;
+      /* aim points bracket the corridor: offsets start past 70 and step out */
+      const tx=S.P.x+s*(74+i*46+rnd(0,16)), ty=S.P.y+rnd(-90,90);
+      S.foes.push({x:gx,y:gy,z:b.z,vx:(tx-gx)/t,vy:(ty-gy)/t,vz:-V,
+        dmg:9,c:COL.mag,r:26});
+    }
+  AUDIO.spit && AUDIO.spit();
+}
+export function phanNova(b){
+  /* the reform detonation: a full ring with NO gap, expanding to roughly the
+     envelope like a slower wardenRing. unfair as a snap attack, fair as a
+     rule — it is slow, and born at the blink-in point the .28s reform has
+     already telegraphed, so the dodge is "never stand where it reappears" */
+  const n = b.phase===3?18:14, V=1150, T=b.z/V;
+  for(let i=0;i<n;i++){
+    const a=i/n*Math.PI*2, cs=Math.cos(a), sn=Math.sin(a);
+    S.foes.push({x:b.x+cs*50,y:b.y+sn*34,z:b.z,
+      vx:cs*(240-50)/T,vy:sn*(160-34)/T,vz:-V,dmg:10,c:COL.mag,r:28});
+  }
+  AUDIO.thud();
+}
+/* ----------------------------------------------------- hive mother attacks */
+export function motherSweep(b){
+  /* one slow wave rolled off the skirt rim: bolts spanning the whole corridor
+     at bell height with TWO guaranteed gaps — dreadWall's puzzle turned into
+     a single rank, so the read is faster but the wave is wider and the gap
+     you pick has to be reached before it lands */
+  const gaps=[rnd(-225,-45),rnd(45,225)];
+  for(let gx=-320;gx<=320;gx+=58){
+    let open=false;
+    for(const g of gaps) if(Math.abs(gx-g)<95){ open=true; break; }
+    if(open) continue;
+    S.foes.push({x:gx,y:b.y,z:b.z,vx:0,vy:0,vz:-1150,dmg:10,c:COL.bio,r:32});
+  }
+  AUDIO.spit && AUDIO.spit();
+}
+export function motherSpore(b){
+  /* the leviathan's spray thrown from the pustule field: fat slow globs with
+     ONE guaranteed clear lane — spot the quiet strip and hold it while the
+     bell drifts. also her whole offence while the membrane is closed. */
+  const n = b.phase===1?10 : b.phase===2?12 : 14;
+  const safe = rnd(-200,200);
+  const pus = ATT.motherPusts, V=1050, t=b.z/V;
+  let placed=0, tries=0;
+  while(placed<n && tries<n*4){
+    tries++;
+    const g = pus[(Math.random()*pus.length)|0];
+    const gx=b.x+g[0], gy=b.y+g[1];
+    const tx=S.P.x+rnd(-260,260), ty=S.P.y+rnd(-140,140);
+    if(Math.abs(tx-safe)<95) continue;         // keep the lane clear
+    S.foes.push({x:gx,y:gy,z:b.z+g[2],vx:(tx-gx)/t,vy:(ty-gy)/t,vz:-V,dmg:9,c:COL.bio,r:38});
+    placed++;
+  }
+  AUDIO.spit && AUDIO.spit();
+}
+export function motherBirth(b){
+  /* live young out of the maw. same anti-flood rule as the carrier and the
+     leviathan: never past ~7 live enemies; returns false so update() retries
+     on a short cd instead of eating the whole cycle */
+  const n = 2+(Math.random()<.5?1:0);
+  if(S.enemies.length+n>7) return false;
+  const mw=ATT.motherMaw;
+  for(let i=0;i<n;i++)
+    spawnWasp({x:clamp(b.x+mw[0]+rnd(-70,70),-300,300),
+               y:clamp(b.y+mw[1]+rnd(-40,40),-140,150),
+               z:b.z+mw[2]});
+  b.flash=.4; AUDIO.squish && AUDIO.squish(.8);
+  return true;
+}
+export function motherLance(b){
+  /* levLance grown to her scale: fired at the END of a 1.3s maw charge,
+     aimed at the player's position AT FIRE TIME — dodged by moving after the
+     glow commits, and thick enough that a graze still counts */
+  const mw=ATT.motherMaw, gx=b.x+mw[0], gy=b.y+mw[1], gz=b.z+mw[2];
+  const V=3300, t=gz/V;
+  S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t,vy:(S.P.y-gy)/t,vz:-V,dmg:16,c:COL.bio,r:40});
+  AUDIO.lance && AUDIO.lance();
+}
+/* --------------------------------------------------------- goliath attacks */
+export function golSweep(b){
+  /* a rake rolled across the whole chin row: twelve rounds released together
+     with a per-round speed stagger, so they ARRIVE one after another as a
+     diagonal sweeping the hull's ~600 span — the dodge is reading which end
+     lands first and riding the end that lands last, not outrunning a wall */
+  const guns=ATT.golGuns, V0=1450;
+  let x0=guns[0][0], x1=guns[0][0];
+  for(const g of guns){ x0=Math.min(x0,g[0]); x1=Math.max(x1,g[0]); }
+  for(let i=0;i<12;i++){
+    const g=guns[i%guns.length], V=V0+i*45;
+    const gx=b.x+x1-(x1-x0)*(i/11), gy=b.y+g[1], gz=b.z+g[2], t=gz/V;
+    S.foes.push({x:gx,y:gy,z:gz,vx:0,vy:(S.P.y-gy)/t*.4,vz:-V,dmg:11,c:COL.amber,r:28});
+  }
+  b.flash=.3; AUDIO.thud();
+}
+export function golBarrage(b){
+  /* the chin row fired for effect: a loose aimed cluster like the carrier's,
+     but heavier per round — the spread is wide enough that holding still eats
+     two or three, and one clean strafe eats none */
+  const n = b.phase===1?7 : b.phase===2?9 : 11;
+  const guns=ATT.golGuns, V=1900;
+  for(let i=0;i<n;i++){
+    const a=i/(n-1)-.5, g=guns[i%guns.length];
+    const gx=b.x+g[0], gy=b.y+g[1], gz=b.z+g[2], t=gz/V;
+    S.foes.push({x:gx,y:gy,z:gz,vx:(S.P.x-gx)/t*.75+a*300,vy:(S.P.y-gy)/t*.75+a*90,
+      vz:-V,dmg:12,c:COL.amber,r:30});
+  }
+  AUDIO.thud();
+}
+/* ----------------------------------------------------------- hedra attacks */
+export function hedraLattice(b){
+  /* geometry as ammunition: an equilateral triangle of bolts, oriented by
+     b.spin, expanding self-similarly until it spans the envelope. the edges
+     are closed but the three CORNER positions are left empty — the dodge is
+     reading the tumble and threading a vertex, which is a direction to hold,
+     not a spot to find */
+  const V=1250, T=b.z/V, m=4;
+  for(let e=0;e<3;e++){
+    const a0=b.spin+e*2.0944, a1=b.spin+(e+1)*2.0944;
+    const x0=Math.cos(a0), y0=Math.sin(a0), x1=Math.cos(a1), y1=Math.sin(a1);
+    for(let j=1;j<=m;j++){
+      const f=j/(m+1);                         // skip both endpoints: open corners
+      const px=x0+(x1-x0)*f, py=y0+(y1-y0)*f;
+      /* velocity proportional to position keeps the scaling uniform, so the
+         shape stays a triangle all the way out instead of shearing */
+      S.foes.push({x:b.x+px*46,y:b.y+py*32,z:b.z,
+        vx:px*(250-46)/T,vy:py*(165-32)/T,vz:-V,dmg:9,c:COL.cyan,r:26});
+    }
+  }
+  AUDIO.lance && AUDIO.lance();
+}
+export function hedraBurst(b){
+  /* a golden-angle shell: successive bolts step ~137.5° around the core, so
+     no two share a ray and no ring ever closes — it opens as a spiral with
+     holes everywhere and a wall nowhere, and the dodge is picking one hole
+     EARLY and trusting it rather than reacting to fourteen bolts at once */
+  const n = b.phase===1?10 : b.phase===2?12 : 14;
+  const V=1400, T=b.z/V;
+  for(let i=0;i<n;i++){
+    const a=i*2.399+b.spin, cs=Math.cos(a), sn=Math.sin(a);
+    const rr=rnd(220,340);
+    S.foes.push({x:b.x+cs*40,y:b.y+sn*28,z:b.z,
+      vx:cs*rr/T,vy:sn*rr*.66/T,vz:-V,dmg:9,c:COL.cyan,r:26});
+  }
+  b.flash=.3; AUDIO.thud();
+}
+export function hedraShard(b){
+  /* phase-3 punctuation: three fast shards in a tight aimed cluster — the
+     lattice and the shell teach patience, this one punishes parking in the
+     hole you threaded */
+  const V=2300, t=b.z/V;
+  for(let i=-1;i<=1;i++)
+    S.foes.push({x:b.x,y:b.y,z:b.z,vx:(S.P.x-b.x)/t+i*90,vy:(S.P.y-b.y)/t+i*30,
+      vz:-V,dmg:11,c:COL.cyan,r:26});
+  AUDIO.lance && AUDIO.lance();
+}
+/* -------------------------------------------------------- arbalest attacks */
+export function arbMortar(b){
+  /* lobbed between beam cycles: slow fat orbs walked loosely across your
+     lane. individually trivial — the puzzle is that they arrive while the
+     beam column owns a stripe of the arena, and the pocket that dodges both
+     keeps moving */
+  const n = b.phase===1?6 : b.phase===2?8 : 10;
+  const pods=ATT.arbMortars, V=1000;
+  for(let i=0;i<n;i++){
+    const g=pods[i%pods.length];
+    const gx=b.x+g[0], gy=b.y+g[1], gz=b.z+g[2], t=gz/V;
+    S.foes.push({x:gx,y:gy,z:gz,
+      vx:(S.P.x-gx)/t*.7+rnd(-180,180),vy:(S.P.y-gy)/t*.7+rnd(-120,120),
+      vz:-V,dmg:10,c:COL.ice,r:34});
+  }
+  AUDIO.thud();
+}
+export function arbBeamTick(b,dt){
+  /* the beam column is TERRAIN, not a projectile: while bmS===2 a stripe of
+     the arena at b.bmX is lethal, and update.js calls this every frame to
+     collect the toll. hurt()'s own .65s inv gate limits the rate, so a frame
+     rate change cannot change the damage. never pass the boss as src — src
+     gets EXPLODED and spliced; this is a standing hazard, not a rammer. */
+  if(Math.abs(S.P.x-b.bmX)<30) hurt(14);
+}
+/* ---------------------------------------------------------- reaper attacks */
+export function reapCurtain(b){
+  /* one picket of the fence, dropped at the wing's current x as it crosses —
+     ~10 calls a second draw a wall behind it with a wandering hole at b.gy.
+     the gap random-walks a little each picket, so threading the fence means
+     TRACKING the hole, not memorising a height. no audio: at this cadence a
+     sound per picket is a buzzer, and the rack strobe already carries it. */
+  b.gy=clamp(b.gy+rnd(-40,40),-100,100);
+  for(let gy=-130;gy<=130;gy+=65){
+    if(Math.abs(gy-b.gy)<70) continue;
+    S.foes.push({x:b.x,y:gy,z:b.z,vx:0,vy:0,vz:-1250,dmg:9,c:COL.red,r:26});
+  }
+  b.flash=.08;
+}
+export function reapSpread(b){
+  /* the mid-run snapshot: five aimed rounds fanned across your lane as the
+     wing crosses the centreline — the fence says pick a hole, this says the
+     hole you picked is being shot at too */
+  const V=2000, t=b.z/V;
+  for(let i=0;i<5;i++){
+    const a=i/4-.5;
+    S.foes.push({x:b.x,y:b.y,z:b.z,vx:(S.P.x-b.x)/t*.85+a*420,vy:(S.P.y-b.y)/t*.85+a*120,
+      vz:-V,dmg:10,c:COL.red,r:26});
+  }
+  AUDIO.thud();
+}
 export function hitScan(s,dmg,big){
   const list = S.boss? S.enemies.concat([S.boss]) : S.enemies;
   /* test the whole span the shot swept this frame, or it tunnels through
@@ -437,10 +712,16 @@ export function hitScan(s,dmg,big){
   return false;
 }
 /* --------------------------------------------------------------- violence */
-/* organic kinds burst in ichor, not sparks — checked by kind (the leviathan
-   boss is caught through e.type since its e.k is 'boss') */
-export const BIOK = { wasp:1, ravager:1, leviathan:1, swarm:1 };
+/* organic kinds burst in ichor, not sparks — checked by kind (the organic
+   bosses are caught through e.type since their e.k is 'boss'). the goliath
+   is deliberately absent: the fortress is machine through and through, and
+   the leviathan inside it is already caught by type. */
+export const BIOK = { wasp:1, ravager:1, leviathan:1, swarm:1, bat:1, hivemother:1 };
 function isBio(e){ return !!(BIOK[e.k] || (e.type && BIOK[e.type])); }
+/* mechanical platforms big enough that a nuclear proximity detonation WOUNDS
+   them instead of the release being waved off — nuke.js reads this for the
+   barrage exemption, the det() splash and the called-in assist round */
+export const NUKEHURT = { carrier:1, warden:1 };
 export function impact(e,dmg,x,y,z,big,s){
   const heavy = e===S.boss || e.k==='cruiser';
   const pw = clamp(dmg*.4,.3,1.4);
@@ -531,15 +812,52 @@ export function explode(e,x,y,z){
   });
 }
 export function damage(e,dmg,x,y,z,big,s){
+  /* the hive mother's membrane IS her armor cycle: closed (open→0) she takes
+     ~a third damage and seeps spores, open she is soft and attacking — the
+     fight is about spending your fire in the windows, not holding the trigger */
+  if(e.k==='boss'&&e.type==='hivemother') dmg *= .35+.65*(e.open==null?1:e.open);
   e.hp-=dmg;
   impact(e,dmg,x,y,z,big,s);
   if(e.hp>0) return;
   e.dead=true; S.kills++;
   explode(e,e.x,e.y,e.z);
   if(e===S.boss){
-    const pts=5000*S.combo; S.score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
+    if(e.type==='goliath'){
+      /* THE REVEAL. explode() above has already given the shell its full
+         death spectacle — but the goliath slot is one two-stage fight: the
+         fortress does not die, it cracks open and a leviathan crawls out of
+         the wreck. no bossN++ and no null — S.boss is REPLACED in place,
+         fully initialised (house rule: every field any branch reads), sized
+         and paced as a stock leviathan at .62 of the slot's base hp, already
+         here:true because it is born at the wreck's depth. its death then
+         runs the ordinary leviathan path, which does the bookkeeping. */
+      const pts=3000*S.combo; S.score+=pts;
+      pop(e.x,e.y,e.z,'SHELL BREACHED',COL.amber);
+      spawnCrate();
+      const hp2=Math.round((440+S.bossN*150)*.62);
+      S.boss={k:'boss',type:'leviathan',name:'LEVIATHAN',x:e.x,y:e.y,z:e.z,
+        hp:hp2,max:hp2,r:230,rz:170,c:COL.bio,
+        phase:1,t:0,cd:1.2,dir:1,here:true,yaw:0,roll:0,list:0,hit:0,smk:0,
+        chg:0,mode:'lance',alt:false,flash:0,fcd:2.4,scr3:false,
+        spin:0,sdir:1,pph:1,rkN:0,
+        stagT:0,assisted:false,
+        bmS:0,bmT:0,bmX:0,bmD:1,
+        blink:0,bt:0,ox:0,oy:40,oz:0,
+        gy:0,ry:60,
+        open:1,openT:0,pulse:0,
+        wingT:0,tx:0,ty:0,diveN:0};
+      S.bossWarn=2.4; S.bossWarnName='IT WAS ALIVE INSIDE';
+      pushComms('WOLF',"THE WRECK — SOMETHING'S CRAWLING OUT OF IT",.9);
+      AUDIO.siren(); AUDIO.screech && AUDIO.screech();
+      return;
+    }
+    /* the hive mother is the marquee kill, and she pays out like one */
+    const mq = e.type==='hivemother';
+    const pts=(mq?12000:5000)*S.combo; S.score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
     S.boss=null; S.bossN++; S.combo=Math.min(9,S.combo+2); S.comboT=4;
-    for(let i=0;i<3;i++) spawnCrate();
+    for(let i=0;i<(mq?6:3);i++) spawnCrate();
+    if(mq){ pushComms('CONTROL','THE MOTHER IS DOWN — SKIES CLEAR',1);
+      AUDIO.motherScream && AUDIO.motherScream(); }
   } else {
     const i=S.enemies.indexOf(e); if(i>=0) S.enemies.splice(i,1);
     const pts=(e.k==='cruiser'?250:e.k==='ravager'?250:e.k==='lancer'?300:e.k==='swarm'?180:e.k==='striker'?150:e.k==='mine'?60:e.k==='wasp'?40:100)*S.combo; S.score+=pts;

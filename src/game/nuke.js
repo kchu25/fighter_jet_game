@@ -20,7 +20,7 @@ import { AUDIO } from '../audio/index.js';
 import { rnd, clamp } from '../core/utils.js';
 import { S, COL, SPAWN_Z, DESPAWN_Z, GROUND_Y } from './state.js';
 import { mk, shock, shard, later, sparks } from './fx.js';
-import { hurt, explode, pushComms, spawnCrate } from './combat.js';
+import { hurt, explode, pushComms, spawnCrate, damage, NUKEHURT } from './combat.js';
 
 /* release geometry — tuned together, do not move one without the others.
    Fall time from REL_Y under GRAV with REL_VY is ~1.09s, during which the
@@ -297,6 +297,25 @@ function detonate(k){
       pushComms('CONTROL','SPLASH. WE COULD HAVE DONE THAT AT ANY TIME.',1));
   }
 
+  /* a platform big enough to nuke is big enough to be HURT by one: proximity
+     splash for the NUKEHURT bosses (combat.js owns the set), scaled by how
+     close the detonation walked. Run through damage() like any other hit, so
+     the flash, the stagger smoke, a possible death and the KILL CREDIT all go
+     down the normal path — this is the opposite of the bossKill deletion
+     above, and the called-in assist round is guaranteed to be a real wound. */
+  if(S.boss && !k.bossKill && NUKEHURT[S.boss.type]){
+    const b=S.boss, d=Math.hypot(b.x-x,b.z-z), R=1500*P;
+    if(d<R){
+      const f=1-d/R;
+      let dm=Math.round((150+h*130)*f);
+      if(k.assist) dm=Math.max(dm, Math.round(b.max*.42));   // the called strike WOUNDS
+      damage(b, dm, b.x+rnd(-80,80), b.y+rnd(-40,40), b.z, true);
+      /* only if it lived: damage() nulls S.boss on a kill */
+      if(S.boss===b){ b.stagT=1.6; pushComms('WOLF',"DIRECT HIT — IT'S BURNING",.8);
+        AUDIO.groan && AUDIO.groan(); }
+    }
+  }
+
   /* everything in the fireball is simply gone — no score, it is not your kill */
   for(let i=S.enemies.length-1;i>=0;i--){
     const e=S.enemies[i];
@@ -338,6 +357,10 @@ function waveHit(k){
 /* ------------------------------------------------------------------ tick */
 export function nukeTick(dt){
   if(!S.nukes) S.nukes=[];
+  /* the assist set piece clocks here rather than in nukeSchedule: it fires
+     DURING a boss, and it needs to keep counting even while a live column
+     from its own release is still in the corridor */
+  nukeAssistTick(dt);
   S.rad = 0;
   /* The hydrogen wash is pulled down about four times faster than the tactical
      one. Its spike is allowed to be genuinely opaque ONLY because it does not
@@ -520,6 +543,50 @@ function bossNukeTick(dt){
   pushComms('CONTROL','SHOT OUT — CLEAR THE AXIS',1);
 }
 
+/* ----------------------------------------------------- assist set piece */
+/* Once per NUKEHURT platform, CONTROL loses patience with a dragging fight:
+   past 26 seconds with the hull still above a quarter, a tactical round is
+   released ON the target with you inside the danger-close arc. Same
+   warn-then-drop shape as the first-boss piece, but the opposite beat — that
+   one takes a kill off you, this one is help with teeth: the assist flag
+   guarantees a real wound (see the NUKEHURT splash in detonate()), the
+   column it leaves is still yours to fly around, and if the splash finishes
+   the job the kill is credited through the normal damage() path.
+   b.assisted is the latch and lives ON the boss, so each new platform gets
+   its own one chance and a dead one cannot re-arm the clock. The drop is
+   tactical for the same reason the first-boss round is: the hydrogen
+   placement floor would put the column off the hull it is meant to hit. */
+let assistT=0, assistB=null;
+function nukeAssistTick(dt){
+  if(assistT>0){
+    if((assistT-=dt)>0) return;
+    /* drop against the boss it was called on. if that fight ended during the
+       warn the round is out anyway — released is released — but it must not
+       inherit a fresh target's position, or wound a fight that just began */
+    const b = S.boss===assistB ? S.boss : null;
+    assistB=null;
+    S.nukes.push(mkWarhead(
+      clamp(b?b.x:0, -MAX_OFF, MAX_OFF), (b?b.z:1500) + S.flow*BN_FALL,
+      false, {assist:true}));
+    S.nukeWarn = 4.2;
+    pushComms('CONTROL','SHOT OUT — CLEAR THE AXIS',1);
+    return;
+  }
+  const b=S.boss;
+  if(!b || b.assisted || !NUKEHURT[b.type]) return;
+  /* the floor mirrors bossNukeTick's logic in reverse: there has to have BEEN
+     a real fight (26s of it), and the hull still meaningfully standing — a
+     boss under a quarter is yours to finish, and stealing that kill would
+     make the beat a punishment for playing well */
+  if(!(b.here && b.t>26 && b.hp>b.max*.25)) return;
+  /* never on top of live columns, never tangled in the first-boss warn */
+  if(S.nukes.length || S.bossNuke===1) return;
+  b.assisted=true; assistB=b; assistT=BN_WARN;
+  S.bossWarn=2.4; S.bossWarnName='TACTICAL RELEASE — DANGER CLOSE';
+  pushComms('CONTROL','TOO SLOW — TACTICAL RELEASE AUTHORIZED',.9);
+  AUDIO.nukeAlert && AUDIO.nukeAlert();
+}
+
 /* ------------------------------------------------------- barrage sessions */
 /* The scheduler's rule is that two live WALKS in the corridor at once leaves
    no clean lane anywhere in it, and that rule is not negotiable. A session
@@ -578,8 +645,15 @@ function sessionTick(dt){
      and cannot manoeuvre to fight while you are there. */
   S.spawnT += dt*.55;
   /* A boss arriving mid-session ends it: "never mid-boss" outranks the event,
-     and a capital ship plus a rolling barrage has no lane at all. */
-  if(S.boss){ sessionEnd('BARRAGE ABORTED — DANGER CLOSE'); return; }
+     and a capital ship plus a rolling barrage has no lane at all. The
+     NUKEHURT platforms are the exception — a target CONTROL is glad to keep
+     shelling with you inside the arc, so the walk keeps rolling and every
+     column that lands near the hull splashes it (see detonate()). */
+  if(S.boss){
+    if(!NUKEHURT[S.boss.type]){ sessionEnd('BARRAGE ABORTED — DANGER CLOSE'); return; }
+    if(!q.bossNote){ q.bossNote=true;
+      pushComms('CONTROL','BARRAGE CONTINUING — THE PLATFORM CAN EAT IT',1.0); }
+  }
   if(q.armT>0){ q.armT-=dt; return; }
 
   if((q.gapLeft -= S.flow*dt) > 0) return;
