@@ -171,6 +171,21 @@ export function spawnAllies(){
       fireT:rnd(.8,1.4), burnT:0, dieT:0, hitN:0});
   }
 }
+/* Re-arm the next boss threshold. Called at the DEATH sites (the payout
+   branch below and nuke.js's bossKill deletion), never at spawn: computed at
+   death the grind to the next boss is exact regardless of how big the kill
+   payout was. The bossN ramp is capped — the bosses ARE the content (thirteen
+   in the rotation) and the old unbounded waveN*1600 term meant a run rarely
+   met more than three of them.
+   Sized as a BREATHER, not a chapter: the direct playtest note was "boss
+   after boss — the break shouldn't be too long". 2-4k of score is a handful
+   of trash kills — enough to sweep the wreck's crates, reload the nerves,
+   let a comms line land — and then the next warning. The trash game between
+   bosses is the rest between sets now, and everything sized against long
+   open-sky stretches (nuke cadence, sessions) was retuned with it. */
+export function armNextBoss(){
+  S.nextBoss = S.score + 2200 + Math.min(4,S.bossN)*600;
+}
 export function spawnBoss(){
   /* keyed off S.bossN (bosses defeated this run), not S.waveN (trash-mob waves,
      never resets) — see the S.bossN declaration above for why. 440 base is
@@ -855,6 +870,12 @@ export function damage(e,dmg,x,y,z,big,s){
     const mq = e.type==='hivemother';
     const pts=(mq?12000:5000)*S.combo; S.score+=pts; pop(e.x,e.y,e.z,'+'+pts,COL.purple);
     S.boss=null; S.bossN++; S.combo=Math.min(9,S.combo+2); S.comboT=4;
+    armNextBoss();
+    /* a strike armed during the fight would otherwise release the very tick
+       the sky clears — landing the klaxon right on top of the kill beat.
+       Buy the fanfare a short grace; the scheduler takes the max so an
+       already-long countdown is never shortened. */
+    S.nukeT = Math.max(S.nukeT, rnd(6,10));
     for(let i=0;i<(mq?6:3);i++) spawnCrate();
     if(mq){ pushComms('CONTROL','THE MOTHER IS DOWN — SKIES CLEAR',1);
       AUDIO.motherScream && AUDIO.motherScream(); }

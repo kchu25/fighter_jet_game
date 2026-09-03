@@ -99,23 +99,35 @@ export function reset(){
   S.enemies=[]; S.shots=[]; S.foes=[]; S.rockets=[]; S.parts=[]; S.crates=[]; S.pops=[]; S.boss=null;
   S.debris=[]; S.rings=[]; S.evq=[];
   S.dist=0; S.ddist=0; S.score=0; S.kills=0; S.combo=1; S.comboT=0; S.shake=0; S.flash=0; S.flashC=COL.white;
-  S.speed=1; S.flow=FLOW; S.spawnT=.25; S.waveN=0; S.bossN=0; S.nextBoss=2800; S.alarmT=0; S.tipT=4.5; S.hitT=0;
+  /* nextBoss 1000: the first boss lands within roughly half a minute — a few
+     kills past the ease ramp — because the bosses are the show and the run is
+     paced as boss-after-boss with short breathers (see armNextBoss). At the
+     old 2800 the opener arrived past the 90s mark and playtest feedback
+     called it "wayyyy too long". */
+  S.speed=1; S.flow=FLOW; S.spawnT=.25; S.waveN=0; S.bossN=0; S.nextBoss=1000; S.alarmT=0; S.tipT=4.5; S.hitT=0;
   S.bossWarn=0; S.bossWarnName='MOTHERSHIP INBOUND'; S.bossFx=0; S.easeStage=0; S.tipMsg=TIP_DEFAULT;
   S.sector=1; S.lullT=0; S.sectorKills=0; S.threat=0; S.threatCap=3.5;
   S.allies=[]; S.allyNext=2; S.allyFirst=true;
   S.comms=[]; S.creepStage=0; S.creepT=0;
   /* nukeSchedule also gates on sector>=2, so this is only the floor on how
      early the first strike can arrive: long enough to have flown a little,
-     short enough that even a brief run sees one */
-  S.nukes=[]; S.nukeT=rnd(16,24); S.nukeWarn=0; S.rad=0; S.nukeFl=0; S.nukeFlH=0;
+     short enough that even a brief run sees one. Raised from 16-24 in the
+     frequency pass — with the boss clock now much faster the opening minute
+     already has a capital-ship beat in it, and the first strike crowding the
+     first boss made the whole run open at full shout. */
+  S.nukes=[]; S.nukeT=rnd(28,40); S.nukeWarn=0; S.rad=0; S.nukeFl=0; S.nukeFlH=0;
   S.nukeFlX=0; S.nukeFlZ=1200; S.nukeLt=0; S.nukeLtX=0; S.nukeLtZ=1200;
   S.hydSeen=false; S.nukeN=0;
   /* Barrage sessions are the rare escalation, not the baseline: this is the
      floor on the first one, long enough that a run has settled into its rhythm
      before the rhythm is taken away. nukeSchedule also gates them on sector.
-     It used to be rnd(62,105), which stacked on top of a sector-4 gate and put
-     the first barrage past 100s even for strong play — most runs ended first. */
-  S.nukeSess=null; S.nukeSessT=rnd(34,52);
+     History: rnd(62,105) → rnd(34,52) when a sector-4 gate made most runs end
+     before ever seeing one — and now back UP, further, on live feedback that
+     the bombardment in total was overly frequent. The difference from the
+     first swing: bosses now arrive minutes earlier and much more often, so a
+     run's spectacle budget is already spent — the barrage can afford to be
+     genuinely rare because it is no longer carrying the mid-run. */
+  S.nukeSess=null; S.nukeSessT=rnd(90,140);
   S.bossNuke=0; S.bossNukeT=0;
   /* S.easeT is deliberately NOT touched here — start() owns it, because whether
      this run gets the on-ramp depends on state that must survive reset(). */

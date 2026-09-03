@@ -121,7 +121,20 @@ export function directorTick(dt, easeP){
     const need = Math.min(18, 8+3*(S.sector-1));
     const prog = Math.min(1, (S.kills-S.sectorKills)/need);
 
-    if(S.score>=S.nextBoss){ S.nextBoss=S.score+4600+S.waveN*1600; spawnBoss(); }
+    /* nextBoss is NOT re-armed here: the re-arm lives at the death sites
+       (combat.js armNextBoss) so it lands AFTER the kill payout. Re-arming at
+       spawn had two failure modes — the old waveN*1600 term never reset and
+       pushed boss 3+ whole minutes apart, and any constant small enough to fix
+       that was smaller than the 5000-12000×combo kill payout, which would have
+       chained bosses back-to-back with no breather.
+       The !nukeSess guard exists because the boss clock is now FASTER than a
+       barrage is long: measured on the new cadence, every session that managed
+       to start was aborted by an arriving boss within ~2 seconds — the
+       loudest event in the game reduced to a klaxon and an apology. Holding
+       the spawn until the last round is out lets the barrage finish and turns
+       the boss into its punchline; the score threshold is already crossed, so
+       it lands the moment the session ends. */
+    if(S.score>=S.nextBoss && !S.nukeSess) spawnBoss();
     else if(S.lullT>0){
       /* between-sector breather: nothing spawns, music sags, then a warning.
          Some lull-ends bring company instead: a doomed friendly two-ship

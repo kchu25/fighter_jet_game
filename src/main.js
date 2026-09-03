@@ -70,7 +70,11 @@ export function start(){
   const firstRun = !S.everDied;
   S.easeT = firstRun ? EASE_LEN : 0;
   if(firstRun){
-    S.nextBoss = 3400;                                  // a little more open sky first
+    /* a LITTLE more open sky than a retry (reset() arms 1000) so the ease
+       ramp can teach the stick — but only a little: this used to be 3400,
+       which pushed a first player's opening boss past the 90s mark, and the
+       playtest verdict on that was unambiguous. The bosses are the show. */
+    S.nextBoss = 1600;
     S.tipT = 6; S.tipMsg = 'CLEAR AIRSPACE  ·  GET A FEEL FOR HER';
   }
   introEl.classList.add('hidden'); overEl.classList.add('hidden');

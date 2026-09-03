@@ -20,7 +20,8 @@ import { AUDIO } from '../audio/index.js';
 import { rnd, clamp } from '../core/utils.js';
 import { S, COL, SPAWN_Z, DESPAWN_Z, GROUND_Y } from './state.js';
 import { mk, shock, shard, later, sparks } from './fx.js';
-import { hurt, explode, pushComms, spawnCrate, damage, NUKEHURT } from './combat.js';
+import { hurt, explode, pushComms, spawnCrate, damage, NUKEHURT,
+         armNextBoss } from './combat.js';
 
 /* release geometry — tuned together, do not move one without the others.
    Fall time from REL_Y under GRAV with REL_VY is ~1.09s, during which the
@@ -292,6 +293,9 @@ function detonate(k){
     const b=S.boss;
     explode(b, b.x, b.y, b.z);
     S.boss=null; S.bossN++;
+    /* same re-arm the ordinary death path runs — without it nextBoss is
+       stale below S.score and the next boss spawns the very next tick */
+    armNextBoss();
     for(let i=0;i<2;i++) spawnCrate();
     later(1.7, 0,0,0, ()=>
       pushComms('CONTROL','SPLASH. WE COULD HAVE DONE THAT AT ANY TIME.',1));
@@ -599,7 +603,7 @@ function nukeAssistTick(dt){
    The consequence worth knowing: releases are ~2.4s apart and a column lives
    ~3.3s from detonation to despawn, so at most TWO columns exist at once and
    they are 2500+ apart in z. Never two in the danger band. */
-const SESS_SECTOR = 3;    // not before the run has taught the ordinary strike
+const SESS_SECTOR = 4;    // not before the run has taught the ordinary strike
 const SESS_ARM    = 2.4;  // seconds between the flash traffic and the first release
 
 function sessionStart(){
@@ -623,9 +627,13 @@ function sessionEnd(msg){
   const q = S.nukeSess;
   S.nukeSess = null;
   /* The exit is a real breather, not a seam: nothing else may release until
-     the last column of the session has scrolled clear and then some. */
-  S.nukeSessT = rnd(84, 150) - Math.min(42, S.sector*3.2);
-  S.nukeT = Math.max(S.nukeT, rnd(16,26));
+     the last column of the session has scrolled clear and then some. The
+     re-arm window is deliberately LONG (2.5-4.5 min): a barrage is the
+     loudest thing the game does, and at the old 84-150s two of them could
+     land inside one strong run's attention span — weather that frequent is
+     just climate. Once-in-a-long-while is what keeps it an event. */
+  S.nukeSessT = rnd(160, 270) - Math.min(60, S.sector*4);
+  S.nukeT = Math.max(S.nukeT, rnd(24,36));
   if(msg) pushComms('CONTROL', msg, 1.0);
   return q;
 }
@@ -700,13 +708,17 @@ export function nukeSchedule(dt){
   if(S.nukeT>0 && (S.nukeT-=dt)>0) return;
   if(!clear) return;
   const s = S.sector;
-  /* Uneven on purpose. A third of the time the next strike is already on its
-     way before the last column is off the screen; the rest of the time you get
-     a breather that shortens as the run goes on. A fixed interval would let
-     you park in a lane and count, which is exactly the autopilot this hazard
-     exists to break. */
-  S.nukeT = Math.random()<.34 ? rnd(6,11)
-                              : rnd(15,26) - Math.min(8, s*.7);
+  /* Uneven on purpose. Sometimes the next strike is already on its way before
+     the last column is off the screen; usually you get a real breather that
+     shortens as the run goes on. A fixed interval would let you park in a
+     lane and count, which is exactly the autopilot this hazard exists to
+     break. Cadence roughly HALVED from the original (.34/6-11/15-26) tuning:
+     played back-to-back with the faster boss clock the strikes owned the
+     corridor, and a hazard that is always on screen stops being an event —
+     it read as "overly frequent" from the cockpit, which for a fear weapon
+     is a design bug, not a difficulty setting. */
+  S.nukeT = Math.random()<.2 ? rnd(11,17)
+                             : rnd(26,44) - Math.min(10, s*.9);
   /* Warheads walk across the corridor on alternating sides, so n is literally
      how many times you are made to reverse the break. hydP is the per-warhead
      chance the round is a hydrogen one: rare enough early that the ordinary
