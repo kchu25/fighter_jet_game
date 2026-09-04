@@ -15,6 +15,9 @@
    at call time, long after both modules have finished evaluating. */
 import { mesh, upload, gl, Plit, Pspr, attribs } from '../render/gl.js';
 import { litBegin, litDraw, sprPointers, vp } from '../render/scene-draw.js';
+/* landmark + creep protos that live with the other baked geometry; models.js
+   imports nothing, so this edge keeps the module graph a DAG */
+import { pRibcage, pCocoons, pJaw, pWreck, pGate, pLevi } from '../render/models.js';
 import { M4, compose } from '../core/mat4.js';
 import { S, GROUND_Y, FOG_NEAR, FOG_FAR } from '../game/state.js';
 
@@ -757,9 +760,10 @@ export function pHorde() {                 /* shambling mob — 8 humanoids in o
 
 var PROTO_FN = [pTower, pArch, pWall, pPylon, pHulk, pDish, pMonolith,
                 pRubble, pRockA, pRockB, pSpire, pButte, pRockArch, pCrash,
-                pBlocks, pShip, pCool, pMast];
+                pBlocks, pShip, pCool, pMast, pWreck, pGate, pLevi];
 var P_TOWER = 0, P_WALL = 2, P_RUBBLE = 7, P_ROCKA = 8, P_ROCKB = 9, P_SPIRE = 10, P_BUTTE = 11,
-    P_ARCHR = 12, P_CRASH = 13, P_BLOCKS = 14, P_SHIP = 15, P_COOL = 16, P_MAST = 17;
+    P_ARCHR = 12, P_CRASH = 13, P_BLOCKS = 14, P_SHIP = 15, P_COOL = 16, P_MAST = 17,
+    P_WRECK = 18, P_GATE = 19, P_LEVI = 20;
 
 /* ------------------------------------------------------------ placement */
 export function lcg(seed) {
@@ -778,20 +782,25 @@ export function makeSpots() {
      far = horizon silhouettes — but every category now draws from the pool
      of whichever biome band the spot falls in. gap scales the spacing, so
      the dune sea stays nearly empty (the contrast IS the variety) while
-     the city crowds in. This replaces the old sine-belt clumping. */
+     the city crowds in. This replaces the old sine-belt clumping.
+     Each band also carries ONE signature landmark, slotted into its big /
+     horizon pools so all the spacing and clearance guarantees below keep
+     applying unchanged: the dunes get the half-buried wreck arc, the city
+     its broken-gate tower pair, the canyon silhouetted rock arches the
+     corridor seems to thread toward, the seabed a beached leviathan. */
   var POOL = [
     /* 0 open dune sea      */ { fil: [P_ROCKA, P_RUBBLE, P_ROCKA], mid: [6, P_CRASH, P_ROCKB, P_MAST],
-                                 big: [P_CRASH, 6, 1], horiz: [P_BUTTE, P_SPIRE],
-                                 gap: 2.4, filP: 0.60, midP: 0.78, bigGap: 3400 },
-    /* 1 shattered city     */ { fil: [P_RUBBLE, P_RUBBLE, P_ROCKA], mid: [0, 2, 3, 5, P_BLOCKS, 1, P_BLOCKS, P_COOL],
-                                 big: [P_BLOCKS, 0, 3, 2, P_COOL], horiz: [3, 0, P_COOL],
+                                 big: [P_CRASH, 6, 1, P_WRECK], horiz: [P_BUTTE, P_SPIRE, P_WRECK],
+                                 gap: 2.2, filP: 0.60, midP: 0.78, bigGap: 3400 },
+    /* 1 shattered city     */ { fil: [P_RUBBLE, P_RUBBLE, P_ROCKA], mid: [0, 2, 3, 5, P_BLOCKS, 1, P_BLOCKS, P_COOL, P_GATE],
+                                 big: [P_BLOCKS, 0, P_GATE, 2, P_COOL], horiz: [3, 0, P_COOL, P_GATE],
                                  gap: 0.5, filP: 0.32, midP: 0.68, bigGap: 1400 },
     /* 2 canyon-lands       */ { fil: [P_ROCKA, P_ROCKB, P_ROCKB], mid: [P_SPIRE, P_ROCKB, P_ARCHR, 6],
-                                 big: [P_BUTTE, P_ARCHR, P_SPIRE], horiz: [P_BUTTE, P_BUTTE, P_SPIRE],
+                                 big: [P_BUTTE, P_ARCHR, P_SPIRE], horiz: [P_BUTTE, P_BUTTE, P_SPIRE, P_ARCHR],
                                  gap: 0.85, filP: 0.38, midP: 0.62, bigGap: 1800 },
     /* 3 dry seabed         */ { fil: [P_RUBBLE, P_ROCKA], mid: [4, P_CRASH, 5, P_MAST],
-                                 big: [P_SHIP, 4], horiz: [P_SPIRE, P_BUTTE],
-                                 gap: 1.6, filP: 0.48, midP: 0.66, bigGap: 2400 },
+                                 big: [P_SHIP, P_LEVI, P_SHIP], horiz: [P_SPIRE, P_BUTTE, P_LEVI],
+                                 gap: 1.5, filP: 0.48, midP: 0.66, bigGap: 2000 },
   ];
   while (z < L - 200) {
     var g = R();
@@ -829,6 +838,29 @@ export function makeSpots() {
     out.push({ p: p, x: x, z: z, s: s, y: 0,
                ry: R() * TAU, rx: (R() - 0.5) * 0.05, rz: (R() - 0.5) * 0.05 });
   }
+  /* signature guarantee: the rolls above are free to produce MORE of them,
+     but the RNG must never be allowed to skip a band's landmark for a whole
+     period (a seed roll once shipped with zero canyon arches). One fixed,
+     hand-placed spot per band, appended AFTER the loop has consumed its
+     share of the stream so every rolled spot above stays byte-identical.
+     bz is in band units; the x figures clear the lane guarantee below by
+     construction but are still clamped through the same formula. */
+  var SIG = [
+    { p: P_WRECK, bz: 0.55, s: 2.6, x: 1750 },   /* dune: wreck arc on the horizon */
+    { p: P_GATE,  bz: 1.45, s: 1.5, x:  780 },   /* city: the broken gate */
+    { p: P_ARCHR, bz: 2.50, s: 2.2, x:  920 },   /* canyon: the arch ahead */
+    { p: P_LEVI,  bz: 3.40, s: 1.9, x: 1250 },   /* seabed: the leviathan */
+  ];
+  for (var gi = 0; gi < SIG.length; gi++) {
+    var G = SIG[gi], gs = G.s + R() * 0.3;
+    var gx = (R() < 0.5 ? -1 : 1) * G.x;
+    var gneed = 300 + protos[G.p].rad * gs;
+    if (abs(gx) < gneed) gx = (gx < 0 ? -1 : 1) * gneed;
+    /* near-zero yaw: these all read broadside-on (the arch shows its
+       opening, the gate its gap, the skeleton its full length) */
+    out.push({ p: G.p, x: gx, z: G.bz * BIO_W, s: gs, y: 0,
+               ry: (R() - 0.5) * 0.4, rx: 0, rz: 0 });
+  }
   return out;
 }
 
@@ -836,32 +868,50 @@ export function makeSpots() {
    across every biome band. Each spot carries a reveal threshold th; it only
    exists once creepAt(S.dist) passes th, and scales in over the next 0.12
    of creep, so hands literally rise out of the sand as you fly deeper.
-   Hands get low thresholds (the first, lone omens); walkers and hordes
-   arrive later as the corruption thickens. */
+   The reveal order is a ladder: hands first (lone omens), then the dead
+   remains — ribcage, moulted cocoons, a torn jaw — through the middle of
+   the arc, and only past that do things that MOVE arrive: crawlers, then
+   hordes, then striding giants. Every branch burns exactly three R()
+   draws (s, th, x) so reshuffling the mix never perturbs the stream. */
 export function makeCreepSpots() {
   var R = lcg(66600017), out = [], z = 0;
   while (z < L - 200) {
     z += 340 + R() * 880;
     if (z >= L - 200) break;
     var u = R(), side = R() < 0.5 ? -1 : 1, k, s, x, th, need;
-    if (u < 0.32) {                                  /* giant hand */
+    if (u < 0.22) {                                  /* giant hand */
       k = 0; s = 0.9 + R() * 0.9;
       th = pow(R(), 1.7) * 0.9;                      /* skew low: hands come first */
       x = side * (340 + R() * 560);
       need = 300 + 130 * s;                          /* tall: lane guarantee */
-    } else if (u < 0.52) {                           /* walking cyclops */
+    } else if (u < 0.36) {                           /* torn-open ribcage */
+      k = 4; s = 0.8 + R() * 0.8;
+      th = 0.22 + R() * 0.30;                        /* first mid omen */
+      x = side * (330 + R() * 540);
+      need = 300 + 210 * s;                          /* rib tips: lane guarantee */
+    } else if (u < 0.46) {                           /* husk cocoon cluster */
+      k = 5; s = 0.7 + R() * 0.7;
+      th = 0.30 + R() * 0.35;
+      x = side * (250 + R() * 520);
+      need = 300 + 125 * s;                          /* pod tips brush the dive floor */
+    } else if (u < 0.56) {                           /* torn colossal jaw */
+      k = 6; s = 0.8 + R() * 0.7;
+      th = 0.38 + R() * 0.30;                        /* last of the still things */
+      x = side * (330 + R() * 560);
+      need = 300 + 200 * s;
+    } else if (u < 0.72) {                           /* walking cyclops */
       k = 1; s = 0.9 + R() * 0.5;
-      th = 0.25 + R() * 0.60;
+      th = 0.45 + R() * 0.45;                        /* the late-arc apex predator */
       x = side * (430 + R() * 470);
       need = 300 + 90 * s + 130;                     /* + patrol amplitude */
-    } else if (u < 0.74) {                           /* spider crawler */
+    } else if (u < 0.86) {                           /* spider crawler */
       k = 2; s = 0.6 + R() * 0.6;
-      th = 0.15 + R() * 0.70;
+      th = 0.30 + R() * 0.60;                        /* first mover, after the bones */
       x = side * (230 + R() * 520);
       need = 150 + 90;                               /* low, but it skitters */
     } else {                                         /* zombie horde */
       k = 3; s = 0.8 + R() * 0.5;
-      th = 0.20 + R() * 0.68;
+      th = 0.35 + R() * 0.55;
       x = side * (240 + R() * 560);
       need = 150 + 50;
     }
@@ -980,7 +1030,9 @@ export function init() {
     hand: mk(pHand()),
     gBody: mk(pGiantBody()), gLeg: mk(pGiantLeg()),
     sBody: mk(pSpiderBody()), sLegA: mk(pSpiderLegs(0)), sLegB: mk(pSpiderLegs(1)),
-    horde: mk(pHorde())
+    horde: mk(pHorde()),
+    /* mid-arc still omens, baked over in models.js with the landmarks */
+    rib: mk(pRibcage()), coc: mk(pCocoons()), jaw: mk(pJaw())
   };
   creepSpots = makeCreepSpots();
   for (i = 0; i < creepSpots.length; i++) {
@@ -1123,11 +1175,19 @@ export function draw(d) {
         litDraw(cP.sBody.m, _m, null, 1);
         litDraw(((flr(T * 6 + sd2) & 1) ? cP.sLegB : cP.sLegA).m, _m, null, 1);
 
-      } else {                                     /* shambling horde */
+      } else if (cs.k === 3) {                     /* shambling horde */
         xw = cs.x + sin(T * 0.07 + sd2) * 40;
         yw = GY + gy(xw, cs.z) - 3 * se;
         compose(_m, xw, yw, wz, 0, cs.ry, sin(T * 0.9 + sd2) * 0.04, se);
         litDraw(cP.horde.m, _m, null, 1);
+
+      } else {                                     /* still omens: ribcage / cocoons / jaw.
+                                                      Baked meshes, one compose each — the
+                                                      cocoons alone get a slow breathing
+                                                      roll, which is worse than moving. */
+        var rzo = cs.k === 5 ? sin(T * 0.8 + sd2) * 0.025 : 0;
+        compose(_m, cs.x, GY + cs.y, wz, 0, cs.ry, rzo, se);
+        litDraw((cs.k === 4 ? cP.rib : cs.k === 5 ? cP.coc : cP.jaw).m, _m, null, 1);
       }
     }
   }
@@ -1186,7 +1246,7 @@ export function draw(d) {
       var cols = 0;
       for (i = 0; i < spots.length && cols < 5; i++) {
         var sp2 = spots[i];
-        if (sp2.p !== P_BLOCKS && sp2.p !== P_TOWER && sp2.p !== P_COOL) continue;
+        if (sp2.p !== P_BLOCKS && sp2.p !== P_TOWER && sp2.p !== P_COOL && sp2.p !== P_GATE) continue;
         wz = (sp2.z - d) % L; if (wz < 0) wz += L;
         if (wz > ZFAR) wz -= L;
         if (wz < ZNEAR || wz > ZFAR - 400) continue;

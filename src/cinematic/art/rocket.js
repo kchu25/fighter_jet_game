@@ -1,7 +1,21 @@
 /* ===== cinematic/art/rocket.js — "SPEACE-X" launch vehicle =====
    rocket(c, x, y, s, rot, thrust, tt): nose tip y=-120, engine bells
    y=+95, body half-width 17. */
-import { rgba, path, fillP, strokeP, seg, disc, ell, lg, blob, TAU, CY, WH, AM } from './helpers.js';
+import { rgba, sat, hash, path, fillP, strokeP, seg, disc, ell, lg, blob, TAU, CY, WH, AM, OR } from './helpers.js';
+
+/* Engine-bell heat is a chase toward current thrust rather than thrust
+   itself: a bell that has burned for seconds keeps glowing through a
+   throttle dip, and a fresh ignition starts cold.  tt is scene time,
+   so a scene restart shows up as tt jumping backwards — the dt clamp
+   freezes the integrator for that one frame instead of blowing it up.
+   Module scope is safe: only one vehicle is ever in frame. */
+let heat = 0, heatT = -1;
+/* plume flicker, published by rocketPlume() so the hull under-lighting
+   in rocket() breathes in exact sync with the exhaust causing it */
+let flickS = 1;
+/* RCS ports as [x, y, jet direction]: fixed hardware, allocated once
+   so the per-frame cost is a couple of reads, not an array build */
+const RCSP = [[-15.2, -72, -1], [15.2, -72, 1], [-16.8, -12, -1], [16.8, -12, 1]];
 
 /* ==================================================================
    1. ROCKET — "SPEACE-X" two-stage orbital launch vehicle
@@ -14,6 +28,7 @@ import { rgba, path, fillP, strokeP, seg, disc, ell, lg, blob, TAU, CY, WH, AM }
 export function rocketPlume(c, thrust, tt) {
   if (thrust <= 0.001) return;
   const flick = 1 + 0.12 * Math.sin(tt * 41.3) * (0.5 + 0.5 * Math.sin(tt * 17.7 + 1.3));
+  flickS = flick;
   const L = (40 + 150 * thrust) * flick;
   const y0 = 93;
   const N = 150;                       // normalised plume height
@@ -24,10 +39,17 @@ export function rocketPlume(c, thrust, tt) {
   /* nozzle-plane bloom sits in unscaled space */
   blob(c, 0, y0 + 2, 34 + 26 * thrust, AM, 0.5 * thrust);
   blob(c, 0, y0 + 2, 18 + 12 * thrust, WH, 0.55 * thrust);
+  /* recirculation: exhaust curling back around the bells — a wide dim
+     orange pillow that flickers with the plume.  The matching wash on
+     the hull side lives in rocket(), because the plume is drawn behind
+     the vehicle and could never light metal from here. */
+  blob(c, 0, y0 + 7, 30 + 24 * thrust, OR, 0.32 * thrust * flick);
 
   c.save();
   c.translate(0, y0);
-  c.scale(1, L / N);
+  /* underexpansion: as chamber pressure rises the plume balloons past
+     the bell lip, so width rides thrust while length rides L */
+  c.scale(1 + 0.30 * thrust, L / N);
 
   /* --- outer amber cone ------------------------------------- */
   const go = lg(c, 'rk.plume.out', 0, 0, 0, N, [
@@ -81,12 +103,22 @@ export function rocketPlume(c, thrust, tt) {
   const dn = 5;
   for (let i = 0; i < dn; i++) {
     const f = (i + 0.4) / dn;
-    const dy = y0 + L * f * 0.66;
-    const rx = (8.4 - i * 1.15) * (0.82 + 0.18 * Math.sin(tt * 24 + i * 1.7));
+    /* cell spacing stretches with chamber pressure, so throttling up
+       visibly pushes the diamonds apart instead of just lengthening
+       the sheath around them; the slow sine bob keeps the train from
+       looking pinned to the airframe */
+    const dy = y0 + L * f * (0.54 + 0.16 * thrust) + Math.sin(tt * 9.1 + i * 2.3) * 1.6;
+    const rx = (8.4 - i * 1.15) * (0.82 + 0.18 * Math.sin(tt * 24 + i * 1.7))
+      * (0.78 + 0.42 * thrust);
     const ry = rx * 1.8;
     const a = (1 - f * 0.8) * 0.95 * thrust;
     if (rx <= 0.5) continue;
     blob(c, 0, dy, rx * 3.6, AM, a * 0.5);
+    /* the mach disc proper: a luminous plate at the cell boundary,
+       breathing on its own slower rhythm than the frame-rate flicker
+       so the pulse is readable rather than noise */
+    c.globalAlpha = a * (0.5 + 0.35 * Math.sin(tt * 12.7 + i * 2.1));
+    ell(c, 0, dy, rx * 1.55, rx * 0.34, 'rgba(255,255,255,0.9)');
     c.globalAlpha = a;
     c.fillStyle = 'rgba(255,255,255,1)';
     c.beginPath();
@@ -105,6 +137,12 @@ export function rocketPlume(c, thrust, tt) {
 
 export function rocket(c, x, y, s, rot, thrust, tt) {
   thrust = thrust || 0; tt = tt || 0;
+  /* integrate bell heat: roughly five seconds of full burn to soak to
+     a visible glow, slower still to cool, so a shutdown leaves the
+     bells smouldering instead of snapping back to cold steel */
+  const dtH = heatT < 0 ? 0 : Math.min(0.1, Math.max(0, tt - heatT));
+  heatT = tt;
+  heat = sat(heat + (thrust - heat) * Math.min(1, dtH * (thrust > heat ? 0.5 : 0.22)));
   c.save();
   c.translate(x, y);
   c.rotate(rot || 0);
@@ -164,10 +202,30 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
     c.beginPath();
     c.ellipse(0, 95, 6.8, 2.3, 0, 0, TAU);
     c.strokeStyle = 'rgba(160,180,205,0.4)'; c.lineWidth = 0.8; c.stroke();
+    /* sustained-burn heat soak: two cached gradients layered so the
+       bell shifts dull red -> orange-white as `heat` climbs, without
+       ever rebuilding a gradient.  Runs off heat, not thrust, so it
+       lingers after a cut. */
+    if (heat > 0.03) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      const hg1 = lg(c, 'rk.heat1', 0, 83, 0, 95, [
+        [0.00, 'rgba(150,22,8,0)'], [0.50, 'rgba(210,48,14,0.30)'], [1.00, 'rgba(255,92,30,0.55)']
+      ]);
+      c.globalAlpha = heat;
+      fillP(c, [-4.6, 83, 4.6, 83, 6.8, 95, -6.8, 95], hg1);
+      const hg2 = lg(c, 'rk.heat2', 0, 83, 0, 95, [
+        [0.00, 'rgba(255,120,40,0)'], [0.60, 'rgba(255,164,72,0.26)'], [1.00, 'rgba(255,224,158,0.6)']
+      ]);
+      c.globalAlpha = heat * heat;
+      fillP(c, [-4.6, 83, 4.6, 83, 6.8, 95, -6.8, 95], hg2);
+      c.globalAlpha = 1;
+      c.restore();
+    }
     if (thrust > 0.02) {
       c.save();
       c.globalCompositeOperation = 'lighter';
-      ell(c, 0, 95, 5.4, 1.7, rgba(AM, 0.55 * thrust));
+      ell(c, 0, 95, 5.4, 1.7, rgba(AM, 0.55 * thrust * flickS));
       ell(c, 0, 95, 3.0, 1.0, rgba(WH, 0.8 * thrust));
       c.restore();
     }
@@ -175,6 +233,19 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
     for (let k = -2; k <= 2; k++) {
       seg(c, k * 1.9, 84, k * 2.7, 94, 'rgba(0,0,0,0.35)', 0.55);
     }
+    c.restore();
+  }
+
+  /* ---------- base recirculation wash ------------------------- */
+  /* the plume's back-flow lights the skirt and bells from below; it
+     must be drawn here, over the metal, because the plume itself sits
+     behind the vehicle.  Breathes with flickS so hull and exhaust can
+     never get out of step. */
+  if (thrust > 0.02) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    blob(c, 0, 90, 30 + 16 * thrust, OR, (0.10 + 0.28 * thrust) * flickS);
+    blob(c, 0, 86, 15, AM, 0.20 * thrust * flickS);
     c.restore();
   }
 
@@ -243,6 +314,14 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
     const px = -14 + i * 4.7;
     seg(c, px, -7, px, 7, 'rgba(0,0,0,0.35)', 0.6);
   }
+  /* flange bolts, two staggered rows: a paired dark/bright dot reads
+     as a fastener at any zoom without needing a modelled circle */
+  for (let i = 0; i < 8; i++) {
+    const px = -15.1 + i * 4.3;
+    disc(c, px, -4.4, 0.55, 'rgba(8,10,15,0.8)');
+    disc(c, px - 0.2, -4.7, 0.25, 'rgba(205,220,240,0.4)');
+    disc(c, px + 2.1, 5.2, 0.5, 'rgba(8,10,15,0.7)');
+  }
 
   /* ---------- horizontal panel seams -------------------------- */
   const seams = [-52, -40, 18, 30, 54];
@@ -269,6 +348,22 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
   c.fillStyle = '#2b323e';
   c.fillRect(-15.2, -34, 3.0, 40);          // raceway conduit
   seg(c, -13.7, -34, -13.7, 6, 'rgba(190,210,235,0.28)', 0.6);
+  /* clamp blocks pinning the raceway at a regular station: the
+     repeating dark/bright pair is what sells it as bolted-on pipe
+     rather than a painted stripe */
+  for (let yy = -30; yy <= 2; yy += 8) {
+    seg(c, -15.6, yy, -11.9, yy, 'rgba(10,13,19,0.7)', 1.2);
+    seg(c, -15.6, yy + 1.1, -11.9, yy + 1.1, 'rgba(195,215,238,0.2)', 0.6);
+  }
+  /* second raceway down the first stage, opposite side, crossing the
+     checker band — plumbing runs over paint, never under it */
+  c.fillStyle = '#272e3a';
+  c.fillRect(12.6, 12, 2.2, 46);
+  seg(c, 13.6, 12, 13.6, 58, 'rgba(185,205,230,0.22)', 0.55);
+  for (let yy = 16; yy <= 54; yy += 10) seg(c, 12.2, yy, 15.2, yy, 'rgba(10,13,19,0.65)', 1.0);
+  /* COPV pressed against the interstage: one sphere, one specular dot */
+  disc(c, -5, 16, 2.3, '#333b48');
+  disc(c, -5.8, 15.2, 0.8, 'rgba(210,225,245,0.5)');
   c.fillStyle = '#1a1f29';
   c.fillRect(9.5, 14, 6.0, 4.5);            // vent
   c.fillRect(9.5, 20, 6.0, 2.2);
@@ -276,6 +371,66 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
   disc(c, -12, 20, 0.9, '#8ea3bd');
   /* umbilical fairing */
   fillP(c, [-17, 46, -22, 50, -22, 58, -17, 60], '#232a35');
+
+  /* ---------- cryo frost at the tank shoulder ----------------- */
+  /* the LOX dome sits just under the -40 seam, so a frost band rides
+     there from the moment the vehicle is loaded — visible on the pad,
+     not only in flight.  Static and hash-placed: costs nothing and
+     never crawls. */
+  const frG = lg(c, 'rk.frost', 0, -40, 0, -30, [
+    [0.00, 'rgba(228,242,255,0.30)'], [0.40, 'rgba(218,236,255,0.14)'], [1.00, 'rgba(212,232,255,0)']
+  ]);
+  c.fillStyle = frG;
+  c.fillRect(-HW, -40, HW * 2, 10);
+  seg(c, -HW, -39.3, HW, -39.3, 'rgba(238,250,255,0.35)', 0.8);
+  for (let i = 0; i < 6; i++) {
+    const fx = -HW + 2 + hash(i * 11.3) * (HW * 2 - 6);
+    c.fillStyle = 'rgba(222,240,255,' + (0.08 + 0.12 * hash(i * 5.1)).toFixed(3) + ')';
+    c.fillRect(fx, -40, 2 + 3 * hash(i * 7.9), 9 + 6 * hash(i * 3.7));
+  }
+  /* under real thrust the vibration sheds that frost as flakes that
+     fall aft along the hull.  Phase comes from tt, placement from the
+     cycle index through hash(), so the shower is irregular but fully
+     replayable; ph*ph makes each flake accelerate like a dropped
+     object seen from an accelerating frame. */
+  const shed = sat((thrust - 0.25) * 2);
+  if (shed > 0) {
+    c.fillStyle = 'rgba(235,246,255,0.9)';
+    for (let i = 0; i < 7; i++) {
+      const cyc = tt * (1.7 + hash(i * 3.1) * 1.5) + i * 1.31;
+      const ph = cyc - Math.floor(cyc);
+      const fx = -HW + 1.5 + hash(i * 9.7 + Math.floor(cyc)) * (HW * 2 - 3);
+      c.globalAlpha = shed * (1 - ph) * 0.7;
+      c.fillRect(fx, -38 + ph * ph * 128, 1.2, 2.4 + ph * 3);
+    }
+    c.globalAlpha = 1;
+  }
+
+  /* ---------- RCS puff glints --------------------------------- */
+  /* cold-gas jets pop in short hash-gated windows so the vehicle
+     reads as actively steering, with an irregular but replayable
+     rhythm.  Silent on the pad: nobody fires RCS with the hold-downs
+     still on. */
+  if (thrust > 0.02) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 4; i++) {
+      const cyc = tt * (0.9 + 0.13 * i) + i * 3.7;
+      const ci = Math.floor(cyc), ph = cyc - ci;
+      if (hash(ci * 7.7 + i * 13.1) < 0.6 || ph > 0.3) continue;
+      const f = 1 - ph / 0.3, p = RCSP[i];
+      c.fillStyle = 'rgba(235,246,255,' + (0.5 * f).toFixed(3) + ')';
+      c.beginPath();
+      c.moveTo(p[0], p[1] - 1.1);
+      c.lineTo(p[0] + p[2] * (6 + 6 * (1 - f)), p[1] - 3.2 - 2 * (1 - f));
+      c.lineTo(p[0] + p[2] * (7 + 7 * (1 - f)), p[1] + 2.6 + 2 * (1 - f));
+      c.lineTo(p[0], p[1] + 1.1);
+      c.closePath();
+      c.fill();
+      blob(c, p[0], p[1], 4.5 + 4 * f, WH, 0.45 * f);
+    }
+    c.restore();
+  }
 
   /* ---------- rim light / bounce ------------------------------ */
   c.save();
@@ -298,7 +453,9 @@ export function rocket(c, x, y, s, rot, thrust, tt) {
   const bnc = lg(c, 'rk.bnc', 0, 96, 0, 30, [
     [0, 'rgba(255,150,60,0.5)'], [1, 'rgba(255,150,60,0)']
   ]);
-  c.globalAlpha = 0.25 + 0.6 * thrust;
+  /* flickS ties the bounce brightness to the plume's own flicker, so
+     the hull visibly breathes with the exhaust lighting it */
+  c.globalAlpha = (0.25 + 0.6 * thrust) * flickS;
   c.fillStyle = bnc;
   c.fillRect(-HW, 30, HW * 2, 66);
   c.globalAlpha = 1;

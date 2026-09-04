@@ -243,6 +243,57 @@ export function pilot(c, x, y, s, o) {
   bodyPath();
   c.clip();
 
+  /* Flight-suit construction, drawn before the vest so the webbing and
+     vest sit ON TOP of it: a suit is sewn from panels, and the seams
+     are what stop the torso reading as one smooth airbrushed gradient.
+     Each seam is the usual pair — dark stitch channel plus a lit lip
+     offset toward the key — and they follow the garment, not the
+     silhouette: raglan seams over the shoulders into the sleeves, a
+     yoke across the chest, the zip up the sternum. The shoulder seams
+     ride the same shrug offset as the geometry so an inhale moves the
+     cloth, not just the outline. */
+  (function () {
+    function seam(x0, y0, cx, cy, x1, y1, a) {
+      c.beginPath();
+      c.moveTo(x0, y0); c.quadraticCurveTo(cx, cy, x1, y1);
+      c.strokeStyle = 'rgba(0,0,0,' + (0.38 * a).toFixed(3) + ')';
+      c.lineWidth = 3.4; c.stroke();
+      c.beginPath();
+      c.moveTo(x0 - 2.4, y0 - 2.6); c.quadraticCurveTo(cx - 2.4, cy - 2.6, x1 - 2.4, y1 - 2.6);
+      c.strokeStyle = 'rgba(196,218,246,' + (0.11 * a).toFixed(3) + ')';
+      c.lineWidth = 1.3; c.stroke();
+    }
+    /* raglan seams: collar toward armpit, one per shoulder */
+    seam(-96, 34 - shrug, -164, 84, -216, 190, 1.0);
+    seam(96, 26 - shrug, 168, 96, 224, 214, 0.9);
+    /* yoke across the upper chest, lifting as he inhales */
+    seam(-120, 58 - shrug, -10, 30 - shrug, 118, 62 - shrug, 0.7);
+    /* zip: collar to vest line, mostly hidden behind the vest */
+    seam(-4, 12 - shrug, -8, 48, -10, 92, 0.8);
+    /* sleeve panel seams down the outer arms */
+    seam(-232, 214, -252, 300, -252, 400, 0.85);
+    seam(230, 232, 252, 320, 258, 420, 0.75);
+    /* elbow-side gathers: cloth bunches where the arms bend out of
+       frame, so a couple of short fold arcs low on each sleeve */
+    seam(-250, 330, -222, 352, -206, 386, 0.55);
+    seam(240, 344, 216, 366, 202, 398, 0.5);
+    /* nomex mottle: fine deterministic weave-noise strokes so the big
+       gradient stops looking like plastic; alpha is tiny on purpose —
+       at cinematic scale this should be felt, never seen */
+    for (let i = 0; i < 20; i++) {
+      const n0 = noise(i * 3.7 + 2.1), n1 = noise(i * 7.9 + 9.4), n2 = noise(i * 1.3 + 17.8);
+      const px = -252 + n0 * 500, py = 30 + n1 * 400;
+      const L = 8 + n2 * 26;
+      c.beginPath();
+      c.moveTo(px, py);
+      c.lineTo(px + L, py + L * (0.14 + n2 * 0.2));
+      c.strokeStyle = (i & 1)
+        ? 'rgba(190,212,240,' + (0.020 + 0.030 * n2).toFixed(3) + ')'
+        : 'rgba(0,0,0,' + (0.030 + 0.045 * n1).toFixed(3) + ')';
+      c.lineWidth = 1 + n1 * 2.4; c.stroke();
+    }
+  })();
+
   /* survival vest sitting proud of the suit */
   const vsG = lg(c, 'pl.vest', -170, 60, 180, 400, [
     [0.00, '#44525f'], [0.40, '#2b343f'], [1.00, '#12171e']
@@ -334,6 +385,24 @@ export function pilot(c, x, y, s, o) {
       seg(c, x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1,
         'rgba(228,238,255,0.13)', 1.1);
     }
+    /* hardware: every strap runs through an adjuster — a dark
+       ladder-lock with a doubled-back tail — because webbing with no
+       metal on it reads as painted stripes, not harness. Placed at
+       0.8 along the run so it sits low, near where hands would work. */
+    const hx = x0 + dx * 0.80, hy = y0 + dy * 0.80;
+    c.save();
+    c.translate(hx, hy);
+    c.rotate(Math.atan2(dy, dx));
+    const hw = (w0 + w1) * 0.62;
+    fillP(c, [-9, -hw, 9, -hw, 9, hw, -9, hw], '#39424f');
+    strokeP(c, [-9, -hw, 9, -hw, 9, hw, -9, hw], 'rgba(2,4,8,0.85)', 1.6);
+    seg(c, -3, -hw + 2, -3, hw - 2, 'rgba(0,0,0,0.55)', 2.2);
+    seg(c, -5.4, -hw + 2, -5.4, hw - 2, 'rgba(206,226,250,0.20)', 1.1);
+    /* the doubled tail past the buckle: slightly narrower, darker,
+       and edge-shadowed so it reads as a second layer of webbing */
+    fillP(c, [9, -hw * 0.8, 26, -hw * 0.66, 26, hw * 0.66, 9, hw * 0.8], 'rgba(26,30,21,0.9)');
+    seg(c, 9, hw * 0.8, 26, hw * 0.66, 'rgba(0,0,0,0.5)', 1.4);
+    c.restore();
   }
   strap(-132, 58 - shrug, -36, 216, 22, 17);
   strap(120, 76 - shrug * 0.6, 18, 214, 20, 16);
@@ -373,6 +442,16 @@ export function pilot(c, x, y, s, o) {
   ]);
   c.globalAlpha = alpha * rim;
   c.fillStyle = rmG; c.fillRect(-60, -30, 340, 510);
+  /* chest-rise: an inhale (o.breath) lifts the sternum toward the key
+     light, so the upper chest brightens in sync with the same shrug
+     that already moves the geometry — light and motion agreeing is
+     what sells the breath as weight rather than as animation */
+  const chestG = rg(c, 'pl.chest', -30, 120, 10, -30, 120, 190, [
+    [0.00, 'rgba(255,206,150,0.30)'], [0.55, 'rgba(255,180,110,0.10)'],
+    [1.00, 'rgba(255,160,80,0)']
+  ]);
+  c.globalAlpha = alpha * key * (0.10 + 0.55 * breath);
+  c.fillStyle = chestG; c.fillRect(-220, -40, 440, 340);
   /* a low cool bounce off the canopy sill keeps the near shoulder off
      the background even when neither key nor rim is up */
   const amG = lg(c, 'pl.bamb', 0, 20, 0, 460, [
@@ -460,6 +539,12 @@ export function pilot(c, x, y, s, o) {
       c.closePath();
       c.fillStyle = hgG; c.fill();
       c.strokeStyle = 'rgba(3,5,9,0.8)'; c.lineWidth = 1.1; c.stroke();
+      /* convolute ribbing: the hose is a stack of pleats, so each
+         segment carries a hard shadow where it telescopes into the
+         next and a thin catch-light on its proud edge — without these
+         the overlapping capsules read as one smooth rubber tube */
+      seg(c, 5.2, -10.5, 5.2, 10.5, 'rgba(2,4,8,0.55)', 2.2);
+      seg(c, -3.4, -10, -3.4, 10, 'rgba(168,196,228,0.13)', 1.1);
       c.restore();
     }
     fillP(c, [cnx - 24, cny - 20, cnx + 20, cny - 24, cnx + 24, cny + 18, cnx - 20, cny + 22], '#131922');
@@ -573,6 +658,15 @@ export function pilot(c, x, y, s, o) {
     [1.00, 'rgba(150,200,255,0)']
   ]);
   c.fillStyle = spcG; c.fillRect(-46, -46, 92, 92);
+  /* gloss paint carries TWO lobes: the broad sheen above plus this
+     tight mirror core riding inside it — the near-white core is what
+     makes the shell read wet-gloss instead of satin. Same transform,
+     so it stays pinned to the sheen as the head turns. */
+  const spcC = rg(c, 'pl.hspecC', 0, 0, 1, 0, 0, 15, [
+    [0.00, 'rgba(255,250,240,0.85)'], [0.40, 'rgba(226,240,255,0.30)'],
+    [1.00, 'rgba(200,230,255,0)']
+  ]);
+  c.fillStyle = spcC; c.fillRect(-16, -16, 32, 32);
   c.restore();
   c.save();
   c.translate(mixv(16, 44, turn), -34);
@@ -641,6 +735,18 @@ export function pilot(c, x, y, s, o) {
       : 'rgba(0,0,0,' + (0.05 + 0.10 * n1).toFixed(3) + ')';
     c.lineWidth = 0.8 + n1 * 2.2; c.stroke();
   }
+  /* where those scratches cross the specular they catch the key and
+     flash — three brighter glints pinned near the hot patch, tracking
+     it with turn so they never detach from the lobe they live in */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.globalAlpha = alpha * (0.35 + 0.65 * key);
+  const gsx = mixv(-52, -20, turn);
+  seg(c, gsx - 20, -74, gsx + 6, -66, 'rgba(214,234,255,0.16)', 1.0);
+  seg(c, gsx + 2, -56, gsx + 24, -50, 'rgba(214,234,255,0.11)', 0.8);
+  seg(c, gsx - 12, -46, gsx + 12, -42, 'rgba(214,234,255,0.08)', 1.2);
+  c.globalAlpha = alpha;
+  c.restore();
   /* rubbed-through paint along the crown where the canopy rail hits */
   c.beginPath();
   c.moveTo(mixv(-74, -50, turn), -76);
@@ -865,6 +971,34 @@ export function pilot(c, x, y, s, o) {
       seg(c, -42, ly, -20, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
       seg(c, 12, ly, 34, ly + i * 3, 'rgba(120,255,196,0.5)', 1.6);
     }
+    /* heading tape and readout boxes: the extra symbology the HUD
+       actually mirrors — the tape crawls with tt so the reflection
+       stays alive even when the head is perfectly still */
+    const hdo = (tt * 9) % 12;
+    for (let i = 0; i < 6; i++) {
+      const hx2 = -28 + i * 12 - hdo;
+      if (hx2 > -40 && hx2 < 32) {
+        const tall = ((i + Math.floor((tt * 9) / 12)) % 3) === 0;
+        seg(c, hx2, -2, hx2, tall ? 4 : 1, 'rgba(120,255,196,0.55)', 1.2);
+      }
+    }
+    seg(c, -4, -6, -7, -2, gc, 1.4); seg(c, -4, -6, -1, -2, gc, 1.4);
+    /* airspeed / altitude boxes flanking the reticle, with bar-digit
+       marks instead of text — at this scale glyphs would just smear */
+    c.strokeStyle = 'rgba(120,255,196,0.6)'; c.lineWidth = 1.2;
+    c.strokeRect(-52, 12, 16, 9); c.strokeRect(36, 10, 16, 9);
+    for (let i = 0; i < 3; i++) {
+      seg(c, -49 + i * 4.6, 18.5 - (i === 1 ? 2 : 0), -47.6 + i * 4.6, 18.5 - (i === 1 ? 2 : 0), gc, 1.6);
+      seg(c, 39 + i * 4.6, 16.5, 40.4 + i * 4.6, 16.5, gc, 1.6);
+    }
+    /* waypoint diamond blinking on the half-second, the way real
+       steering cues do — a static reflection reads as a sticker */
+    if ((Math.floor(tt * 2) & 1) === 0) {
+      c.beginPath();
+      c.moveTo(14, 30); c.lineTo(18, 34); c.lineTo(14, 38); c.lineTo(10, 34);
+      c.closePath();
+      c.strokeStyle = gc; c.lineWidth = 1.3; c.stroke();
+    }
     blob(c, -4, 20, 52, [96, 255, 182], 0.15 * hud * vfx);
     c.globalAlpha = alpha;
   }
@@ -929,6 +1063,27 @@ export function pilot(c, x, y, s, o) {
   ]);
   c.strokeStyle = veG; c.lineWidth = 4.4; c.stroke();
   c.strokeStyle = veG; c.lineWidth = 1.4; c.stroke();
+  /* edge-lighting: polycarbonate acts as a light pipe, so the cut
+     edge glows where light enters the sheet. A hot bead on the lower
+     rim where the panel glow feeds in, and a cool sliver up top from
+     the canopy bow — both gated on vis so a stowed visor stays dark. */
+  c.save();
+  c.globalAlpha = alpha * vis * (0.30 + 0.70 * key);
+  c.translate(-12, 46); c.rotate(0.14); c.scale(1, 0.16);
+  const vebG = rg(c, 'pl.vedgeb', 0, 0, 1, 0, 0, 52, [
+    [0.00, 'rgba(255,224,168,0.85)'], [0.45, 'rgba(255,190,110,0.22)'],
+    [1.00, 'rgba(255,170,80,0)']
+  ]);
+  c.fillStyle = vebG; c.fillRect(-56, -56, 112, 112);
+  c.restore();
+  c.save();
+  c.globalAlpha = alpha * vis * (0.25 + 0.75 * rim);
+  c.translate(34, 6); c.rotate(-1.02); c.scale(1, 0.13);
+  const vetG = rg(c, 'pl.vedget', 0, 0, 1, 0, 0, 34, [
+    [0.00, 'rgba(214,244,255,0.75)'], [1.00, 'rgba(150,220,255,0)']
+  ]);
+  c.fillStyle = vetG; c.fillRect(-38, -38, 76, 76);
+  c.restore();
   c.restore();
   c.restore();
 

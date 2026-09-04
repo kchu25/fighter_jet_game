@@ -13,7 +13,7 @@
        a colossal tentacled silhouette looming in the smoke — never
        fully lit, read mostly as a dark bulk with pulsing green
        pustules and slowly writhing limbs. */
-import { rgba, sat, hash, blob, disc, TAU } from './helpers.js';
+import { rgba, sat, hash, noise, blob, disc, TAU } from './helpers.js';
 
 /* gameplay LEVIATHAN tint [0.55,0.95,0.25] * 255 */
 export const BIO = [140, 242, 64];
@@ -24,13 +24,19 @@ export const WA_N = 42;
 export const WA = (function () {
   const a = [];
   for (let i = 0; i < WA_N; i++) {
+    /* about one in seven is a soldier — nearly double size, so the
+       stream stops reading as a particle field and starts reading as
+       a population with castes in it */
+    const big = hash(i * 1.9 + 11) > 0.86;
     a.push({
       x: hash(i * 3.7 + 1),                    // normalised along the band
       y: hash(i * 5.1 + 2) - 0.5,              // about the band centre
-      s: 0.55 + hash(i * 7.3 + 3) * 0.9,
+      s: (0.42 + hash(i * 7.3 + 3) * 0.85) * (big ? 1.8 : 1),
       ph: hash(i * 2.9 + 4) * TAU,
       wf: 16 + hash(i * 4.3 + 5) * 10,         // wing-beat rad/s
-      sp: 0.10 + hash(i * 6.1 + 6) * 0.16      // band-lengths per second
+      sp: 0.10 + hash(i * 6.1 + 6) * 0.16,     // band-lengths per second
+      gl: hash(i * 9.7 + 8) > 0.62,            // carries a visible eye-glint
+      ab: 0.82 + hash(i * 8.9 + 12) * 0.5      // abdomen length/droop factor
     });
   }
   return a;
@@ -61,16 +67,41 @@ export function waspSwarm(c, x, y, w, h, tt, alpha, dir, scale) {
     c.ellipse(px - 4.6 * s, py - 1.4 * s, 4.2 * s, (1.0 + 2.6 * Math.abs(flap)) * s, -0.5 * flap, 0, TAU);
     c.ellipse(px + 4.6 * s, py - 1.4 * s, 4.2 * s, (1.0 + 2.6 * Math.abs(flap)) * s, 0.5 * flap, 0, TAU);
     c.fill();
-    /* body: a dark fleshy tick, nose into the stream */
+    /* body: a fleshy thorax nosed into the stream, then a darker
+       segmented abdomen — three overlapped beads in alternating
+       values, tapering and drooping off the tail, so up close each
+       dot resolves into an insect instead of a tick */
     c.globalCompositeOperation = 'source-over';
     c.globalAlpha = a;
-    c.fillStyle = rgba(FLESH, 0.9);
+    c.fillStyle = rgba(FLESH, 0.92);
     c.beginPath();
-    c.ellipse(px, py, 5.2 * s, 2.1 * s, dir * 0.16, 0, TAU);
+    c.ellipse(px, py, 3.9 * s, 2.0 * s, dir * 0.16, 0, TAU);
     c.fill();
+    const ab = o.ab;
+    disc(c, px - dir * 3.6 * s, py + 0.4 * s * ab, 2.5 * s, 'rgba(46,22,38,0.94)');
+    disc(c, px - dir * 5.9 * s * ab, py + 1.0 * s * ab, 2.0 * s, 'rgba(29,13,24,0.94)');
+    disc(c, px - dir * 7.8 * s * ab, py + 1.7 * s * ab, 1.4 * s, 'rgba(44,20,36,0.94)');
     /* the sick green coal that reads at any distance */
     c.globalCompositeOperation = 'lighter';
-    blob(c, px + dir * 2.4 * s, py, 3.4 * s, BIO, a * 0.5);
+    blob(c, px + dir * 2.2 * s, py, 3.2 * s, BIO, a * 0.5);
+    /* wing shimmer: every so often the beat plane catches the light
+       and the whole blur flashes as one flat streak (blob() has reset
+       globalAlpha, so the band fade `a` rides in the fill colour) */
+    const sh = Math.sin(tt * 2.1 + o.ph * 4.7);
+    if (sh > 0.84) {
+      c.fillStyle = rgba([210, 255, 170], 0.5 * a * (sh - 0.84) / 0.16);
+      c.beginPath();
+      c.ellipse(px, py - 1.6 * s, 7.6 * s, 0.9 * s, 0, 0, TAU);
+      c.fill();
+    }
+    /* eye glint: a pinprick on the head that twinkles on its own
+       clock — only the flagged third of the population carries one */
+    if (o.gl) {
+      const tw = noise(tt * 2.6 + i * 7.7);
+      if (tw > 0.62)
+        disc(c, px + dir * 4.4 * s, py - 0.7 * s, 0.55 * s,
+          rgba([230, 255, 190], a * (tw - 0.62) * 2.4));
+    }
   }
   c.globalCompositeOperation = 'source-over';
   c.globalAlpha = 1;
@@ -102,7 +133,9 @@ export const LV = (function () {
       len: 140 + hash(i * 3.3 + 2) * 160,
       ph: hash(i * 5.7 + 4) * TAU,
       w: 15 + hash(i * 8.3 + 11) * 13,
-      sway: 40 + hash(i * 2.1 + 6) * 62
+      sway: 40 + hash(i * 2.1 + 6) * 62,
+      cu: 0.55 + hash(i * 7.9 + 13) * 0.5,                   // tip-curl tightness
+      cs: hash(i * 4.7 + 8) > 0.5 ? 1 : -1                   // curl handedness
     });
   }
   return a;
@@ -114,12 +147,32 @@ export const LV_RIB = (function () {
   for (let i = 0; i < 9; i++) a.push(-0.88 + (i / 8) * 1.76 + (hash(i * 4.9 + 3) - 0.5) * 0.16);
   return a;
 })();
-/* pustules: scattered over the whole carapace by hash, no symmetry */
+/* pustules: scattered over the whole carapace by hash, no symmetry.
+   Each gets its own pulse *rate* as well as phase, so no two ever fall
+   into step — a hull blinks in unison, flesh does not. */
 export const LV_PUS = (function () {
   const a = [];
   for (let i = 0; i < 11; i++) {
     const u = hash(i * 2.7 + 1), v = hash(i * 6.1 + 5);
-    a.push({ x: (u - 0.5) * 330, y: -186 + v * 176, r: 7 + hash(i * 3.9 + 9) * 12, ph: hash(i * 7.1 + 2) * TAU });
+    a.push({
+      x: (u - 0.5) * 330, y: -186 + v * 176,
+      r: 7 + hash(i * 3.9 + 9) * 12, ph: hash(i * 7.1 + 2) * TAU,
+      spd: 1.0 + hash(i * 5.3 + 14) * 0.75
+    });
+  }
+  return a;
+})();
+/* subsurface veins: quadratics rooted at the maw, branching up under
+   the shell.  Flat [x0,y0,cx,cy,x1,y1] runs, fixed at load. */
+export const LV_VEIN = (function () {
+  const a = [];
+  for (let i = 0; i < 5; i++) {
+    const h1 = hash(i * 3.9 + 17), h2 = hash(i * 6.3 + 21);
+    a.push(
+      -34 + h1 * 44, 36,
+      -60 + h1 * 150 + (h2 - 0.5) * 60, -40 - h2 * 60,
+      -140 + h1 * 300, -96 - h2 * 88
+    );
   }
   return a;
 })();
@@ -149,15 +202,19 @@ export function leviathan(c, x, y, s, alpha, tt) {
     const w2 = Math.sin(tt * 1.15 + T.ph * 2.3);
     const cx = T.rx + w2 * T.sway * 0.8, cy = T.len * 0.5;
     const ex = T.rx + w1 * T.sway + (T.rx > 0 ? 34 : -34), ey = T.len;
-    let lx = T.rx, ly = -8;
+    let lx = T.rx, ly = -8, p6x = T.rx, p6y = -8;
     for (let k = 1; k <= 7; k++) {
       const t = k / 7, mt = 1 - t;
       const qx = mt * mt * T.rx + 2 * mt * t * cx + t * t * ex;
       const qy = mt * mt * -8 + 2 * mt * t * cy + t * t * ey;
       const v = 1 - t * 0.72;                       // value falls off down the limb
+      if (k === 7) { p6x = lx; p6y = ly; }          // remember the last tangent
       c.strokeStyle = 'rgba(' + (34 * v + 6 | 0) + ',' + (15 * v + 3 | 0) + ',' +
         (30 * v + 6 | 0) + ',' + (alpha * (0.94 - t * 0.30)).toFixed(3) + ')';
-      c.lineWidth = T.w * 2 * (1 - t * 0.84);
+      /* thickness breathes along the limb — slow-moving bulges, so the
+         taper reads as muscle under skin rather than a drawn cone */
+      c.lineWidth = T.w * 2 * (1 - t * 0.84) *
+        (1 + 0.20 * Math.sin(t * 9.0 + tt * 0.8 + T.ph * 3.1));
       c.beginPath(); c.moveTo(lx, ly); c.lineTo(qx, qy); c.stroke();
       /* the sun is off to the left: one hairline on that side of each
          limb, so they belong to the same lighting as the sky */
@@ -169,7 +226,23 @@ export function leviathan(c, x, y, s, alpha, tt) {
       c.stroke();
       lx = qx; ly = qy;
     }
+    /* the last reach of every limb curls: a slow coil that tightens
+       and releases on its own phase, thinner than anything above it —
+       the curl is what says tentacle instead of leg */
+    let an = Math.atan2(ly - p6y, lx - p6x);
+    let cl = T.len * 0.10;
+    const cw = T.w * 0.32;
+    const curl = T.cs * (0.55 + 0.40 * Math.sin(tt * 0.5 + T.ph * 1.7)) * T.cu;
+    for (let k = 0; k < 4; k++) {
+      an += curl;
+      const nx = lx + Math.cos(an) * cl, ny = ly + Math.sin(an) * cl;
+      c.strokeStyle = 'rgba(14,6,12,' + (alpha * (0.62 - k * 0.11)).toFixed(3) + ')';
+      c.lineWidth = Math.max(0.9, cw * (1 - k * 0.2));
+      c.beginPath(); c.moveTo(lx, ly); c.lineTo(nx, ny); c.stroke();
+      lx = nx; ly = ny; cl *= 0.8;
+    }
     if (i % 3 === 0) {
+      /* tip coal now rides the coil, so the light traces the writhe */
       c.globalCompositeOperation = 'lighter';
       blob(c, lx, ly, 8, BIO, alpha * (0.20 + 0.22 * Math.abs(w1)));
       c.globalCompositeOperation = 'source-over';
@@ -238,11 +311,53 @@ export function leviathan(c, x, y, s, alpha, tt) {
     c.moveTo(ax - 8, -212); c.quadraticCurveTo(bx * 0.9 - 26, -80, bx - 8, 70);
     c.stroke();
   }
+  /* chitin catching the light along the crown: a short gloss down the
+     upper face of each ridge (sun side, so offset left), and a wet
+     glint riding each crest on a slow stagger — the shell is not dry */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < LV_RIB.length; i++) {
+    const f = LV_RIB[i];
+    const bx = f * 250, ax = f * 110 - 34;
+    const hx = ax * 0.65 + (bx * 0.9 - 18) * 0.35;    // t=0.35 down the ridge
+    c.strokeStyle = rgba([176, 118, 150], alpha * 0.12);
+    c.lineWidth = 4.5;
+    c.beginPath();
+    c.moveTo(ax - 6, -206);
+    c.quadraticCurveTo(ax * 0.5 + (bx * 0.9 - 18) * 0.5 - 8, -150, hx - 6, -117);
+    c.stroke();
+    c.strokeStyle = rgba([212, 152, 182], alpha * 0.08);
+    c.lineWidth = 1.6; c.stroke();
+    const gph = Math.sin(tt * 0.9 + i * 2.6);
+    if (gph > 0)
+      disc(c, ax - 5, -192 + (i % 3) * 10, 1.7, rgba([225, 190, 205], alpha * 0.20 * gph));
+  }
+  c.restore();
   /* the underside is in its own shadow */
   const ug = c.createLinearGradient(0, -44, 0, 64);
   ug.addColorStop(0, 'rgba(0,0,0,0)');
   ug.addColorStop(1, 'rgba(0,0,0,' + (alpha * 0.74).toFixed(3) + ')');
   c.fillStyle = ug; c.fillRect(-280, -50, 560, 124);
+  /* the shell is flesh over light: a deep glow behind the carapace so
+     the thin places — the left shoulder, the low right spur, the whole
+     skirt — read faintly lit from inside, and dim vasculature branches
+     up from the maw.  Breathes just ahead of the maw's own cycle, as
+     if the light moves up from the throat into the body. */
+  c.globalCompositeOperation = 'lighter';
+  const inh = 0.5 + 0.5 * Math.sin(tt * 0.65 - 0.9);
+  blob(c, -30, -36, 210, BIO, alpha * (0.035 + 0.045 * inh));
+  blob(c, -206, -34, 84, BIO, alpha * 0.05 * inh);
+  blob(c, 208, -20, 96, BIO, alpha * 0.04 * inh);
+  for (let i = 0; i < LV_VEIN.length; i += 6) {
+    c.beginPath();
+    c.moveTo(LV_VEIN[i], LV_VEIN[i + 1]);
+    c.quadraticCurveTo(LV_VEIN[i + 2], LV_VEIN[i + 3], LV_VEIN[i + 4], LV_VEIN[i + 5]);
+    c.strokeStyle = rgba(BIO, alpha * (0.028 + 0.034 * inh));
+    c.lineWidth = 6.5; c.stroke();
+    c.strokeStyle = rgba(BIO, alpha * 0.045 * inh);
+    c.lineWidth = 2.2; c.stroke();
+  }
+  c.globalCompositeOperation = 'source-over';
   c.restore();
 
   /* rim light: the sky behind catches the left shoulder and the crest */
@@ -262,11 +377,36 @@ export function leviathan(c, x, y, s, alpha, tt) {
   c.restore();
 
   /* pustules, scattered — dimmer and smaller than before so they read
-     as vents in a hull, not as features on a face */
+     as vents in a hull, not as features on a face.  Dark puckered rims
+     go down first so the glow reads as light from *inside* the flesh,
+     then each pulses on its own rate and phase; now and then one
+     completes a vent cycle and exhales a wisp of spore that drifts up
+     and thins out.  All deterministic from tt — hash on the cycle
+     index decides which cycles actually vent. */
+  for (let i = 0; i < LV_PUS.length; i++) {
+    const p = LV_PUS[i];
+    disc(c, p.x, p.y + p.r * 0.16, p.r * 0.8, 'rgba(10,4,9,' + (alpha * 0.5).toFixed(3) + ')');
+  }
   c.globalCompositeOperation = 'lighter';
   for (let i = 0; i < LV_PUS.length; i++) {
     const p = LV_PUS[i];
-    const pu = 0.22 + 0.78 * Math.max(0, Math.sin(tt * 1.35 + p.ph));
+    let pu = 0.22 + 0.78 * Math.max(0, Math.sin(tt * 1.35 * p.spd + p.ph));
+    const vc = tt * 0.16 + p.ph * 0.9;
+    const vi = Math.floor(vc);
+    if (hash(i * 13.7 + vi * 7.3) > 0.6) {
+      const f = vc - vi;
+      if (f < 0.30) {
+        const wf = f / 0.30;                     // 0 = exhale starts, 1 = spent
+        pu = Math.min(1.3, pu + (1 - wf) * 0.7); // the pustule surges as it vents
+        for (let k = 0; k < 3; k++) {
+          blob(c,
+            p.x + Math.sin(tt * 0.9 + p.ph + k * 1.9) * (3 + 9 * wf),
+            p.y - p.r - wf * (30 + k * 16),
+            5 + 11 * wf + k * 2.5,
+            BIO, alpha * 0.13 * (1 - wf) * (1 - k * 0.22));
+        }
+      }
+    }
     blob(c, p.x, p.y, p.r, BIO, alpha * 0.22 * pu);
     disc(c, p.x, p.y, p.r * 0.16 + 1.1, rgba(BIO, alpha * 0.62 * pu));
   }

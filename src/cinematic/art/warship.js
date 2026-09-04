@@ -17,6 +17,44 @@ export const WS_HULL = [
   PTX, PTY, 46, 15, 0, 25, -46, 15, -PTX, PTY
 ];
 
+/* bioluminescent hull seams: three per side, riding the same parametric
+   flow as the plate ribs so they sit *in* the plating rather than on
+   top of it.  Layout is fixed at module load; per frame each seam only
+   needs its pulse phase and one point-on-quadratic for the travelling
+   node, so fifteen ships on the horizon stay cheap. */
+export const WS_SEAM = (function () {
+  const a = [], fs = [0.24, 0.50, 0.78];
+  for (let i = 0; i < fs.length; i++) {
+    const f = fs[i];
+    a.push({
+      ax: -150 + f * 132, ay: 4 - f * 18,        // outboard root
+      cx: -110 + f * 90, cy: 24 - f * 6,         // control (same family as ribs)
+      bx: -PTX + f * 74, by: PTY - f * 12,       // inboard end
+      ph: hash(i * 7.7 + 2) * TAU,               // breath phase — never in sync
+      sp: 0.35 + hash(i * 3.1 + 5) * 0.4         // circulation speed
+    });
+  }
+  return a;
+})();
+
+/* charge motes: sparks the orb drinks out of the air.  Each entry is a
+   fixed spiral track (start radius, inward speed, size, launch angle);
+   per frame the orb only evaluates where along its track each mote is,
+   so nothing is allocated and nothing is random. */
+export const WS_MOTE = (function () {
+  const a = [];
+  for (let i = 0; i < 14; i++) {
+    a.push({
+      u0: hash(i * 5.3 + 3),                     // stagger along the track
+      sp: 0.55 + hash(i * 2.9 + 7) * 0.75,       // inward speed, cycles/s
+      r0: 46 + hash(i * 8.1 + 1) * 64,           // capture radius
+      sz: 0.8 + hash(i * 4.7 + 2) * 1.3,         // spark size
+      a0: hash(i * 6.7 + 9) * TAU                // launch bearing
+    });
+  }
+  return a;
+})();
+
 export function warshipChargeOrb(c, tx, ty, charge, tt, side) {
   if (charge <= 0.001) return;
   const k = charge * charge;
@@ -43,6 +81,25 @@ export function warshipChargeOrb(c, tx, ty, charge, tt, side) {
     c.lineTo(tx + sa * w, ty - ca * w);
     c.closePath();
     c.fill();
+  }
+
+  /* gathering motes: energy pulled off the air, spiralling down the
+     last stretch into the orb.  The population grows with charge, so
+     the first tell of a shot is two or three stray sparks bending
+     inward — long before the orb itself is bright enough to read. */
+  const mn = WS_MOTE.length;
+  for (let i = 0; i < mn; i++) {
+    if (i / mn > charge * 1.25) break;
+    const M = WS_MOTE[i];
+    let u = tt * M.sp * (0.6 + 0.9 * charge) + M.u0;
+    u -= Math.floor(u);                               // 0 = far, 1 = swallowed
+    const rr = M.r0 * (1 - u) * (0.5 + 0.5 * charge) + r * 0.4;
+    const an = M.a0 + tt * (0.4 + 1.6 * charge) * (side ? 1 : -1) + u * 3.8;
+    const mx = tx + Math.cos(an) * rr;
+    const my = ty + Math.sin(an) * rr * 0.62;         // flattened orbital plane
+    const ma = charge * u * u;                        // brightens as it closes
+    disc(c, mx, my, M.sz * (0.6 + u), rgba(WH, 0.5 * ma));
+    blob(c, mx, my, 5 * M.sz, MG, 0.4 * ma);
   }
 
   blob(c, tx, ty, r * 3.4, MG, 0.42 * charge);
@@ -78,6 +135,17 @@ export function warship(c, x, y, s, alpha, charge, tt) {
   ]);
   fillP(c, [-150, 10, -74, -14, 0, -26, 74, -14, 150, 10,
     PTX, PTY + 9, 46, 22, 0, 33, -46, 22, -PTX, PTY + 9], bellyG);
+
+  /* ---------- underside glow wash: the core light leaks out beneath
+     the hull, so the ship floats on a bed of its own sick light — and
+     the leak swells while the weapon drinks --------------------- */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  const uw = (0.55 + 0.25 * Math.sin(tt * 1.3 + 0.7) + 0.9 * charge) * alpha;
+  blob(c, 0, 30, 150, VI, 0.10 * uw);
+  blob(c, -62, 24, 74, MG, 0.055 * uw);
+  blob(c, 62, 24, 74, MG, 0.055 * uw);
+  c.restore();
 
   /* ---------- main hull top surface ---------------------------- */
   const hullG = lg(c, 'ws.hull', 0, -40, 0, 44, [
@@ -136,6 +204,37 @@ export function warship(c, x, y, s, alpha, charge, tt) {
     c.quadraticCurveTo(-110 + f * 90, 25.4 - f * 6, -PTX + f * 74, PTY + 1.4 - f * 12);
     c.stroke();
   }
+  /* bioluminescent seams, still clipped to the hull: each breathes on
+     its own phase and carries one slow bright node down its length —
+     the hull is machined, but something *circulates* under the plate.
+     Charging pushes them all brighter together, so the whole ship
+     visibly feeds the prongs. */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.globalAlpha = 1;             // blob() stomps it anyway; alpha rides the colours
+  for (let sd = 0; sd < 2; sd++) {
+    const sg = sd ? 1 : -1;
+    for (let i = 0; i < WS_SEAM.length; i++) {
+      const S = WS_SEAM[i];
+      const pw = (0.45 + 0.35 * Math.sin(tt * S.sp * 2.6 + S.ph + sd * 2.4) + 0.5 * charge) * alpha;
+      if (pw <= 0.05) continue;
+      c.beginPath();
+      c.moveTo(sg * S.ax, S.ay);
+      c.quadraticCurveTo(sg * S.cx, S.cy, sg * S.bx, S.by);
+      c.strokeStyle = rgba(VI, 0.09 * pw);
+      c.lineWidth = 3.0; c.stroke();                 // soft halo pass
+      c.strokeStyle = rgba(MG, 0.17 * pw);
+      c.lineWidth = 1.1; c.stroke();                 // filament core
+      /* travelling node: one point-on-quadratic per seam per frame */
+      let u = tt * S.sp * 0.5 + S.ph; u -= Math.floor(u);
+      const mu = 1 - u;
+      const nx = mu * mu * S.ax + 2 * mu * u * S.cx + u * u * S.bx;
+      const ny = mu * mu * S.ay + 2 * mu * u * S.cy + u * u * S.by;
+      blob(c, sg * nx, ny, 6, MG, 0.22 * pw);
+      disc(c, sg * nx, ny, 0.9, rgba(WH, 0.45 * pw));
+    }
+  }
+  c.restore();
   c.restore();
 
   /* ---------- recessed underbelly trench ----------------------- */
@@ -219,6 +318,36 @@ export function warship(c, x, y, s, alpha, charge, tt) {
     fillP(c, [-PTX - 12, PTY - 12, -PTX + 2, PTY - 8, -PTX + 4, PTY + 2, -PTX - 10, PTY - 1], '#20072e');
     strokeP(c, [-PTX - 12, PTY - 12, -PTX + 2, PTY - 8, -PTX + 4, PTY + 2, -PTX - 10, PTY - 1], 'rgba(0,0,0,0.6)', 1);
     seg(c, -PTX - 9, PTY - 9, -PTX + 1, PTY - 5, 'rgba(150,70,200,0.35)', 0.9);
+    /* articulation: two knuckle seams across the prong, each a dark
+       break with a lit chamfer just behind it, so the reach reads as
+       jointed segments rather than one casting.  Prong axis runs
+       (-144,5)->(-120,37); the seams cross it perpendicular. */
+    for (let k = 0; k < 2; k++) {
+      const t = 0.36 + k * 0.28;
+      const jx = -144 + 24 * t, jy = 5 + 32 * t;
+      const hw = 7.5 - t * 2.5;
+      seg(c, jx - 0.8 * hw, jy + 0.6 * hw, jx + 0.8 * hw, jy - 0.6 * hw, 'rgba(4,0,9,0.75)', 1.5);
+      seg(c, jx - 0.8 * hw + 1.0, jy + 0.6 * hw + 1.3, jx + 0.8 * hw + 1.0, jy - 0.6 * hw + 1.3, 'rgba(150,62,205,0.28)', 0.9);
+    }
+    /* charge conduit: a filament down the top chamfer that lights up
+       as the orb drinks, with pulses running root -> tip.  Costs
+       nothing on the horizon wall, where charge is zero. */
+    if (charge > 0.01) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      c.globalAlpha = 1;
+      c.strokeStyle = rgba(MG, (0.10 + 0.45 * charge) * alpha);
+      c.lineWidth = 1.0 + charge;
+      c.beginPath(); c.moveTo(-146, 4); c.lineTo(-PTX - 2, PTY - 1); c.stroke();
+      for (let k = 0; k < 3; k++) {
+        let u = tt * (0.9 + 2.6 * charge) + k / 3 + i * 0.5;
+        u -= Math.floor(u);
+        const px2 = -146 + 26 * u, py2 = 4 + 32 * u;
+        disc(c, px2, py2, 1.1, rgba(WH, 0.55 * charge * u * alpha));
+        blob(c, px2, py2, 6, MG, 0.35 * charge * u * alpha);
+      }
+      c.restore();
+    }
     c.restore();
   }
 
@@ -286,6 +415,36 @@ export function warship(c, x, y, s, alpha, charge, tt) {
   /* ---------- charging weapon orbs at the prong tips ----------- */
   warshipChargeOrb(c, -PTX, PTY, charge, tt, 0);
   warshipChargeOrb(c, PTX, PTY, charge, tt, 1);
+
+  /* ---------- near full charge the field between the prongs
+     destabilises: a jagged arc snaps across the gap in short bursts,
+     sagging under the belly, never twice the same shape.  Gated on a
+     noise threshold so it stutters — menace is in the flicker. ---- */
+  if (charge > 0.7) {
+    const az = (charge - 0.7) / 0.3;
+    const gate = noise(tt * 16 + 3.1);
+    const thr = 0.8 - az * 0.45;
+    if (gate > thr) {
+      const ga = Math.min(1, (gate - thr) / 0.35) * alpha;
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      c.globalAlpha = 1;
+      c.beginPath();
+      c.moveTo(-PTX, PTY);
+      for (let k = 1; k < 9; k++) {
+        const f = k / 9;
+        c.lineTo(-PTX + f * 2 * PTX,
+          PTY + Math.sin(f * Math.PI) * 9 + (noise(k * 4.1 + tt * 27) - 0.5) * 30 * az);
+      }
+      c.lineTo(PTX, PTY);
+      c.strokeStyle = rgba(VI, (0.20 + 0.35 * az) * ga);
+      c.lineWidth = 2.6; c.stroke();
+      c.strokeStyle = rgba(WH, 0.5 * ga);
+      c.lineWidth = 0.9; c.stroke();
+      blob(c, 0, PTY + 8, 60, VI, 0.18 * ga * az);
+      c.restore();
+    }
+  }
 
   c.restore();
 

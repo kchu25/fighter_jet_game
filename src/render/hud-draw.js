@@ -40,10 +40,38 @@ export function bar(x,y,w,h,v,c){
    instead of decaying through it. Score can only change while update runs, so
    the two can never disagree. */
 let scPrev=-1, scPopT=-1e9;
+/* displayed-value easing for the bars — the DRAWN fill chases the true value
+   so a 30-point hit reads as a sweep, not a teleport. Same contract as the
+   score pop: stepped off S.T (so it freezes on pause), and a T rewind — the
+   observable signature of a clock-resetting restart — wipes every slot so a
+   new run cannot inherit the old run's half-eased hull. If a restart does NOT
+   rewind T the slots are merely stale-by-one-run and converge inside ~0.3s,
+   which reads as a boot-up sweep; self-correcting either way. */
+const ezV=Object.create(null); let ezClk=-1e9, ezDt=0;
+function ezTick(){
+  ezDt = S.T>=ezClk ? Math.min(S.T-ezClk,.1) : -1; ezClk=S.T;
+  if(ezDt<0){ for(const k in ezV) delete ezV[k]; ezDt=0; }
+}
+function ez(k,v){
+  const d=ezV[k];
+  if(d===undefined || Math.abs(d-v)<.002) return (ezV[k]=v);
+  return (ezV[k]=d+(v-d)*Math.min(1,ezDt*10));
+}
+/* comms shrink sizes, cached by px so the compressed stack never rebuilds a
+   font string it has built before */
+const CFONT=[];
+/* weapon rack labels + the missile-ready latch (same arm/disarm shape as
+   scPopT: latch off S.T, disarm on rewind) */
+const WGUN={std:'GUN STD',rapid:'GUN RAPID',spread:'GUN SPREAD'};
+let mslWas=true, mslT=-1e9;
+/* boss phase flourish latch — ref-compared so a NEW boss never inherits the
+   previous one's crack animation or eased hp */
+let bossRef=null, bossPh=0, bossPhT=-1e9;
 export function drawHUD(){
   h2d.setTransform(DPR,0,0,DPR,0,0);
   h2d.clearRect(0,0,W,H);
   if(!S.gameOn) return;
+  ezTick();
   const m=28, bw=Math.min(300,W*.24), by=H-m;
 
   // reticles
@@ -104,28 +132,71 @@ export function drawHUD(){
 
   // radio comms — stacked bottom-left just above the HULL readout; newest at
   // the bottom, each line fading out over its ~6s life (update.js ages t).
-  // Cyan for routine traffic, red tint for maydays (u>=.9).
+  // Cyan for routine traffic, red tint for maydays (u>=.9). Under pressure
+  // the stack age-compresses instead of silently eating overflow: with 3+
+  // lines up, each older row drops a font step and surrenders its tail-life
+  // early, so a busy net stays one glance tall and the oldest traffic gets a
+  // fade-out rather than a hard cut. The newest line lands with a brief white
+  // glow pop, clocked off its OWN t (update-aged), so the flash is pause-safe
+  // and restart-safe with no latch at all.
   if(S.comms && S.comms.length){
-    h2d.textAlign='left'; h2d.font='11px "Courier New",monospace';
+    h2d.textAlign='left';
+    const n=S.comms.length, crowd=clamp((n-2)/2,0,1);
     let cy=by-52;
-    for(let i=S.comms.length-1;i>=0;i--){
-      const c=S.comms[i];
-      h2d.globalAlpha=clamp((6-c.t)/1.5,0,1)*.85;
+    for(let i=n-1;i>=0;i--){
+      const c=S.comms[i], k=n-1-i;
+      const px=Math.max(8, 11-Math.round(k*crowd*1.2));
+      h2d.font=CFONT[px]||(CFONT[px]=px+'px "Courier New",monospace');
+      const fresh = k===0 ? clamp(1-c.t/.13,0,1) : 0;
+      let al=clamp((6-c.t-k*crowd*1.1)/1.5,0,1)*.85*(1-crowd*k*.12);
       h2d.fillStyle=c.u>=.9?css(COL.red):css(COL.cyan);
+      if(fresh>0){
+        h2d.fillStyle='#eaffff';
+        h2d.shadowColor=c.u>=.9?css(COL.red):css(COL.cyan);
+        h2d.shadowBlur=13*fresh;
+        al=Math.min(1,al+fresh);
+      }
+      h2d.globalAlpha=al;
       h2d.fillText('» '+c.who+': '+c.txt, m, cy);
-      cy-=15;
+      if(fresh>0) h2d.shadowBlur=0;
+      cy-=px+4;
     }
     h2d.globalAlpha=1;
   }
 
-  // bars
+  // bars — fills are eased (ez), but the low-hull color keys off TRUE hp:
+  // the sweep is presentation, the red is information.
   h2d.textAlign='left'; h2d.font='12px "Courier New",monospace';
   h2d.fillStyle='#7fa8bd'; h2d.fillText('HULL', m, by-30);
-  bar(m, by-24, bw, 9, S.P.hp/100, S.P.hp<35?css(COL.red):css(COL.green));
-  bar(m, by-11, bw, 5, S.P.shield/100, css(COL.cyan));
+  bar(m, by-24, bw, 9, ez('hp',S.P.hp/100), S.P.hp<35?css(COL.red):css(COL.green));
+  bar(m, by-11, bw, 5, ez('sh',S.P.shield/100), css(COL.cyan));
   h2d.textAlign='right';
   h2d.fillStyle='#7fa8bd'; h2d.fillText('BOOST', W-m, by-30);
-  bar(W-m-bw, by-24, bw, 9, S.P.boost/100, css(COL.amber));
+  bar(W-m-bw, by-24, bw, 9, ez('bo',S.P.boost/100), css(COL.amber));
+  /* weapon rack — mode + missile state tucked under the boost bar. The gun's
+     fireCd is a 55-170ms fire-rate and would strobe at 60fps, so the readout
+     keys on the two things a pilot can actually plan around: which gun is
+     loaded, and whether the SPACE missile (.62s between salvos — update.js)
+     is up. The slit refills amber while cooling and holds green when armed,
+     with a one-beat glow the moment it comes back. */
+  const mRdy=S.P.misCd<=0;
+  if(mRdy!==mslWas){ if(mRdy) mslT=S.T; mslWas=mRdy; }
+  if(S.T<mslT) mslT=-1e9; /* clock rewound (restart) — disarm */
+  const mPop=clamp(1-(S.T-mslT)/.3,0,1);
+  h2d.font='11px "Courier New",monospace';
+  h2d.fillStyle=mRdy?css(COL.green):'#7fa8bd';
+  h2d.globalAlpha=mRdy?.8+.2*mPop:.4;
+  if(mPop>0){ h2d.shadowColor=css(COL.green); h2d.shadowBlur=12*mPop; }
+  h2d.fillText('MSL', W-m, by-1); h2d.shadowBlur=0;
+  bar(W-m-58, by-8, 30, 4, mRdy?1:clamp(1-S.P.misCd/.62,0,1),
+    mRdy?css(COL.green):css(COL.amber));
+  h2d.fillStyle=S.P.weapon==='rapid'?css(COL.cyan)
+    :S.P.weapon==='spread'?css(COL.mag):'#7fa8bd';
+  h2d.globalAlpha=S.P.weapon==='std'?.45
+    :S.P.wepT<3?.35+.55*Math.abs(Math.sin(S.T*5)) /* expiring — blink it out */
+    :.85;
+  h2d.fillText(WGUN[S.P.weapon]||WGUN.std, W-m-68, by-1);
+  h2d.globalAlpha=1;
 
   // S.score / distance — the readout swells and glows for a beat on gain.
   // scPrev>=0 gates the arm: the first drawn frame (and any restart, where
@@ -136,8 +207,15 @@ export function drawHUD(){
   h2d.textAlign='left'; h2d.font='bold '+(30+6*scp).toFixed(1)+'px "Courier New",monospace';
   h2d.fillStyle='#eaffff'; h2d.shadowColor=css(COL.cyan); h2d.shadowBlur=14+12*scp;
   h2d.fillText(String(S.score).padStart(6,'0'), m, m+24); h2d.shadowBlur=0;
-  if(S.combo>1){ h2d.font='bold 17px "Courier New",monospace'; h2d.fillStyle=css(COL.mag);
-    h2d.shadowColor=css(COL.mag); h2d.shadowBlur=12; h2d.fillText('x'+S.combo,m,m+48); h2d.shadowBlur=0; }
+  if(S.combo>1){
+    /* milestone ladder: magenta grind, amber from x5, red from x9 with a slow
+       glow pulse on the top rung — the color IS the callout, no extra text */
+    const cc=S.combo>=9?COL.red:S.combo>=5?COL.amber:COL.mag;
+    h2d.font='bold 17px "Courier New",monospace'; h2d.fillStyle=css(cc);
+    h2d.shadowColor=css(cc);
+    h2d.shadowBlur=S.combo>=9?9+9*Math.abs(Math.sin(S.T*5)):12;
+    h2d.fillText('x'+S.combo,m,m+48); h2d.shadowBlur=0;
+  }
   if((S.kills||0)>0){ h2d.font='12px "Courier New",monospace'; h2d.fillStyle='#7fa8bd';
     h2d.globalAlpha=.75; h2d.fillText('K '+S.kills, m, m+(S.combo>1?66:46)); h2d.globalAlpha=1; }
   h2d.textAlign='right'; h2d.font='15px "Courier New",monospace'; h2d.fillStyle='#8fc9e0';
@@ -168,15 +246,49 @@ export function drawHUD(){
   // S.boss bar
   if(S.boss){
     const w=Math.min(560,W*.55), x=W/2-w/2, y=m+2;
+    /* ref-compared latches: a new boss opens with a full, un-eased bar and no
+       leftover crack animation; a phase change arms a ~.6s flourish */
+    if(S.boss!==bossRef){ bossRef=S.boss; bossPh=S.boss.phase; bossPhT=-1e9; delete ezV.boss; }
+    if(S.boss.phase!==bossPh){ bossPh=S.boss.phase; bossPhT=S.T; }
+    if(S.T<bossPhT) bossPhT=-1e9; /* clock rewound — disarm, as scPopT does */
+    const phFx=clamp(1-(S.T-bossPhT)/.6,0,1);
     h2d.textAlign='center'; h2d.font='12px "Courier New",monospace';
     const bc=S.boss.c||COL.purple;
     h2d.fillStyle=css(bc); h2d.fillText((S.boss.name||'MOTHERSHIP')+' :: PHASE '+S.boss.phase, W/2, y-4);
     const hit=clamp(S.boss.hit||0,0,1);
     let c=S.boss.phase===3?css(COL.red):css(bc);
     if(hit>0){ c='rgba(255,255,255,'+(.4+.6*hit).toFixed(2)+')'; }
-    bar(x,y,w,12, S.boss.hp/(S.boss.max||1), c);
+    const vd=clamp(ez('boss', S.boss.hp/(S.boss.max||1)),0,1);
+    bar(x,y,w,12, vd, c);
+    /* final phase: the red is not allowed to sit still — a breathing white-
+       over-red wash plus a hot rim says "endgame" without any new chrome */
+    if(S.boss.phase>=3){
+      const pu=.5+.5*Math.sin(S.T*6.5);
+      h2d.globalAlpha=.08+.15*pu; h2d.fillStyle='#fff';
+      h2d.fillRect(x,y,w*vd,12);
+      h2d.globalAlpha=.18+.30*pu; h2d.strokeStyle=css(COL.red); h2d.lineWidth=1;
+      h2d.strokeRect(x-2.5,y-2.5,w+5,17);
+      h2d.globalAlpha=1;
+    }
     h2d.fillStyle='rgba(0,0,0,.55)';
     h2d.fillRect(x+w*.66-1, y, 2, 12); h2d.fillRect(x+w*.33-1, y, 2, 12);
+    /* phase-crossing flourish: the whole fill flashes white and the divider
+       just crossed cracks — hp falls, so entering phase 2 broke the .66 mark
+       and entering phase 3 broke .33. Splinters fly as the flash decays. */
+    if(phFx>0){
+      const fx2=phFx*phFx, dx=x+w*(S.boss.phase>=3?.33:.66);
+      h2d.globalAlpha=fx2*.8; h2d.fillStyle='#fff';
+      h2d.fillRect(x,y,w*vd,12);
+      h2d.globalAlpha=phFx; h2d.strokeStyle='#fff';
+      h2d.shadowColor=css(bc); h2d.shadowBlur=14; h2d.lineWidth=1.5;
+      const sp=4+22*(1-phFx);
+      h2d.beginPath();
+      h2d.moveTo(dx, y-3-sp*.35); h2d.lineTo(dx-3, y+4);
+      h2d.lineTo(dx+3, y+8); h2d.lineTo(dx-1, y+15+sp*.35);
+      h2d.moveTo(dx-sp-3, y+3); h2d.lineTo(dx-4, y+5);
+      h2d.moveTo(dx+sp+3, y+9); h2d.lineTo(dx+4, y+7);
+      h2d.stroke(); h2d.shadowBlur=0; h2d.globalAlpha=1;
+    }
   }
   if(S.bossWarn>0 && Math.floor(S.T*8)%2){
     h2d.globalAlpha=clamp(S.bossWarn/2.4,0,1); h2d.textAlign='center'; h2d.fillStyle=css(COL.red);
@@ -369,6 +481,24 @@ export function drawHUD(){
   if(S.hitT>0){ h2d.globalAlpha=S.hitT*.9; h2d.strokeStyle=css(COL.red); h2d.lineWidth=26;
     h2d.shadowColor=css(COL.red); h2d.shadowBlur=50; h2d.strokeRect(0,0,W,H);
     h2d.shadowBlur=0; h2d.globalAlpha=1; }
+  /* directional damage pip — combat.js hurt() records where the last
+     unshielded round struck the hull in S.P.burnX/burnY (offset from the
+     aircraft, world axes), which is exactly "where it came from". World +X is
+     screen LEFT (see breakWord) and world +Y is screen UP, so both axes
+     mirror into canvas space. Gated on burn>0 so the pip never outlives — or
+     predates — the scar its hit belongs to; shielded hits leave no burn and
+     honestly have no direction on record, so they get frame-only feedback. */
+  if(S.hitT>0 && (S.P.burn||0)>0 && (S.P.burnX||S.P.burnY)){
+    const ang=Math.atan2(-S.P.burnY*1.7, -S.P.burnX); /* Y gain: ±12 vs ±26 */
+    const R=Math.min(W,H)*.42, a=clamp(S.hitT/.42,0,1);
+    h2d.strokeStyle=css(COL.red); h2d.lineCap='round';
+    h2d.shadowColor=css(COL.red); h2d.shadowBlur=16;
+    h2d.lineWidth=5; h2d.globalAlpha=a*.75;
+    h2d.beginPath(); h2d.arc(W/2,H/2,R,ang-.19,ang+.19); h2d.stroke();
+    h2d.lineWidth=3; h2d.globalAlpha=a*.4;
+    h2d.beginPath(); h2d.arc(W/2,H/2,R-8,ang-.10,ang+.10); h2d.stroke();
+    h2d.shadowBlur=0; h2d.lineCap='butt'; h2d.globalAlpha=1;
+  }
   if(S.hintT>0){
     /* aged in update.js with dt — drawing must not mutate state, and this
        used to tick at 1/60 per DRAWN frame, so it decayed during pause */

@@ -223,6 +223,12 @@ export function xform(mat, p, out){
   return out;
 }
 const _p3=[0,0,0], _tint=[0,0,0];
+/* render-owned anchor for the boss death-site afterglow (see buildFX): it is
+   refreshed every frame a hull exists and read only while S.bossFx is still
+   easing down after S.boss went null — so no field is ever added to the boss
+   and nothing in S is touched. A restart zeroes bossFx, which closes the gate
+   before these stale coordinates could ever draw: self-correcting. */
+let bdX=0, bdY=40, bdZ=1500;
 export function hitTint(e,li){
   if(e.hit>0){ const f=e.hit*2.6; _tint[0]=f; _tint[1]=f*.94; _tint[2]=f; return _tint; }
   /* badly hurt hulls flicker as their lighting fails */
@@ -404,6 +410,16 @@ export function buildFX(){
     xform(model,[nz[0],nz[1],nz[2]-72*th],_p3);
     beam(bx,by,bz,_p3[0],_p3[1],_p3[2], 4.5+2*th, COL.cyan, .55+th*.3);
     sprite(bx,by,bz, 7+3.5*th, COL.white, .5);
+    /* wake trail: three fading pulses strung down the exhaust line past the
+       flame tip — the persistence the beam alone doesn't give. Throttle
+       scales both reach and brightness, so an afterburner run streams a
+       visible ribbon and a coast barely smokes; the fast flicker desyncs the
+       pulses per nozzle (the nz[0] term) so the pair never strobe as one. */
+    for(let i=1;i<=3;i++){
+      xform(model,[nz[0],nz[1],nz[2]-72*th-i*(26+34*th)],_p3);
+      const tw=1-i*.26, fk=.75+.25*Math.sin(S.T*29+i*2.1+nz[0]);
+      sprite(_p3[0],_p3[1],_p3[2], (5.5+3.5*th)*tw*fk, COL.cyan, (.26+.24*th)*tw*fk);
+    }
   }
   if(S.P.muzzle>0) for(const mz of ATT.jetMuzzles){
     xform(model,mz,_p3);
@@ -422,6 +438,14 @@ export function buildFX(){
       xform(model,[nz[0],nz[1],nz[2]-72*ath],_p3);
       beam(bx,by,bz,_p3[0],_p3[1],_p3[2], 4.5+2*ath, COL.cyan, .55+ath*.3);
       sprite(bx,by,bz, 7+3.5*ath, COL.white, .5);
+      /* two-puff wake, the player idiom at wingman cost — enough that the
+         formation reads as aircraft under way instead of parked models;
+         a.ph desyncs the flicker so three ships never pulse in lockstep */
+      for(let i=1;i<=2;i++){
+        xform(model,[nz[0],nz[1],nz[2]-72*ath-i*(24+28*ath)],_p3);
+        const tw=1-i*.3, fk=.75+.25*Math.sin(S.T*27+i*1.7+a.ph+nz[0]);
+        sprite(_p3[0],_p3[1],_p3[2], (5+3*ath)*tw*fk, COL.cyan, (.22+.2*ath)*tw*fk);
+      }
     }
     if(a.state==='dying'){
       sprite(a.x, a.y+2, a.z-8, 26+10*Math.sin(S.T*21), COL.amber, .8);
@@ -523,6 +547,10 @@ export function buildFX(){
   }
   if(S.boss){
     const b=S.boss, pl=.75+.25*Math.sin(b.t*5), type=b.type||'mothership';
+    /* keep the afterglow anchor current while the hull exists, and let the
+       arrival herald run until the shared skeleton latches b.here */
+    bdX=b.x; bdY=b.y; bdZ=b.z;
+    if(!b.here) herald(b,type);
     if(type==='carrier'){
       /* bay glows swell hard on a launch beat (b.flash set by carrierLaunch) */
       const fl=Math.max(0,b.flash||0);
@@ -734,12 +762,179 @@ export function buildFX(){
       sprite(b.x+c[0],b.y+c[1],b.z+c[2], 46*pl, COL.white, 1.2);
       for(const g of ATT.bossGuns) sprite(b.x+g[0],b.y+g[1],b.z+g[2], 16, COL.mag, .9);
     }
+  } else if(S.bossFx>.05){
+    /* death-site afterglow. S.boss is already null and combat has thrown the
+       explosion, but S.bossFx is still easing down (the director lerps it at
+       1.5/s), so its tail is a free ~2s clock that exists exactly once per
+       kill and costs no game-state. A handful of seeded embers rise off the
+       recorded death site and gutter out with the easing — the grave marker
+       between the blast and the sky going quiet. Squared so the field dies
+       faster than the fog tint riding the same number: the world un-reddens
+       around embers that are already almost out, not the other way round. */
+    const g=S.bossFx, rise=1-g;
+    for(let i=0;i<9;i++){
+      const s1=Math.sin(i*12.9898+7.7)*43758.5453, r1=s1-Math.floor(s1);
+      const s2=Math.sin(i*78.233 +3.1)*24634.6345, r2=s2-Math.floor(s2);
+      const fk=.55+.45*Math.sin(S.T*(6+r1*7)+i*2.3);
+      sprite(bdX+(r1-.5)*360, bdY+(r2-.5)*140+rise*(50+r1*110), bdZ+(r2-.5)*220,
+        8+r2*13, i%3?[1,.55,.18]:[1,.25,.20], g*g*.85*fk);
+    }
+    sprite(bdX, bdY, bdZ, 260+240*rise, [1,.45,.15], g*g*.28);
   }
   for(const k of S.crates){
     const c = k.kind==='shield'?COL.green : k.kind==='rapid'?COL.cyan : COL.mag;
     sprite(k.x,k.y,k.z, 30+Math.sin(S.T*6)*5, c, .8);
   }
   nukeFX();
+}
+
+/* ------------------------------------------------------------ boss heralds
+   Each boss announces itself while it is still flying in (pre-b.here): a
+   small signature sprite composition, cheap enough to run every frame of the
+   ~1.5s approach and distinct enough that a veteran knows the fight from the
+   omen before the hull resolves. Everything here reads fields spawnBoss()
+   already initialises — during the approach only b.t and b.z tick (spin,
+   pulse, wingT and the rest still sit at their spawn zeros), so b.t is the
+   only clock. L is the nuke-glare defog idiom at a whisper: the hull spawns
+   at z≈4000, past the fog wall, and an unlifted herald would only exist for
+   the last few hundred metres of the flight — bounded at 5 it caps the lift
+   so the far half fades in instead of popping, and the omen still outruns
+   the thing it announces. */
+function herald(b,type){
+  let ff = 1 - clamp((b.z + CAM_BACK - FOG_NEAR)/(FOG_FAR-FOG_NEAR), 0, 1);
+  ff = ff*ff*(3-2*ff);
+  const L=Math.min(5, 1/Math.max(.2,ff)), t=b.t;
+  if(type==='warden'){
+    /* rotating hazard glyph: a spinning beam triangle in the camera plane —
+       the airspace-closed sign its pinwheel is about to enforce */
+    const gr=230; let px,py,pz;
+    for(let i=0;i<=3;i++){
+      const a=t*1.5+i*2.0944, cs=Math.cos(a)*gr, sn=Math.sin(a)*gr;
+      const nx=b.x+camR[0]*cs+camU[0]*sn, ny=b.y+camR[1]*cs+camU[1]*sn, nz=b.z+camR[2]*cs+camU[2]*sn;
+      if(i) beam(px,py,pz, nx,ny,nz, 7, COL.amber, .5*L);
+      px=nx; py=ny; pz=nz;
+    }
+    sprite(b.x,b.y,b.z, 90+30*Math.sin(t*6), COL.amber, .35*L);
+  } else if(type==='carrier'){
+    /* bays cold-starting: green winks stuttering down the row out of sync —
+       power coming up section by section, the launch cycle's overture */
+    for(const g of ATT.carrierBays)
+      if(Math.floor(t*6+g[0]*.11+g[1]*.07)%3===0)
+        sprite(b.x+g[0],b.y+g[1],b.z+g[2], 26, COL.green, .8*L);
+  } else if(type==='bat'){
+    /* flutter of shadow motes: dim purple scraps tumbling around the hull on
+       seeded lissajous paths (the swarm idiom) — wingbeats in the dark
+       before you can see the animal they belong to */
+    for(let i=0;i<8;i++){
+      const s1=Math.sin(i*12.9898+4.4)*43758.5453, r1=s1-Math.floor(s1);
+      const s2=Math.sin(i*78.233 +9.2)*24634.6345, r2=s2-Math.floor(s2);
+      sprite(b.x+Math.sin(t*(2.1+r1*2.6)+r2*6.28)*(120+r2*160),
+             b.y+Math.sin(t*(2.6+r2*2.2)+r1*6.28)*(60+r1*90),
+             b.z+Math.cos(t*(1.8+r1*2.2))*90,
+             10+r2*10, [.30,.13,.42], (.5+.3*Math.sin(t*9+i))*L);
+    }
+  } else if(type==='dreadnought'){
+    /* spine pre-ignition: the lance channel arcs intermittently while the
+       capacitors fill — a hard stutter, not a swell, so it reads electrical */
+    const sp=ATT.dreadSpine;
+    if(Math.floor(t*13)%3===0){
+      beam(b.x+sp[0]-70,b.y+sp[1],b.z+sp[2], b.x+sp[0]+70,b.y+sp[1],b.z+sp[2], 5, COL.red, .9*L);
+      sprite(b.x+sp[0],b.y+sp[1],b.z+sp[2], 40, COL.white, .5*L);
+    }
+    sprite(b.x+sp[0],b.y+sp[1],b.z+sp[2], 30+16*Math.sin(t*3), COL.red, .4*L);
+  } else if(type==='phantom'){
+    /* decloak shimmer: sparks orbiting tight plus an irregular whole-hull
+       blink — the ship arriving out of phase with the air around it */
+    for(let i=0;i<5;i++){
+      const a=t*3.4+i*1.2566;
+      sprite(b.x+Math.cos(a)*130, b.y+Math.sin(a*1.3)*60, b.z+Math.sin(a)*70,
+        9, COL.mag, (.45+.45*Math.sin(t*11+i*2.5))*L);
+    }
+    if(Math.floor(t*9)%4===0) sprite(b.x,b.y,b.z, 150, COL.mag, .30*L);
+  } else if(type==='hivemother'){
+    /* she surfaces through her own spore bloom: motes streaming up from
+       under the hull, each on a seeded lane, brightest just after release */
+    for(let i=0;i<6;i++){
+      const s1=Math.sin(i*39.425+2.6)*15731.7431, r1=s1-Math.floor(s1);
+      const u=(t*.35+r1)%1;
+      sprite(b.x+(r1-.5)*420, b.y-200+u*300, b.z+(i-2.5)*60,
+        14+r1*12, COL.bio, .55*(1-u)*L);
+    }
+  } else if(type==='hedra'){
+    /* manifestation glints: facet flashes popping at seeded points around
+       the lattice, each a hard white pop inside a cyan bloom — the crystal
+       assembling itself out of reflections */
+    for(let i=0;i<4;i++){
+      const s1=Math.sin(i*12.9898+6.1)*43758.5453, r1=s1-Math.floor(s1);
+      const s2=Math.sin(i*78.233 +1.7)*24634.6345, r2=s2-Math.floor(s2);
+      const bl=Math.sin(t*(5+r1*6)+r2*6.28);
+      if(bl>.55){
+        const px=b.x+(r1-.5)*300, py=b.y+(r2-.5)*220, pz=b.z+(r1-r2)*120;
+        sprite(px,py,pz, 30*(bl-.55)/.45, COL.cyan, L*(bl-.55));
+        sprite(px,py,pz, 12, COL.white, .8*L*(bl-.55));
+      }
+    }
+  } else if(type==='goliath'){
+    /* tremor pulses: the deck lights up under it on a slow stomp beat — an
+       expanding pool of ground light with dust motes shaken loose. The pool
+       is a billboard sunk below the deck line so only its top rim shows: a
+       glow lying ON the ground rather than a ball floating over it. */
+    const beat=(t*1.15)%1, bp=1-beat;
+    sprite(b.x, GROUND_Y-70, b.z-120, 260+520*beat, [1,.50,.14], .5*bp*bp*L);
+    sprite(b.x, GROUND_Y+16, b.z-120, 130*bp, COL.amber, .45*bp*L);
+    for(let i=0;i<4;i++){
+      const s1=Math.sin(i*78.233+5.3)*24634.6345, r1=s1-Math.floor(s1);
+      sprite(b.x+(r1-.5)*560, GROUND_Y+20+beat*(50+r1*70), b.z+(i-1.5)*90,
+        9+r1*8, N_DIRT, .5*bp*L);
+    }
+  } else if(type==='arbalest'){
+    /* targeting shimmer: a faint survey column standing floor-to-ceiling
+       under the platform with ranging glints crawling up it — the beam
+       rehearsing before it has anything to fire */
+    const sh=.6+.4*Math.sin(S.T*2.3);
+    beam(b.x,GROUND_Y,b.z, b.x,CEIL_Y+140,b.z, 9+5*sh, COL.ice, .28*L);
+    beam(b.x,GROUND_Y,b.z, b.x,CEIL_Y+140,b.z, 3.5, COL.white, .16*sh*L);
+    for(let i=0;i<3;i++){
+      const u=(t*.6+i*.333)%1;
+      sprite(b.x, GROUND_Y+u*(CEIL_Y+140-GROUND_Y), b.z, 18, COL.ice, .55*(1-u)*L);
+    }
+  } else if(type==='reaper'){
+    /* fence forewarning: a thin red rail strobing across the wingspan with
+       hot posts at its ends — the curtain shown flat before it is drawn in
+       live ordnance */
+    const st=.5+.5*Math.sin(S.T*13);
+    beam(b.x-300,b.y+18,b.z, b.x+300,b.y+18,b.z, 4, COL.red, .45*st*L);
+    sprite(b.x-300,b.y+18,b.z, 16, COL.red, .5*st*L);
+    sprite(b.x+300,b.y+18,b.z, 16, COL.red, .5*st*L);
+  } else if(type==='hunter'){
+    /* predator blink: the nose eye lights in an uneven double-flash — alive
+       and looking, not a beacon — over a faint forward stalking wake */
+    const n=ATT.hunterNose, cy=(t*1.8)%1, on=cy<.12||(cy>.2&&cy<.28);
+    if(on){ sprite(b.x+n[0],b.y+n[1],b.z+n[2], 34, COL.mag, .9*L);
+            sprite(b.x+n[0],b.y+n[1],b.z+n[2], 14, COL.white, .7*L); }
+    beam(b.x,b.y,b.z+80, b.x,b.y+8,b.z+420, 30, COL.mag, .10*L);
+  } else if(type==='leviathan'){
+    /* rising: bio bubbles streaming up past the hull as if it were coming
+       up through something thicker than air — sinusoid alpha so each fades
+       in at the bottom and out at the top instead of popping at either end */
+    for(let i=0;i<5;i++){
+      const s1=Math.sin(i*39.425+8.8)*15731.7431, r1=s1-Math.floor(s1);
+      const u=(t*.5+r1)%1;
+      sprite(b.x+(r1-.5)*360+Math.sin(t*3+i)*24, b.y-240+u*420, b.z+(i-2)*70,
+        10+r1*14, COL.bio, .5*Math.sin(u*3.1416)*L);
+    }
+  } else {
+    /* mothership: power converging on the throne — sparks spiral INTO the
+       core, the reverse of every muzzle flash in the game, which is exactly
+       why it reads as arrival rather than attack */
+    const c=ATT.bossCore;
+    for(let i=0;i<5;i++){
+      const a=t*2.6+i*1.2566, rr=260*(1-((t*.7+i*.2)%1));
+      sprite(b.x+c[0]+Math.cos(a)*rr, b.y+c[1]+Math.sin(a)*rr*.6, b.z+c[2],
+        11, COL.purple, .6*L);
+    }
+    sprite(b.x+c[0],b.y+c[1],b.z+c[2], 70+40*Math.sin(t*4), COL.purple, .4*L);
+  }
 }
 
 /* ---------------------------------------------------------- nuclear column
@@ -1031,5 +1226,28 @@ function nukeFX(){
         beam(x+s*rf, GROUND_Y, z, x+s*rf, 300+hy*180, z, 3.5+hy*2, [.50,1,.30], al*.40);
       }
     }
+  }
+  /* --- deck wash. S.nukeLt is already the world's key light (litBegin swings
+     the sun into the fireball), but the desert floor it should land on
+     hardest is not lit geometry at all — it is sky-shader gradient plus grid
+     lines — so its reflection has to be painted sprite-side. Three beams do
+     it: a horizon-wide warm strip lying along the deck at ground zero (wide
+     and faint, a glow ON the plane rather than a ball over it), a tighter
+     hotter core strip inside it, and a glitter smear running down the deck
+     toward the camera the way any low light streaks on a flat plane. Squared
+     on nl so the wash follows the light down fast — the doctrine from the
+     fog-bleach above applies unchanged: below-horizon lift is the most
+     contrast-destructive term available, so this one gets a steep clock and
+     alphas an order under the glare's. The strip sits at detonation depth
+     and eats the full fog fade, so it takes the bounded-defog idiom too. */
+  const nl=clamp(S.nukeLt,0,1);
+  if(nl>.03){
+    const nw=nl*nl, x=S.nukeLtX, z=S.nukeLtZ;
+    let wf = 1 - clamp((z + CAM_BACK - FOG_NEAR)/(FOG_FAR-FOG_NEAR), 0, 1);
+    wf = wf*wf*(3-2*wf);
+    const wl=Math.min(8, 1/Math.max(.125, wf));
+    beam(x-2600, GROUND_Y+8, z, x+2600, GROUND_Y+8, z, 150+90*nl, [1,.52,.20], nw*.20*wl);
+    beam(x-1200, GROUND_Y+10, z, x+1200, GROUND_Y+10, z, 60, [1,.74,.40], nw*.16*wl);
+    beam(x, GROUND_Y+10, z, x*.5, GROUND_Y+10, 140, 120+240*nl, [1,.60,.24], nw*.13);
   }
 }

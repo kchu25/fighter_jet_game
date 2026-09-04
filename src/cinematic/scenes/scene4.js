@@ -30,6 +30,54 @@ export function rrect(x, y, w, h, r) {
   I.c.closePath();
 }
 
+/* ---- lazily-built sprite caches, one canvas each, same idiom as
+   engine.js glow(): pay for the gradient once, then it's a drawImage
+   at whatever size and alpha the frame wants ---- */
+let tvS = null, coneS = null;
+/* g-load tunnel vision: a 16:9 black ring, clear in the middle.  Drawn
+   LARGER than the frame it does almost nothing (the dark band hangs off
+   the screen edges); shrunk toward frame size it closes the walls in.
+   So one cached sprite gives a fully animatable vignette with no
+   per-frame gradient build. */
+function tvSprite() {
+  if (tvS) return tvS;
+  tvS = document.createElement('canvas'); tvS.width = 320; tvS.height = 180;
+  const x = tvS.getContext('2d');
+  const g = x.createRadialGradient(160, 90, 0, 160, 90, 172);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(0.52, 'rgba(0,0,0,0)');
+  g.addColorStop(0.76, 'rgba(0,0,0,0.5)');
+  g.addColorStop(1, 'rgba(0,0,0,0.92)');
+  x.fillStyle = g; x.fillRect(0, 0, 320, 180);
+  return tvS;
+}
+/* the vapour cone's interior: a hot core, a dimmer translucent belly,
+   then a SECOND bright band just inside the rim — condensation is
+   densest right at the shell, so the cone must glow at its skin as
+   well as its heart or it reads as a smoke ring, not shocked air */
+function coneSprite() {
+  if (coneS) return coneS;
+  coneS = document.createElement('canvas'); coneS.width = 256; coneS.height = 256;
+  const x = coneS.getContext('2d');
+  const g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+  g.addColorStop(0.00, 'rgba(255,255,255,0.85)');
+  g.addColorStop(0.28, 'rgba(196,245,255,0.42)');
+  g.addColorStop(0.60, 'rgba(120,214,255,0.16)');
+  g.addColorStop(0.84, 'rgba(210,248,255,0.34)');
+  g.addColorStop(1.00, 'rgba(196,245,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+  return coneS;
+}
+/* the staged eruption behind us once we clear the mouth: each bloom is
+   [x, delay, size].  Ragged order and ragged timing on purpose — a fuel
+   farm goes up in stages, tank by tank, not as one drum hit; the late
+   entries land while the whiteout is already climbing, so the blast is
+   still BUILDING as the scene hands off, which is what sells its size */
+const BLOOMS = [
+  [560, 0.00, 620], [1010, 0.07, 700], [300, 0.15, 520],
+  [1300, 0.22, 580], [790, 0.30, 860], [120, 0.40, 480]
+];
+
 export function scene4(u, dt) {
   const A = art();
   /* travel is the integral of velocity, so the ribs genuinely accelerate
@@ -68,6 +116,17 @@ export function scene4(u, dt) {
     sfx('thud'); sfx('setIntensity', 0.8);
     I.shake = Math.max(I.shake, 34); I.flash = Math.max(I.flash, 0.5); I.flashCol = C.ice;
     burst(LVPX, LVPY, 26, 900, C.ice, 0.5, 7, { d: 0.99 });
+    /* the whole pre-shot steam bank torn apart in one frame: a ring of
+       haze rags flung radially past the canopy.  Alternating additive
+       ice wisps (lit vapour) and sourced-over steel rags (shadowed
+       steam) so the whip has both highlight and body */
+    for (let i = 0; i < 26; i++) {
+      const wa = rnd(0, 6.2832), wr = rnd(50, 300), ws = rnd(700, 1900);
+      part(LVPX + Math.cos(wa) * wr, LVPY + Math.sin(wa) * wr * 0.66,
+        Math.cos(wa) * ws, Math.sin(wa) * ws * 0.66,
+        rnd(0.22, 0.5), rnd(9, 24), i & 1 ? C.steel : C.ice,
+        i & 1 ? { add: false, a: 0.5, d: 0.995, gr: 30 } : { a: 0.25, d: 0.995, gr: 40 });
+    }
   });
   once('c4gasp', T3 + L_SHOT + 0.22, function () { sfx('breath', 2); });
   /* the flight lead on the net, mid-shot — garbled, urgent */
@@ -83,6 +142,10 @@ export function scene4(u, dt) {
     I.shake = Math.max(I.shake, 24); I.flash = Math.max(I.flash, 0.4); I.flashCol = C.red;
     burst(LVPX + rnd(-160, 160), LVPY + rnd(-80, 80), 18, 950, C.red, 0.42, 7, { d: 0.98 });
   });
+  /* the cone starts condensing a breath before the punch-through, and
+     the warp sweep is its voice — it sits under the jetPass/boom pair
+     so the L_OUT hit lands on an already-rising bed */
+  once('c4cone', T3 + L_OUT - 0.06, function () { sfx('warp'); });
   once('c4out', T3 + L_OUT, function () {
     sfx('jetPass', 0.25); sfx('boom', 1.5); sfx('setIntensity', 0.86);
     if (I.sirenH && I.sirenH.stop) { try { I.sirenH.stop(); } catch (e) { } I.sirenH = null; }
@@ -116,11 +179,45 @@ export function scene4(u, dt) {
     const flick = erupt * (0.62 + 0.38 * pulse(u, 8.4));
     I.c.save();
     I.c.globalCompositeOperation = 'lighter';
+    /* ambient firelight spilling over both lower frame corners */
     I.c.globalAlpha = 0.5 * flick;
     I.c.drawImage(glow(C.orange), -320, VH - 380, 900, 760);
     I.c.drawImage(glow(C.orange), VW - 580, VH - 380, 900, 760);
     I.c.globalAlpha = 0.3 * flick;
     I.c.drawImage(glow(C.red), 380, VH - 260, 840, 620);
+    /* the fireball proper: staged blooms boiling up over the coaming,
+       nose-up first person so the blast behind/below us crests the
+       bottom of the frame like a sunrise of fire.  Each bloom runs its
+       own life: born nearly white, swelling and cooling through amber
+       to deep orange/red as it rolls up, flickering on its own phase
+       so the cluster churns instead of breathing in unison */
+    for (let i = 0; i < BLOOMS.length; i++) {
+      const B = BLOOMS[i];
+      const bk = ramp(L_OUT + 0.36 + B[1], L_OUT + 0.76 + B[1], u);
+      if (bk <= 0) continue;
+      const bf = 0.72 + 0.28 * pulse(u, 6.4 + i * 1.7);
+      const bs = B[2] * (0.34 + 0.66 * bk);
+      const bx = B[0], by = VH + 120 - bk * (150 + B[2] * 0.28);
+      I.c.globalAlpha = (0.5 - 0.22 * bk) * bf;          /* shell cools as it climbs */
+      I.c.drawImage(glow(bk > 0.6 ? C.red : C.orange), bx - bs / 2, by - bs / 2, bs, bs);
+      I.c.globalAlpha = (0.55 - 0.4 * bk) * bf;          /* the young core is nearly white */
+      const cs = bs * 0.52;
+      I.c.drawImage(glow(bk > 0.45 ? C.amber : C.white), bx - cs / 2, by - cs / 2, cs, cs);
+    }
+    /* the long light-tail thrown up the sea/ground plane: the blast is
+       behind us, so the near ground burns orange and the glow dies off
+       toward the horizon — a broad rust wash for the ambient bounce, a
+       tall stretched lane up the centreline for the direct lick, and a
+       hot amber core in the lane shimmering at flame frequency */
+    if (sky > 0.2) {
+      const hz2 = 512 - 70 * after;
+      I.c.globalAlpha = 0.28 * flick * sky;
+      I.c.drawImage(glow(C.rust), -240, hz2 + 30, VW + 480, 660);
+      I.c.globalAlpha = 0.5 * flick * sky;
+      I.c.drawImage(glow(C.orange), 800 - 190, hz2 - 50, 380, (VH - hz2) + 340);
+      I.c.globalAlpha = 0.4 * flick * sky * (0.6 + 0.4 * pulse(u, 11));
+      I.c.drawImage(glow(C.amber), 800 - 90, hz2 + 60, 180, 320);
+    }
     I.c.restore();
     /* embers and smoke torn forward past the canopy from behind */
     if (Math.random() < 0.7) {
@@ -128,6 +225,23 @@ export function scene4(u, dt) {
       part(800 + sd * rnd(560, 860), rnd(560, 900), sd * rnd(-60, 60), rnd(-520, -260),
         rnd(0.3, 0.7), rnd(3, 9), Math.random() < 0.4 ? C.orange : C.dust,
         { d: 0.985, sq: Math.random() < 0.5, rot: rnd(0, 6.28), vr: rnd(-6, 6) });
+    }
+    /* arcing debris hurled clean over us: hull plates off the launch
+       complex, thrown from the bottom of the frame, arcing up and out
+       past the canopy edges under real gravity.  They are sq chunks so
+       streakParts() smears them into hot overtaking streaks */
+    if (Math.random() < 0.9 * erupt) {
+      const dx = 800 + rnd(-520, 520);
+      part(dx, VH + rnd(10, 90), (dx < 800 ? -1 : 1) * rnd(90, 620), -rnd(760, 1500),
+        rnd(0.5, 0.95), rnd(2.5, 6.5),
+        Math.random() < 0.5 ? C.orange : (Math.random() < 0.5 ? C.amber : C.rust),
+        { g: 900, d: 0.999, sq: true, rot: rnd(0, 6.28), vr: rnd(-16, 16) });
+    }
+    /* black smoke crowns shouldering up over the blooms — the sourced-
+       over dust rags give the fire something unlit to burn against */
+    if (Math.random() < 0.5) {
+      part(800 + rnd(-560, 560), VH + rnd(0, 50), rnd(-30, 30), -rnd(90, 190),
+        rnd(0.7, 1.3), rnd(20, 44), C.dust, { add: false, a: 0.55, d: 0.98, gr: 55 });
     }
   }
 
@@ -145,6 +259,8 @@ export function scene4(u, dt) {
       const tv = travel - m * 0.62 * spd;
       const ga = (m === 0 ? 1 : 0.62 / (1 + m * 0.85));
       const head = m === 0;
+      /* previous-rib trackers for the wall lattice (head pass only) */
+      let phw = 0, phh = 0, pa2 = 0;
       for (let i = 0; i < N; i++) {
         const f = (i + (tv % 1 + 1) % 1) / N;
         const d = Math.pow(f, 2.7);
@@ -168,6 +284,25 @@ export function scene4(u, dt) {
         I.c.moveTo(LVPX - hw, LVPY - hh * 0.58); I.c.lineTo(LVPX - hw, LVPY + hh * 0.58); I.c.stroke();
         I.c.beginPath();
         I.c.moveTo(LVPX + hw, LVPY - hh * 0.58); I.c.lineTo(LVPX + hw, LVPY + hh * 0.58); I.c.stroke();
+        /* diagonal cross-bracing tying each rib frame to the next: the
+           X girders are what turn a perspective grid into a STRUCTURE,
+           and at speed they strobe past like a truss bridge at night.
+           Every other bay is braced (real trusses alternate), keyed on
+           the PHYSICAL rib id (i minus whole travel) so the braced bays
+           ride with the steel instead of flickering as the scroll wraps */
+        if (phw > 0 && ((i - Math.floor(tv)) & 1)) {
+          I.c.strokeStyle = rgba(C.steel, Math.min(a, pa2) * 0.30);
+          I.c.lineWidth = 1 + d * 3;
+          for (let s = -1; s <= 1; s += 2) {
+            I.c.beginPath();
+            I.c.moveTo(LVPX + s * phw, LVPY - phh * 0.58);
+            I.c.lineTo(LVPX + s * hw, LVPY + hh * 0.58);
+            I.c.moveTo(LVPX + s * phw, LVPY + phh * 0.58);
+            I.c.lineTo(LVPX + s * hw, LVPY - hh * 0.58);
+            I.c.stroke();
+          }
+        }
+        phw = hw; phh = hh; pa2 = a;
         /* hot marker lights on both walls, ticking past */
         if (i % 3 === 0) {
           I.c.globalAlpha = a * 0.55;
@@ -184,6 +319,61 @@ export function scene4(u, dt) {
       I.c.beginPath();
       I.c.moveTo(LVPX + s * 26, LVPY + 24);
       I.c.lineTo(LVPX + s * 900, VH + 200); I.c.stroke();
+    }
+    /* the shuttle groove itself, straight down the deck centreline —
+       armed amber while we tension against the holdback, overdriven
+       toward white in the last half second, then riding the run */
+    const armA = tun * (0.10 + 0.30 * tension * (0.6 + 0.4 * pulse(u, 5 + 6 * tension))) + 0.22 * spd * tun;
+    I.c.strokeStyle = rgba(tension > 0.85 && u < L_SHOT ? C.white : C.amber, Math.min(0.6, armA));
+    I.c.lineWidth = 3 + 5 * spd;
+    I.c.beginPath(); I.c.moveTo(LVPX, LVPY + 26); I.c.lineTo(LVPX, VH + 60); I.c.stroke();
+    /* catapult track light-strip: paired chase lights riding both
+       rails, and a brightness wave that always travels TOWARD the
+       mouth — before the shot they run out ahead of us like a "this
+       way, NOW" beacon; after release the chase phase rides on actual
+       travel so the pairs scream past and smear into one strip */
+    const chP = u * 0.55 + travel * 0.34;
+    for (let j = 0; j < 12; j++) {
+      const sT = ((j / 12 - chP) % 1 + 1) % 1;       /* 0 at the mouth, 1 at our feet */
+      const dT = Math.pow(sT, 2.2);
+      const wave = Math.pow(0.5 + 0.5 * Math.sin(6.2832 * (sT * 2 + u * 2.6)), 3);
+      const aT = tun * (0.16 + 0.5 * wave) * (0.35 + 0.65 * sT) * (0.55 + 0.45 * spd);
+      if (aT < 0.02) continue;
+      const rT = (5 + 42 * dT) * (1 + 1.6 * spd);
+      const col = (j & 1) || spd < 0.2 ? C.amber : C.ice;
+      I.c.globalAlpha = aT;
+      for (let s = -1; s <= 1; s += 2) {
+        const xT = LVPX + s * (26 + dT * 874);
+        const yT = LVPY + 24 + dT * (VH + 176 - LVPY - 24);
+        I.c.drawImage(glow(col), xT - rT, yT - rT, rT * 2, rT * 2);
+      }
+    }
+    I.c.globalAlpha = 1;
+    /* deck steam curling off the catapult groove while we sit in
+       tension — the classic pre-shot image.  The bank itself is a slow
+       trickle of shadowed steel rags plus faint lit wisps over the
+       groove; the c4shot latch above rips the whole thing apart in one
+       frame when the holdback lets go */
+    if (u < L_SHOT) {
+      if (Math.random() < 0.55) {
+        const sd2 = Math.random() < 0.5 ? -1 : 1;
+        part(800 + sd2 * rnd(60, 560), rnd(590, 850), sd2 * rnd(-24, 30), -rnd(24, 70),
+          rnd(0.8, 1.6), rnd(9, 26), C.steel, { add: false, a: 0.30, d: 0.985, gr: 24 });
+      }
+      if (Math.random() < 0.3)
+        part(800 + rnd(-70, 70), rnd(620, 780), rnd(-14, 14), -rnd(40, 90),
+          rnd(0.4, 0.9), rnd(6, 14), C.ice, { a: 0.14, d: 0.99, gr: 34 });
+    }
+    /* two loose haze banks hanging in the throat, lit by the strip
+       lights; speed wipes them out almost immediately, and losing them
+       is itself an acceleration cue */
+    const hzA = tun * Math.max(0, 0.16 - 0.5 * spd);
+    if (hzA > 0.01) {
+      I.c.globalAlpha = hzA * (0.7 + 0.3 * Math.sin(u * 1.7));
+      I.c.drawImage(glow(C.smoke), 260 + 40 * Math.sin(u * 0.9), 470, 900, 260);
+      I.c.globalAlpha = hzA * (0.6 + 0.4 * Math.sin(u * 1.3 + 2));
+      I.c.drawImage(glow(C.steel), 620 + 50 * Math.sin(u * 0.7 + 1), 560, 1000, 240);
+      I.c.globalAlpha = 1;
     }
     /* the whole throat glows hotter the harder we are driven down it */
     if (spd > 0.05) {
@@ -237,6 +427,15 @@ export function scene4(u, dt) {
     I.c.save();
     I.c.globalCompositeOperation = 'lighter';
     I.c.lineCap = 'round';
+    /* the cone's BODY first: the cached interior sprite scaled onto the
+       lead shell, so the cone is a volume of compressed luminous vapour
+       — hot heart, translucent belly, a second bright band at the skin
+       — instead of an empty outline drifting over the sky */
+    const k0 = sat(shock * 1.25);
+    const rw0 = 90 + k0 * k0 * 2100, rh0 = rw0 * 0.62;
+    I.c.globalAlpha = (1 - k0) * 0.85;
+    I.c.drawImage(coneSprite(), LVPX - rw0, LVPY - rh0, rw0 * 2, rh0 * 2);
+    I.c.globalAlpha = 1;
     for (let i = 0; i < 3; i++) {
       const k = sat(shock * (1.25 - i * 0.16));
       const rw = (90 + k * k * 2100) * (1 - i * 0.12);
@@ -248,6 +447,29 @@ export function scene4(u, dt) {
       I.c.beginPath();
       I.c.ellipse(LVPX, LVPY, rw, rh, 0, 0, 6.2832);
       I.c.stroke();
+    }
+    /* condensation shimmer: droplet glints scattered around the lead
+       shell, each strobing on its own fast phase — the flicker is what
+       makes the shell read WET, water flashing in and out of vapour,
+       rather than a stroked ellipse */
+    for (let i = 0; i < 18; i++) {
+      const ga2 = i * 0.3491 + Math.sin(i * 12.9898) * 0.13;
+      const fl2 = Math.max(0, Math.sin(i * 7.31 + u * 46)) * (1 - k0);
+      if (fl2 < 0.1) continue;
+      const gx2 = LVPX + Math.cos(ga2) * rw0, gy2 = LVPY + Math.sin(ga2) * rh0;
+      const gr2 = 8 + 30 * (1 - k0) + 14 * fl2;
+      I.c.globalAlpha = 0.55 * fl2;
+      I.c.drawImage(glow(C.white), gx2 - gr2, gy2 - gr2, gr2 * 2, gr2 * 2);
+    }
+    /* the punch-through frame itself: one hard, thin, pure white rim on
+       the shell — full strength for a single beat, gone in a tenth of a
+       second.  This is the exact instant we cross our own bow wave */
+    const rim = 1 - shock / 0.11;
+    if (rim > 0) {
+      I.c.globalAlpha = 1;
+      I.c.strokeStyle = rgba(C.white, 0.9 * rim);
+      I.c.lineWidth = 8;
+      I.c.beginPath(); I.c.ellipse(LVPX, LVPY, rw0, rh0, 0, 0, 6.2832); I.c.stroke();
     }
     I.c.globalAlpha = (1 - shock) * 0.5;
     I.c.drawImage(glow(C.white), LVPX - 640, LVPY - 420, 1280, 840);
@@ -278,6 +500,17 @@ export function scene4(u, dt) {
 
   /* grit and vapour torn past the canopy */
   if (u > L_SHOT) {
+    /* haze rags keep tearing off the walls for the first half second
+       after the shot — the throat's whole steam load blowing past us,
+       which is what makes the first surge of speed feel like MASS in
+       motion and not just lines getting faster */
+    if (u < L_SHOT + 0.55 && Math.random() < 0.8) {
+      const ha = rnd(0, 6.2832), hr = rnd(60, 260);
+      const hs = (500 + 1400 * spd) * rnd(0.7, 1.3);
+      part(LVPX + Math.cos(ha) * hr, LVPY + Math.sin(ha) * hr * 0.66,
+        Math.cos(ha) * hs, Math.sin(ha) * hs * 0.66,
+        rnd(0.2, 0.45), rnd(8, 20), C.steel, { add: false, a: 0.4, d: 0.996, gr: 26 });
+    }
     const n = 1 + Math.floor(spd * 4);
     for (let k = 0; k < n; k++) {
       const ang = rnd(0, 6.2832), r0 = rnd(24, 190);
@@ -409,7 +642,28 @@ export function scene4(u, dt) {
 
   /* --------------------------------------------------- physical -- */
   if (u < L_SHOT) I.shake = Math.max(I.shake, 2.6 + 5.2 * tension * (0.5 + 0.5 * Math.sin(I.t * 44)));
-  else I.shake = Math.max(I.shake, (3 + 25 * spd) * (0.55 + 0.45 * Math.sin(I.t * 63)) * (1 - 0.8 * after));
+  /* the main buffet, with a much faster micro-vibration summed on top:
+     the low term is the airframe slamming rail joints, the 149 Hz-ish
+     term is the fine rattle of everything loose in the cockpit — it
+     rides up with speed and the sum keeps I.shake the sole channel */
+  else I.shake = Math.max(I.shake,
+    (3 + 25 * spd) * (0.55 + 0.45 * Math.sin(I.t * 63)) * (1 - 0.8 * after)
+    + 1.6 * spd * (0.5 + 0.5 * Math.sin(I.t * 149)));
+
+  /* g-load tunnel vision: the cached black ring drawn over EVERYTHING
+     — world, canopy frame, HUD — because it is the pilot's own eyes
+     failing, not the world darkening.  It closes in with acceleration
+     and throbs at a rate that climbs with speed (blood hammering), then
+     releases as the g comes off past the mouth.  Centred on the canopy
+     aperture so the pipper is the last thing to survive */
+  const gl = spd * (1 - 0.6 * after);
+  if (gl > 0.02) {
+    const tv = sat(gl * (0.8 + 0.2 * Math.sin(I.t * (6 + 22 * spd))));
+    const tw = VW * (2.3 - 0.9 * tv), th = tw * 0.5625;
+    I.c.globalAlpha = Math.min(1, 1.3 * tv);
+    I.c.drawImage(tvSprite(), 800 - tw / 2, 442 - th / 2, tw, th);
+    I.c.globalAlpha = 1;
+  }
 
   scanlines(0.10);
   vignette(0.52 + 0.26 * spd);

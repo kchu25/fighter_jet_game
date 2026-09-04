@@ -18,35 +18,42 @@ export function laser() {
   var pn = panner(A.laserSide * 0.38);
   if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
 
-  var dur = 0.15;
+  /* per-shot scatter: ONE random draw fans out into pitch (~±6%), length,
+     saw spread and the click's cutoff. Sustained fire lands each bolt on a
+     slightly different partial of the same voice instead of machine-gunning
+     one sample — and it costs arithmetic only. Node count is untouched,
+     which at this call rate is the entire budget. */
+  var v = Math.random(), pr = 0.94 + v * 0.13;
+  var dur = 0.14 + v * 0.024;
   var srcs = [];
 
   // 1. main downward sweep, two detuned saws through a bandpass
   var bpf = bp(1500, 3.2);
-  bpf.frequency.setValueAtTime(fclamp(3200), t);
-  bpf.frequency.exponentialRampToValueAtTime(fclamp(500), t + dur);
+  bpf.frequency.setValueAtTime(fclamp(3200 * pr), t);
+  bpf.frequency.exponentialRampToValueAtTime(fclamp(500 * pr), t + dur);
   var g1 = pluck(t, 0.55, dur, 0.002);
   bpf.connect(g1); g1.connect(head);
 
   for (var k = 0; k < 2; k++) {
     var o = osc('sawtooth', 1900, t);
-    o.detune.value = k ? 17 : -14;
-    o.frequency.setValueAtTime(fclamp(1900 + A.laserSide * 60), t);
-    o.frequency.exponentialRampToValueAtTime(fclamp(250), t + dur * 0.92);
+    o.detune.value = (k ? 17 : -14) + (v - 0.5) * 12;  // unison width breathes per shot
+    o.frequency.setValueAtTime(fclamp((1900 + A.laserSide * 60) * pr), t);
+    o.frequency.exponentialRampToValueAtTime(fclamp(250 * pr), t + dur * 0.92);
     o.connect(bpf);
     o.start(t); o.stop(t + dur + 0.02);
     srcs.push(o);
   }
 
-  // 2. bright transient click
-  var nh = hp(2600);
-  var ng = pluck(t, 0.34, 0.035, 0.001);
+  // 2. bright transient click, cutoff wandering shot-to-shot
+  var nh = hp(2400 + v * 900);
+  var ng = pluck(t, 0.3 + v * 0.08, 0.035, 0.001);
   nh.connect(ng); ng.connect(head);
   var ns = noise(t, 0.04); ns.connect(nh); srcs.push(ns);
 
-  // 3. tiny metallic ring tail
-  var ro = osc('sine', 2750, t);
-  ro.frequency.exponentialRampToValueAtTime(fclamp(1650), t + 0.1);
+  // 3. tiny metallic ring tail — the interval alternates with the pan side,
+  // so left/right shots answer each other a minor third apart
+  var ro = osc('sine', (A.laserSide > 0 ? 2750 : 2313) * pr, t);
+  ro.frequency.exponentialRampToValueAtTime(fclamp(1650 * pr), t + 0.1);
   var rg = pluck(t, 0.09, 0.11, 0.002);
   ro.connect(rg); rg.connect(head);
   ro.start(t); ro.stop(t + 0.13);
@@ -220,7 +227,7 @@ export function missile() {
 export function boom(size) {
   if (!A.ready || A.muted) return;
   size = clamp(size == null ? 1 : size, 0.15, 2.4);
-  if (A.boomVoices >= MAX_BOOM || !budget(5)) return;
+  if (A.boomVoices >= MAX_BOOM || !budget(6)) return;
   var t = now() + 0.002;
   var dur = 0.34 + 0.72 * size;
   var head = gainNode(clamp(0.5 + 0.35 * size, 0.3, 1.0));
@@ -228,13 +235,23 @@ export function boom(size) {
   if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
   var srcs = [];
 
+  // --- crack: the report itself. Cutoff FALLS as size grows — a drone pops
+  // bright and quick, a capital hull tears low and long — which sells scale
+  // in the first 40ms before any layer below matters. Same darkness-is-mass
+  // rule the nuke suite runs across its tiers.
+  var kh = hp(3400 / Math.pow(size, 0.9));
+  var kg = pluck(t, 0.4 + 0.12 * size, 0.026 + 0.05 * size, 0.001);
+  kh.connect(kg); kg.connect(head);
+  var ks = noise(t, 0.05 + 0.06 * size, 1.5); ks.connect(kh); srcs.push(ks);
+
   // --- body: noise through a lowpass sweeping down ---
   var bf = lp(3000, 1.6);
   bf.frequency.setValueAtTime(fclamp(2600 / Math.pow(size, 0.5)), t);
   bf.frequency.exponentialRampToValueAtTime(fclamp(90 / size), t + dur * 0.85);
   var bg = A.ctx.createGain();
   bg.gain.setValueAtTime(0.0001, t);
-  bg.gain.exponentialRampToValueAtTime(0.85, t + 0.008);
+  // small charges snap open; big fronts INFLATE over a few tens of ms
+  bg.gain.exponentialRampToValueAtTime(0.85, t + 0.006 + 0.012 * size);
   bg.gain.exponentialRampToValueAtTime(0.18, t + dur * 0.35);
   bg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   bf.connect(bg); bg.connect(head);
@@ -262,11 +279,13 @@ export function boom(size) {
   if (size > 0.4) {
     var cStart = t + 0.05;
     var cDur = dur * 0.9;
-    var ch = hp(1400);
+    // debris character scales too: big blasts throw big chunks, so the
+    // rattle sits lower and rolls slower; small ones spit bright fizz
+    var ch = hp(1700 / Math.pow(size, 0.7));
     var cg = A.ctx.createGain();
     cg.gain.setValueAtTime(0.0001, cStart);
     // jittery decaying steps => debris rattle, no extra nodes
-    var steps = 10;
+    var steps = 8 + Math.round(6 * size);
     for (var i = 0; i < steps; i++) {
       var ct = cStart + (i / steps) * cDur;
       var amp = 0.22 * size * (1 - i / steps) * (0.35 + Math.random() * 0.65);
@@ -274,8 +293,22 @@ export function boom(size) {
     }
     cg.gain.setTargetAtTime(0.0001, cStart + cDur, 0.05);
     ch.connect(cg); cg.connect(head);
-    var cs = noise(cStart, cDur + 0.12, 1.4);
+    var cs = noise(cStart, cDur + 0.12, 1.5 - 0.25 * size);
     cs.connect(ch); srcs.push(cs);
+  }
+
+  // --- slapback: big ones only — a single dull reflection ~150ms out,
+  // nukeBoom()'s thunder doublet pocket-sized. Nothing else this cheap says
+  // "that was LARGE": a near pop is one event, a distant blast arrives twice.
+  if (size >= 1.2) {
+    var et = t + 0.11 + 0.035 * size;
+    var ef = bp(380 / Math.pow(size, 0.3), 0.9);
+    var eg = A.ctx.createGain();
+    eg.gain.setValueAtTime(0.0001, et);
+    eg.gain.exponentialRampToValueAtTime(0.28 + 0.1 * size, et + 0.02);
+    eg.gain.exponentialRampToValueAtTime(0.0001, et + 0.3);
+    ef.connect(eg); eg.connect(head);
+    var es = noise(et, 0.34, 0.8); es.connect(ef); srcs.push(es);
   }
 
   A.boomVoices++;
@@ -345,11 +378,23 @@ export function pickup() {
     srcs.push(a, b);
   }
 
-  // sparkle
+  // sparkle, swept upward so it OPENS as the arp climbs instead of hissing
+  // at one height — same node count, the cutoff just moves
   var sh = hp(5200);
+  sh.frequency.setValueAtTime(fclamp(4200), t);
+  sh.frequency.exponentialRampToValueAtTime(fclamp(9500), t + 0.2);
   var sg = pluck(t, 0.16, 0.2, 0.002);
   sh.connect(sg); sg.connect(head);
   var ss = noise(t, 0.22, 1.6); ss.connect(sh); srcs.push(ss);
+
+  // star ping: one pure C8 bell landing WITH the arp's top note, gone in
+  // ~160ms — the "got it" glint. More reward, zero extra length.
+  var pt = t + 0.24;
+  var po = osc('sine', mtof(96), pt);
+  var pog = pluck(pt, 0.17, 0.15, 0.002);
+  po.connect(pog); pog.connect(head);
+  po.start(pt); po.stop(pt + 0.17);
+  srcs.push(po);
 
   voice(head, srcs);
   setTimeout(function () { try { send.disconnect(); } catch (e) { } }, 1200);
@@ -384,14 +429,26 @@ export function sectorClear() {
     srcs.push(a, b);
   }
 
-  // gentle shimmer: high filtered-noise swell under the last note
+  // gentle shimmer: high filtered-noise swell under the last note, drifting
+  // upward through the swell so the air itself seems to rise with the motif
   var sb = bp(6200, 1.4);
+  sb.frequency.setValueAtTime(fclamp(5200), t);
+  sb.frequency.exponentialRampToValueAtTime(fclamp(8500), t + 0.9);
   var sg = A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001, t);
   sg.gain.exponentialRampToValueAtTime(0.07, t + 0.55);
   sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
   sb.connect(sg); sg.connect(head);
   var ss = noise(t, 1.55, 1.5); ss.connect(sb); srcs.push(ss);
+
+  // triumph glint: a lone A7 bell struck WITH the landing note — the sparkle
+  // payoff, tucked entirely inside the existing 1.6s envelope
+  var gt = t + 2 * gap;
+  var go = osc('sine', mtof(93), gt);
+  var gg = pluck(gt, 0.12, 0.5, 0.003);
+  go.connect(gg); gg.connect(head);
+  go.start(gt); go.stop(gt + 0.52);
+  srcs.push(go);
 
   // soft high sine halo, slow attack (octave above the top A)
   var ho = osc('sine', mtof(81), t);
@@ -511,7 +568,23 @@ export function screech(p) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   f.connect(g); g.connect(head);
 
-  // vibrato LFO shared by both saws (osc -> gain -> frequency)
+  // second mouth cavity swept AGAINST the first — falling while the throat
+  // opens, recovering as it chokes. Two resonances moving in opposite
+  // directions is the cheapest vowel morph there is, and moving vowels are
+  // what make a sweep read as a MOUTH instead of a filter. Fed from the
+  // same saws: two nodes, zero new sources.
+  var f2 = bp(2800, 8);
+  f2.frequency.setValueAtTime(fclamp(3100), t);
+  f2.frequency.exponentialRampToValueAtTime(fclamp(900), t + dur * 0.42);
+  f2.frequency.exponentialRampToValueAtTime(fclamp(2400), t + dur);
+  var g2 = A.ctx.createGain();
+  g2.gain.setValueAtTime(0.0001, t);
+  g2.gain.exponentialRampToValueAtTime(0.2, t + 0.08);
+  g2.gain.setValueAtTime(0.2, t + dur * 0.6);
+  g2.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  f2.connect(g2); g2.connect(head);
+
+  // vibrato LFO shared by the saw stack (osc -> gain -> frequency)
   var lfo = osc('sine', 11, t);
   var lg = gainNode(0);
   lg.gain.setValueAtTime(4, t);
@@ -521,24 +594,28 @@ export function screech(p) {
   lfo.start(t); lfo.stop(t + dur + 0.05);
   srcs.push(lfo);
 
-  for (var k = 0; k < 2; k++) {
+  // three throats now: a center voice a few cents sharp between the wide
+  // pair, so the cluster BEATS instead of phasing clean — detuned unison,
+  // not chorus
+  var det = [-18, 4, 21];
+  for (var k = 0; k < 3; k++) {
     var o = osc('sawtooth', 480, t);
-    o.detune.value = k ? 21 : -18;
-    o.frequency.setValueAtTime(fclamp(430), t);
-    o.frequency.exponentialRampToValueAtTime(fclamp(1750), t + dur * 0.42);
+    o.detune.value = det[k];
+    o.frequency.setValueAtTime(fclamp(430 * (1 + (k - 1) * 0.004)), t);
+    o.frequency.exponentialRampToValueAtTime(fclamp(1750 * (1 + (k - 1) * 0.004)), t + dur * 0.42);
     o.frequency.exponentialRampToValueAtTime(fclamp(300), t + dur);
     lg.connect(o.frequency);
-    o.connect(f);
+    o.connect(f); o.connect(f2);
     o.start(t); o.stop(t + dur + 0.03);
     srcs.push(o);
   }
 
-  // rasp: thin noise through the same formant so it screams, not hisses
+  // rasp: thin noise through both formants so it screams, not hisses
   var rg = A.ctx.createGain();
   rg.gain.setValueAtTime(0.0001, t);
   rg.gain.exponentialRampToValueAtTime(0.12, t + dur * 0.4);
   rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  rg.connect(f);
+  rg.connect(f); rg.connect(f2);
   var rs = noise(t, dur + 0.02, 1.5); rs.connect(rg); srcs.push(rs);
 
   // give the cry room over the music
@@ -824,7 +901,7 @@ export function beamUp() {
    onset, low detuned mass sagging as the charge drains, arcing sizzle on
    jittered stepped gain, and an unstable whine up top to say "laser". */
 export function beamFire() {
-  if (!A.ready || A.muted || !budget(8)) return;
+  if (!A.ready || A.muted || !budget(9)) return;
   var t = now() + 0.002;
   var dur = 1.7;
   var head = gainNode(0.5);
@@ -841,12 +918,13 @@ export function beamFire() {
   // 2. the body: detuned saw pair around 100Hz through a dull lowpass, held
   // for the whole burn then sagging as the charge drains
   var bf = lp(620, 1.2);
+  var tg = gainNode(0.82);                         // heave rides this stage
   var bg = A.ctx.createGain();
   bg.gain.setValueAtTime(0.0001, t);
   bg.gain.exponentialRampToValueAtTime(0.5, t + 0.04);
   bg.gain.setValueAtTime(0.5, t + dur * 0.75);
   bg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  bf.connect(bg); bg.connect(head);
+  bf.connect(tg); tg.connect(bg); bg.connect(head);
   for (var k = 0; k < 2; k++) {
     var o = osc('sawtooth', 112, t);
     o.detune.value = k ? 9 : -8;
@@ -855,6 +933,15 @@ export function beamFire() {
     o.start(t); o.stop(t + dur + 0.04);
     srcs.push(o);
   }
+
+  // 2b. the heave: slow deep tremolo on the body. A sustained discharge is
+  // not steady — it LEANS on you in waves, and that ~3Hz motion is where the
+  // menace lives; a flat hold reads as a synth pad with a filter on it.
+  var hlfo = osc('sine', 3.4, t);
+  var hla = gainNode(0.15);
+  hlfo.connect(hla); hla.connect(tg.gain);
+  hlfo.start(t); hlfo.stop(t + dur + 0.03);
+  srcs.push(hlfo);
 
   // 3. arcing sizzle: high noise sputtering on randomized stepped gain (the
   // debris-tail trick run hot and fast = electricity, not rubble)
@@ -887,6 +974,20 @@ export function beamFire() {
   ao.connect(ag); ag.connect(head);
   ao.start(t); ao.stop(t + dur);
   srcs.push(ao, alfo);
+
+  // 5. deck pressure: a sub swell held for the whole burn — the platform
+  // cooking under the column. Mostly felt rather than heard; released with
+  // the body so the cutoff doesn't expose it.
+  var po = osc('sine', 44, t);
+  po.frequency.linearRampToValueAtTime(fclamp(35), t + dur);
+  var pg = A.ctx.createGain();
+  pg.gain.setValueAtTime(0.0001, t);
+  pg.gain.exponentialRampToValueAtTime(0.3, t + 0.12);
+  pg.gain.setValueAtTime(0.3, t + dur * 0.7);
+  pg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  po.connect(pg); pg.connect(head);
+  po.start(t); po.stop(t + dur + 0.03);
+  srcs.push(po);
 
   // a moment of authority, shallow enough to survive firing every cycle
   duckPump(t, 0.18, 0.7);
@@ -1046,6 +1147,23 @@ export function motherScream() {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   f.connect(g); g.connect(head);
 
+  // second cavity swept against the first: down while the throat opens,
+  // slammed back UP through the crack, collapsing with everything else.
+  // Counter-moving resonances = vowel morph = a mouth, not a sweep; the
+  // crack flipping it is the horror beat. Shares the saw stack — no new
+  // sources, one filter and one gain.
+  var f2 = bp(2400, 7);
+  f2.frequency.setValueAtTime(fclamp(2900), t);
+  f2.frequency.exponentialRampToValueAtTime(fclamp(1050), t + dur * 0.4);
+  f2.frequency.exponentialRampToValueAtTime(fclamp(3400), t + dur * 0.68);
+  f2.frequency.exponentialRampToValueAtTime(fclamp(620), t + dur);
+  var g2 = A.ctx.createGain();
+  g2.gain.setValueAtTime(0.0001, t);
+  g2.gain.exponentialRampToValueAtTime(0.2, t + 0.2);
+  g2.gain.setValueAtTime(0.2, t + dur * 0.72);
+  g2.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  f2.connect(g2); g2.connect(head);
+
   // snarl LFO shared by the saw stack, tearing wider through the hold
   var lfo = osc('sine', 12, t);
   var lg = gainNode(0);
@@ -1066,10 +1184,26 @@ export function motherScream() {
     o.frequency.exponentialRampToValueAtTime(fclamp(1460), t + dur * 0.68);
     o.frequency.exponentialRampToValueAtTime(fclamp(115), t + dur);
     lg.connect(o.frequency);
-    o.connect(f);
+    o.connect(f); o.connect(f2);
     o.start(t); o.stop(t + dur + 0.04);
     srcs.push(o);
   }
+
+  // 1b. the split: a lone high saw a quarter-tone off the stack, entering
+  // only for the upward crack and riding the second cavity — the voice
+  // BREAKING at the top of the cry, which is the sound of something pushed
+  // past what its throat was built for.
+  var xt = t + dur * 0.5;
+  var xo = osc('sawtooth', 1860, xt);
+  xo.frequency.exponentialRampToValueAtTime(fclamp(2840), t + dur * 0.68);
+  xo.frequency.exponentialRampToValueAtTime(fclamp(260), t + dur);
+  var xg = A.ctx.createGain();
+  xg.gain.setValueAtTime(0.0001, xt);
+  xg.gain.exponentialRampToValueAtTime(0.16, t + dur * 0.64);
+  xg.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.97);
+  xo.connect(xg); xg.connect(f2);
+  xo.start(xt); xo.stop(t + dur);
+  srcs.push(xo);
 
   // 2. chest register: sub-octave saw through a dark lowpass — the "deeper"
   var co = osc('sawtooth', 82, t);
@@ -1097,12 +1231,12 @@ export function motherScream() {
   bo.start(t); bo.stop(t + dur + 0.15);
   srcs.push(bo);
 
-  // 4. rasp through the same formant so she screams, not hisses
+  // 4. rasp through both formants so she screams, not hisses
   var rg = A.ctx.createGain();
   rg.gain.setValueAtTime(0.0001, t);
   rg.gain.exponentialRampToValueAtTime(0.14, t + dur * 0.45);
   rg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  rg.connect(f);
+  rg.connect(f); rg.connect(f2);
   var rs = noise(t, dur + 0.02, 1.4); rs.connect(rg); srcs.push(rs);
 
   // she owns the moment
@@ -1119,7 +1253,7 @@ export function bite() {
   if (!A.ready || A.muted) return;
   var t = now();
   if (t - lastBiteT < 0.3) return;                 // one chomp per pass
-  if (!budget(4)) return;
+  if (!budget(5)) return;
   lastBiteT = t;
   t += 0.002;
   var head = gainNode(0.5);
@@ -1145,6 +1279,19 @@ export function bite() {
   var sg = pluck(t + 0.02, 0.6, 0.26, 0.002);
   sf.connect(sg); sg.connect(head);
   var ss = noise(t + 0.02, 0.3, 0.7); ss.connect(sf); srcs.push(ss);
+
+  // 2b. the crunch: cartilage giving way inside the chomp — two ragged
+  // lowpassed pops at uneven spacing, noise run SLOW so they squelch
+  // instead of clicking. This is the wet in "wet crunch"; the splat alone
+  // reads as a puddle, not a mouthful of hull and meat.
+  var crf = lp(1400, 2.5);
+  crf.connect(head);
+  for (var i = 0; i < 2; i++) {
+    var ct = t + 0.06 + i * (0.055 + Math.random() * 0.025);
+    var cg = pluck(ct, 0.34 - i * 0.1, 0.05, 0.002);
+    cg.connect(crf);
+    var cn = noise(ct, 0.06, 0.5 + Math.random() * 0.25); cn.connect(cg); srcs.push(cn);
+  }
 
   // 3. the mouthful: gloop sine dropping away
   var go = osc('sine', 290, t + 0.03);
@@ -1659,6 +1806,14 @@ export function nukeBoom(big) {
   ch.connect(cg); cg.connect(head);
   var cs = noise(t0, big ? 0.16 : 0.07, 1.6); cs.connect(ch); srcs.push(cs);
 
+  /* --- 1a. the doublet: 30ms behind the crack, a second ragged onset tapped
+     off the same dark highpass. One clean pop is a firework; a front this
+     size RIPS, and two overlapping onsets is the cheapest tearing there is —
+     a gain and a noise source, the filter is shared. */
+  var c2g = pluck(t0 + 0.03, big ? 0.6 : 0.38, big ? 0.09 : 0.045, 0.0015);
+  ch.connect(c2g); c2g.connect(head);
+  var cs2 = noise(t0 + 0.03, big ? 0.13 : 0.06, 1.3); cs2.connect(ch); srcs.push(cs2);
+
   /* --- 1b. the second crack: the report coming back off the deck ~190ms
      later, duller and slower to start. Thunder does this and a firecracker
      does not, which is most of why one reads as a mile away and huge. */
@@ -1676,20 +1831,39 @@ export function nukeBoom(big) {
   }
 
   /* --- 2. sub shock: a pressure pulse walked down to the floor. The big one
-     starts higher and takes twice as long to get down, so the floor MOVES
+     sits deeper, BLOOMS over ~130ms instead of slapping (a wall of air
+     inflates into your chest rather than tapping it — the slow swell IS the
+     hydrogen feel), and takes twice as long to get down, so the floor MOVES
      under the whole cue instead of thumping once. It bottoms at 15Hz rather
      than 13 — below that it is inaudible cone excursion that only eats
      headroom off the compressor. */
-  var so = osc('sine', big ? 58 : 70, t);
+  var so = osc('sine', big ? 52 : 70, t);
   so.frequency.exponentialRampToValueAtTime(fclamp(big ? 15 : 18), t + (big ? 2.9 : 1.2));
   var sg = A.ctx.createGain();
   sg.gain.setValueAtTime(0.0001, t);
-  sg.gain.exponentialRampToValueAtTime(1.0, t + 0.035);
+  sg.gain.exponentialRampToValueAtTime(1.0, t + (big ? 0.13 : 0.035));
   sg.gain.exponentialRampToValueAtTime(0.4, t + (big ? 2.1 : 0.9));
   sg.gain.exponentialRampToValueAtTime(0.0001, t + (big ? 3.9 : 1.9));
   so.connect(sg); sg.connect(head);
   so.start(t); so.stop(t + (big ? 3.95 : 1.95));
   srcs.push(so);
+
+  /* --- 2b. chest partial (hydrogen only): a second pressure component up at
+     ~140Hz falling to meet the sub on the same slow bloom. Laptop speakers
+     reproduce nothing under 80Hz, so on those THIS layer carries the chest
+     hit; on a real sub it just thickens the wall. Quiet on purpose — the
+     shaper is already saturated and louder only buys fizz. */
+  if (big) {
+    var po2 = osc('sine', 140, t);
+    po2.frequency.exponentialRampToValueAtTime(fclamp(34), t + 2.3);
+    var pg = A.ctx.createGain();
+    pg.gain.setValueAtTime(0.0001, t);
+    pg.gain.exponentialRampToValueAtTime(0.3, t + 0.16);
+    pg.gain.exponentialRampToValueAtTime(0.0001, t + 3.1);
+    po2.connect(pg); pg.connect(head);
+    po2.start(t); po2.stop(t + 3.15);
+    srcs.push(po2);
+  }
 
   // --- 3. mid punch, so it hits the chest and not just the floor
   var mo = osc('triangle', big ? 132 : 180, t0);

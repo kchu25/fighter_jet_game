@@ -2283,3 +2283,271 @@ export const MODELS = (function () {
     }
   };
 })();
+
+/* ================================================= scenery landmark protos
+   Everything below serves world/scenery.js, not the ship renderer above.
+   These follow the SCENERY proto contract, not the ship one: each pXxx()
+   returns raw { d, rad, h } floats — base resting on y = 0, rad the cull
+   footprint, h the tallest point — and scenery.js wraps them in mesh() at
+   its init(). The little builder here is a deliberate twin of scenery's
+   MB() (same 9-float vertex layout, same half-extent box with yaw-then-
+   roll) kept local so models.js stays import-free and the module graph
+   stays a DAG. All of it bakes once; nothing in this section runs per
+   frame, and none of it touches the MODELS closure the ships live in. */
+var TAU = Math.PI * 2, sin = Math.sin, cos = Math.cos,
+    abs = Math.abs, sqrt = Math.sqrt;
+
+function sh(c, k) { return [c[0] * k, c[1] * k, c[2] * k]; }
+function ih(a, b, s) {
+  var n = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(s | 0, 1442695041)) | 0;
+  n = (n ^ (n >> 13)) | 0;
+  n = Math.imul(n, 1274126177);
+  return ((n ^ (n >> 16)) >>> 0) / 4294967296;
+}
+function MB() {
+  var d = [], m = {};
+  m.d = d;
+  m.tri = function (a, b, c, col) {
+    var ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+    var vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    var l = sqrt(nx * nx + ny * ny + nz * nz);
+    if (!(l > 1e-7)) return m;
+    nx /= l; ny /= l; nz /= l;
+    d.push(a[0], a[1], a[2], nx, ny, nz, col[0], col[1], col[2]);
+    d.push(b[0], b[1], b[2], nx, ny, nz, col[0], col[1], col[2]);
+    d.push(c[0], c[1], c[2], nx, ny, nz, col[0], col[1], col[2]);
+    return m;
+  };
+  m.quad = function (a, b, c, e, col) { m.tri(a, b, c, col); m.tri(a, c, e, col); return m; };
+  m.skin = function (A, B, col, k) {
+    var alt = sh(col, k === undefined ? 0.80 : k);
+    for (var i = 0; i < A.length; i++) {
+      var j = (i + 1) % A.length;
+      m.quad(A[i], A[j], B[j], B[i], (i & 1) ? alt : col);
+    }
+    return m;
+  };
+  m.cap = function (loop, col, lift) {
+    var cx = 0, cy = 0, cz = 0, n = loop.length, i;
+    for (i = 0; i < n; i++) { cx += loop[i][0]; cy += loop[i][1]; cz += loop[i][2]; }
+    var c = [cx / n, cy / n + (lift || 0), cz / n];
+    for (i = 0; i < n; i++) m.tri(loop[i], loop[(i + 1) % n], c, col);
+    return m;
+  };
+  m.box = function (cx, cy, cz, hx, hy, hz, ry, rz, col) {
+    var cy2 = cos(ry), sy2 = sin(ry), cz2 = cos(rz), sz2 = sin(rz);
+    var S = [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+             [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]];
+    var P = [], i;
+    for (i = 0; i < 8; i++) {
+      var x = S[i][0] * hx, y = S[i][1] * hy, z = S[i][2] * hz;
+      var x1 = x * cz2 - y * sz2, y1 = x * sz2 + y * cz2;
+      P.push([cx + x1 * cy2 + z * sy2, cy + y1, cz - x1 * sy2 + z * cy2]);
+    }
+    var lo = sh(col, 0.52), sd = sh(col, 0.78), tp = sh(col, 1.16);
+    m.quad(P[4], P[5], P[6], P[7], sd);
+    m.quad(P[1], P[0], P[3], P[2], sd);
+    m.quad(P[5], P[1], P[2], P[6], col);
+    m.quad(P[0], P[4], P[7], P[3], col);
+    m.quad(P[7], P[6], P[2], P[3], tp);
+    m.quad(P[0], P[1], P[5], P[4], lo);
+    return m;
+  };
+  return m;
+}
+function ringN(n, r, y, jit, sd, sq) {
+  var o = [], i, a, rr;
+  for (i = 0; i < n; i++) {
+    a = i / n * TAU;
+    rr = r * (1 + (jit || 0) * (ih(i, 3, sd) - 0.5) / 50);
+    o.push([cos(a) * rr, y + (sq ? (ih(i, 7, sd) - 0.5) * jit * 2 : 0), sin(a) * rr]);
+  }
+  return o;
+}
+
+/* palettes — exact copies of scenery.js's swatches so everything blends */
+var BONE = [0.55, 0.52, 0.44], BONE2 = [0.42, 0.39, 0.33];
+var CHITIN = [0.20, 0.17, 0.15], CHITIN2 = [0.13, 0.11, 0.10];
+var FLESH2 = [0.26, 0.22, 0.19], TOXIC = [0.15, 0.85, 0.30];
+var METAL = [0.30, 0.31, 0.36], METAL2 = [0.19, 0.20, 0.25];
+var STONE2 = [0.37, 0.33, 0.30], STONE3 = [0.57, 0.52, 0.46];
+var DARKS = [0.17, 0.15, 0.15], RUST = [0.44, 0.22, 0.13];
+var NEON = [0.10, 0.80, 0.98], NEONM = [0.82, 0.14, 0.60];
+
+/* -------------------------------------------- creep protos (mid thresholds)
+   These fill the dread gap between the early lone hands and the late
+   walkers: dead remains first (ribcage), then things that MOULTED here
+   (cocoons), then a piece of something far too big (jaw). All static —
+   the escalation is what they imply, not what they do. */
+
+export function pRibcage() {               /* half-buried ribcage, torn open */
+  var M = MB(), i, s2, side, sd = 167;
+  /* spine: a sagging vertebra row, most of it swallowed by the sand */
+  for (i = 0; i < 6; i++) {
+    var vz = -140 + i * 56, vy = 9 + sin(i * 0.6) * 6;
+    M.box(0, vy, vz, 14 - (i > 3 ? 3 : 0), 10, 20, 0,
+          (ih(i, 1, sd) - 0.5) * 0.22, i & 1 ? BONE : BONE2);
+    M.box(0, vy + 14, vz, 4.5, 8, 5, 0, (ih(i, 2, sd) - 0.5) * 0.5, BONE2);
+  }
+  /* rib pairs: box chains walked up an arc, mirrored across the spine —
+     the same tip-to-base walk as pHand's fingers. A few stop short so the
+     cage reads torn open by something, not built. */
+  for (i = 0; i < 5; i++) {
+    var rz0 = -128 + i * 58, Rr = 104 - abs(i - 2) * 13;
+    for (side = -1; side <= 1; side += 2) {
+      var segs = ih(i * 2 + side + 1, 3, sd) < 0.30 ? 2 : 3;
+      var crook = 0.40 + 0.22 * ih(i, 4 + side, sd);
+      var fx = side * (Rr + 8), fy = 2;
+      for (s2 = 0; s2 < segs; s2++) {
+        var hl = 30 - s2 * 6, hw = 7.5 - s2 * 1.7, roll = side * (0.30 + crook * s2);
+        fx += -sin(roll) * hl; fy += cos(roll) * hl;
+        M.box(fx, fy, rz0, hw, hl, hw, 0, roll, s2 & 1 ? BONE2 : BONE);
+        fx += -sin(roll) * hl; fy += cos(roll) * hl;
+      }
+    }
+  }
+  /* shed ribs lying loose where they were flung */
+  M.box(96, 6, 148, 26, 5, 6, 0.7, 0.22, BONE2);
+  M.box(-78, 5, -186, 22, 5, 6, -0.5, 0.14, BONE);
+  return { d: M.d, rad: 210, h: 150 };
+}
+
+export function pCocoons() {               /* husk cocoons — something moulted here */
+  var M = MB(), i, k, sd = 173;
+  for (i = 0; i < 6; i++) {
+    var a = ih(i, 1, sd) * TAU, r = i ? 40 + 66 * ih(i, 2, sd) : 0;
+    var cx = cos(a) * r, cz = sin(a) * r;
+    var s = 0.55 + 0.7 * ih(i, 3, sd) + (i ? 0 : 0.55);  /* centre pod is the elder */
+    var lean = (ih(i, 4, sd) - 0.5) * 0.55;
+    /* teardrop loft: fat hip, waist, curled tip — sheared over as a whole */
+    var ys = [0, 26, 52, 68], rs = [15, 19, 11, 3.5], rings = [], p;
+    for (k = 0; k < 4; k++) {
+      var ring = ringN(5, rs[k] * s, ys[k] * s, 9, sd + i * 11 + k, false);
+      for (p = 0; p < 5; p++) { ring[p][0] += cx + sin(lean) * ring[p][1]; ring[p][2] += cz; }
+      rings.push(ring);
+    }
+    for (k = 0; k < 3; k++) M.skin(rings[k], rings[k + 1], k & 1 ? CHITIN2 : CHITIN, 0.72);
+    M.cap(rings[3], i & 1 ? CHITIN2 : FLESH2, 4 * s);
+    /* one pod split down the seam, still faintly wet inside */
+    if (i === 1) M.box(cx + sin(lean) * 26 * s, 26 * s, cz, 1.4, 13 * s, 1.4, 0, lean, TOXIC);
+  }
+  return { d: M.d, rad: 125, h: 100 };
+}
+
+export function pJaw() {                   /* torn colossal jaw, teeth to the sky */
+  var M = MB(), i, sd = 181;
+  /* mandible: yawed segments marched round a crescent in the ground plane */
+  var n = 7;
+  for (i = 0; i < n; i++) {
+    var t = i / (n - 1), a = (t - 0.5) * 2.4;
+    var x = sin(a) * 122, z = cos(a) * 148 - 58, yaw = -a;
+    M.box(x, 15, z, 38, 17 + 6 * ih(i, 1, sd), 21, yaw,
+          (ih(i, 2, sd) - 0.5) * 0.22, i & 1 ? BONE : BONE2);
+    /* teeth ride the bone in pairs, leaning out along the local tangent;
+       one span is shattered to a stump so the row reads broken, not new */
+    var tx = cos(a) * 15, tz = -sin(a) * 15;
+    if (i === 3) { M.box(x, 36, z, 8, 6, 7, yaw, 0.2, BONE2); continue; }
+    M.box(x + tx, 44, z + tz, 6.5, 14, 5.5, yaw, sin(a) * 0.30, BONE);
+    M.box(x + tx, 66, z + tz, 3.2, 10, 3, yaw, sin(a) * 0.44, BONE2);
+    if (i & 1) M.box(x - tx, 40, z - tz, 5.5, 11, 5, yaw, sin(a) * 0.22, BONE2);
+  }
+  /* snapped teeth thrown clear, points down in the sand */
+  M.box(150, 9, 26, 5, 12, 5, 0.6, 2.6, BONE);
+  M.box(-128, 7, 118, 4.5, 10, 4.5, -0.8, 2.9, BONE2);
+  return { d: M.d, rad: 200, h: 115 };
+}
+
+/* --------------------------------------------- biome signature landmarks */
+
+export function pWreck() {                 /* colossal orbital-wreck arc — dune horizon */
+  var M = MB(), i, sd = 187;
+  /* a vast broken hull ring, both feet buried, the crown leaning downwind.
+     One loft of rectangular sections: 4 quads a segment, cheap enough to
+     scatter at horizon scale where only the silhouette survives the fog. */
+  var n = 9, loops = [];
+  for (i = 0; i <= n; i++) {
+    var t = i / n, a = 0.18 + t * (Math.PI - 0.36);
+    var y = sin(a) * 430 - 90;                       /* dips under at both ends */
+    var x = -cos(a) * 340 + y * 0.20;                /* baked lean */
+    var w = 34 - 14 * sin(a), th = 26 + 8 * (1 - sin(a));
+    loops.push([[x - w, y - th * 0.4, -th], [x + w, y - th * 0.4, -th],
+                [x + w, y + th * 0.4, th], [x - w, y + th * 0.4, th]]);
+  }
+  for (i = 0; i < n; i++) M.skin(loops[i], loops[i + 1], i & 1 ? METAL2 : RUST, 0.72);
+  /* snapped rib spars where the rest of the ring tore away */
+  M.box(66, 336, 30, 5, 30, 5, 0, 0.5 + 0.2 * ih(1, 1, sd), RUST);
+  M.box(-30, 320, -28, 5, 24, 5, 0, -0.6, METAL2);
+  M.box(150, 250, 34, 4, 20, 4, 0, 0.9, RUST);
+  /* a shed hull chunk half-dug-in ahead of the footing */
+  M.box(300, 16, 150, 40, 18, 26, 0.7, 0.28, METAL2);
+  /* one dying strip of running lights along the crown */
+  M.box(24, 348, 0, 60, 2.5, 2.5, 0, 0.18, NEON);
+  return { d: M.d, rad: 420, h: 380 };
+}
+
+export function pGate() {                  /* leaning tower pair — a broken city gate */
+  var M = MB(), i, side, sd = 191;
+  for (side = -1; side <= 1; side += 2) {
+    /* the two blocks lean INTO each other over a rubble-choked gap; the
+       lean is baked into the box roll so the tops nearly (never) meet */
+    var lean = side * (0.10 + 0.04 * ih(side + 2, 1, sd));
+    var H = side < 0 ? 195 : 165, w = 46, cx = side * 152;
+    M.box(cx, H, 0, w, H, w, 0, lean, side < 0 ? METAL2 : DARKS);
+    /* ragged parapet slabs past the roofline, pBlocks-style */
+    M.box(cx - sin(lean) * H * 2 + side * 18, H * 2 + 20, 8, w * 0.45,
+          22 + 26 * ih(side + 3, 2, sd), w * 0.5, 0, lean, DARKS);
+    M.box(cx - sin(lean) * H * 2 - side * 14, H * 2 + 8, -12, w * 0.4,
+          12 + 20 * ih(side + 4, 3, sd), w * 0.42, 0, lean * 1.2, METAL2);
+    /* snapped skybridge stubs jutting from the inner faces, failing to meet */
+    M.box(cx - sin(lean) * H * 1.2 - side * (w + 26), H * 1.2, 6, 34, 8, 14,
+          0, lean - side * 0.16, STONE2);
+    /* one lit window column each — spans the block so both faces glow */
+    M.box(cx - sin(lean) * H, H, 0, w * 0.15, H * 0.62, w + 2.5, 0, lean,
+          side < 0 ? NEON : NEONM);
+  }
+  /* the fallen span, shattered across the gap between the feet */
+  for (i = 0; i < 4; i++)
+    M.box(-66 + 44 * i, 8 + 8 * ih(i, 5, sd), 30 - 60 * ih(i, 6, sd),
+          17 + 10 * ih(i, 7, sd), 8, 13, ih(i, 8, sd) * 3, 0.22, i & 1 ? STONE2 : DARKS);
+  return { d: M.d, rad: 235, h: 460 };
+}
+
+export function pLevi() {                  /* beached leviathan skeleton — dry seabed */
+  var M = MB(), i, s2, side, sd = 197;
+  /* spine: vertebrae marching down z, sagging amidships, curling at the tail */
+  var n = 9;
+  for (i = 0; i < n; i++) {
+    var t = i / (n - 1), vz = -240 + t * 560;
+    var vy = 20 + sin(t * 2.7) * 34 * (1 - t * 0.4);
+    var vs = 17 - t * 9;
+    M.box(0, vy, vz, vs, vs * 0.8, 26 - t * 8, 0, (ih(i, 1, sd) - 0.5) * 0.2 + t * t * 0.5,
+          i & 1 ? BONE : BONE2);
+  }
+  /* rib arcs over the chest third — the same chain walk as pRibcage but
+     taller and wider-set, so the player reads the family resemblance */
+  for (i = 0; i < 4; i++) {
+    var rz0 = -160 + i * 62, Rr = 128 - i * 12;
+    for (side = -1; side <= 1; side += 2) {
+      var segs = ih(i * 2 + side + 1, 2, sd) < 0.25 ? 2 : 3;
+      var fx = side * Rr, fy = 4;
+      for (s2 = 0; s2 < segs; s2++) {
+        var hl = 36 - s2 * 7, roll = side * (0.26 + 0.46 * s2);
+        fx += -sin(roll) * hl; fy += cos(roll) * hl;
+        M.box(fx, fy, rz0, 8 - s2 * 1.8, hl, 8 - s2 * 1.8, 0, roll, s2 & 1 ? BONE2 : BONE);
+        fx += -sin(roll) * hl; fy += cos(roll) * hl;
+      }
+    }
+  }
+  /* skull: brow slab, tapering snout, dark orbit sockets, jaw agape in the mud */
+  M.box(0, 46, -290, 42, 30, 52, 0, -0.06, BONE);
+  M.box(0, 34, -368, 26, 16, 40, 0, 0.10, BONE2);
+  M.box(34, 52, -286, 8, 10, 12, 0, 0, DARKS);
+  M.box(-34, 52, -286, 8, 10, 12, 0, 0, DARKS);
+  M.box(0, 10, -352, 20, 7, 56, 0, 0.16, BONE2);     /* lower jaw, half sunk */
+  M.box(14, 22, -384, 3, 8, 3, 0, 2.9, BONE);        /* one tooth still standing */
+  /* shed ribs, flung wide of the tideline that left them */
+  M.box(170, 6, -60, 30, 5, 7, 0.8, 0.2, BONE2);
+  M.box(-150, 6, 120, 26, 5, 6, -0.6, 0.16, BONE);
+  return { d: M.d, rad: 420, h: 205 };
+}

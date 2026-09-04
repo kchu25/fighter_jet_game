@@ -84,9 +84,29 @@ export function init() {
      doesn't duck itself. Gives the mix that "modern digital" pump feel. */
   A.duckBus = gainNode(1); A.duckBus.connect(A.musicFilter);
   A.drumBus = gainNode(0.9); A.drumBus.connect(A.musicFilter);
-  A.bassBus = gainNode(0.0); A.bassBus.connect(A.duckBus);
+  A.bassBus = gainNode(0.0);
+  /* bass weight stage: a gentle tanh shaper between the bass bus and the
+     duck bus. The 0.7 trim cancels the curve's small-signal slope (~1.44)
+     so quiet passages pass through essentially untouched, but as
+     applyIntensity() pushes the bus gain up toward full tilt the peaks
+     start leaning on the curve and pick up low-order harmonics — the bass
+     reads heavier and growlier without its peak level actually rising, so
+     master headroom is unchanged. Built once here, never per-note. */
+  A.bassDrive = A.ctx.createWaveShaper();
+  A.bassDrive.curve = makeSoftCurve(1.2);
+  A.bassDrive.oversample = '2x';
+  A.bassTrim = gainNode(0.7);
+  A.bassBus.connect(A.bassDrive); A.bassDrive.connect(A.bassTrim); A.bassTrim.connect(A.duckBus);
   A.arpBus = gainNode(0.0); A.arpBus.connect(A.duckBus);
   A.padBus = gainNode(0.0); A.padBus.connect(A.duckBus);
+  /* high-intensity-only layers, crossfaded in/out by applyIntensity() over
+     a bar-ish window so escalation swells instead of stepping: rideBus
+     carries the driving ride/shaker ticks (into drumBus so it escapes the
+     kick's sidechain like the rest of the kit), leadBus the soaring
+     counter-line (into duckBus so it pumps with the melodic bed). Both sit
+     at 0 until intensity earns them — lulls stay airy, boss fights soar. */
+  A.rideBus = gainNode(0.0); A.rideBus.connect(A.drumBus);
+  A.leadBus = gainNode(0.0); A.leadBus.connect(A.duckBus);
 
   buildEngine();
 
@@ -97,6 +117,7 @@ export function init() {
   applyIntensity(now(), true);
   A.nextNoteTime = now() + 0.09;
   A.stepCount = 0;
+  A.bossBar = false;   // bar-latched boss-pattern flag (see scheduleStep)
   if (A.timerId === null) A.timerId = setInterval(scheduler, LOOKAHEAD_MS);
 
   try { if (A.ctx.state === 'suspended') A.ctx.resume(); } catch (e) { }

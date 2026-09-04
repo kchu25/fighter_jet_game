@@ -198,6 +198,11 @@ export function movement2(u) {
      quarters of it outside the frame. */
   q = (u - 5.02) / 0.78;
   if (q > 0 && q < 1) {
+    /* the only pass that gets a sound: the earlier glimpses stay dead
+       silent (silence is the point of them), but a mass this close
+       displaces air, and one whoosh with nothing visible to pin it on
+       is worth more dread than three */
+    once('s1pass', 5.10, function () { sfx('jetPass', 1); });
     const a = Math.min(1, Math.sin(q * Math.PI) * 2.1);
     const bx = -300 + q * 760, by = 828 - q * 104;
     dartDark(bx, by, 4.7, 1.44 - q * 0.12, a);
@@ -306,6 +311,63 @@ export function colossus(u) {
     I.c.lineWidth = 30 - k * 9; I.c.stroke();
     I.c.strokeStyle = 'rgba(0,0,4,0.5)'; I.c.lineWidth = 2; I.c.stroke();
   }
+  /* plating under the rim light.  A gradient alone reads as a
+     rendering, not a surface; what sells a hull at this scale is the
+     smallest detail the light can still find.  One LCG, reseeded to
+     the same constant every frame, places every plate in HULL space
+     (world x = px + d), so the detail is welded to the ship and pours
+     past with it.  Brightness falls off with distance behind the prow
+     — the same falloff the edge light itself obeys — and each plate is
+     a lit lip, a face, and a shadow seam: three fillRects, no paths. */
+  let hs = 4099;
+  for (let k = 0; k < 30; k++) {
+    hs = (hs * 1664525 + 1013904223) & 0x7fffffff; const f1 = hs / 0x7fffffff;
+    hs = (hs * 1664525 + 1013904223) & 0x7fffffff; const f2 = hs / 0x7fffffff;
+    hs = (hs * 1664525 + 1013904223) & 0x7fffffff; const f3 = hs / 0x7fffffff;
+    const d = 90 + f1 * 3300;
+    const wx = px + d;
+    if (wx < -260 || wx > VW + 160) continue;
+    const up = 34 + f2 * 430;
+    const wy = bellyY(d) - up;
+    if (wy < -540 || wy > VH + 30) continue;
+    const pw = 70 + f3 * 190, ph = 12 + f2 * 40;
+    const lit = 0.22 + 0.78 / (1 + d / 950);
+    I.c.fillStyle = 'rgba(150,182,240,' + (0.085 * lit).toFixed(3) + ')';
+    I.c.fillRect(wx, wy, pw, 1.6);
+    I.c.fillStyle = 'rgba(122,156,215,' + (0.030 * lit).toFixed(3) + ')';
+    I.c.fillRect(wx, wy + 1.6, pw, ph);
+    I.c.fillStyle = 'rgba(0,0,4,0.30)';
+    I.c.fillRect(wx, wy + ph + 1.6, pw, 1.4);
+    /* every third plate carries a vent slit, dull amber, barely alive */
+    if (k % 3 === 0) {
+      I.c.fillStyle = 'rgba(255,150,52,' + (0.10 + 0.08 * Math.sin(I.t * 1.3 + k)).toFixed(3) + ')';
+      I.c.fillRect(wx + pw * 0.3, wy + ph * 0.5, 14, 2);
+    }
+  }
+  /* lit decks, far up the flank: rows of windows small enough that the
+     mind does the arithmetic on its own and comes back frightened.
+     Some stay dark — a thing this size does not need all its lights
+     on, and the gaps are what make the rest read as occupancy rather
+     than ornament. */
+  hs = 9241;
+  for (let cl = 0; cl < 5; cl++) {
+    hs = (hs * 1664525 + 1013904223) & 0x7fffffff; const c1 = hs / 0x7fffffff;
+    hs = (hs * 1664525 + 1013904223) & 0x7fffffff; const c2 = hs / 0x7fffffff;
+    const d0 = 260 + c1 * 3000;
+    const wx0 = px + d0;
+    const wy0 = bellyY(d0) - 300 - c2 * 190;
+    /* the stream must advance a fixed 11 steps per cluster whether or
+       not this cluster is on screen, or the dead-window pattern would
+       re-roll every frame as clusters scroll across the cull bounds */
+    const vis = wx0 >= -300 && wx0 <= VW + 100 && wy0 >= -520;
+    if (vis) I.c.fillStyle = 'rgba(255,214,128,' +
+      (0.10 + 0.16 * (0.5 + 0.5 * Math.sin(I.t * 0.7 + cl * 2.2))).toFixed(3) + ')';
+    for (let w = 0; w < 9; w++) {
+      hs = (hs * 1664525 + 1013904223) & 0x7fffffff;
+      if (!vis || hs / 0x7fffffff < 0.28) continue;   /* dead windows */
+      I.c.fillRect(wx0 + w * 7, wy0, 1.6, 2.4);
+    }
+  }
   I.c.restore();
 
   /* ---- the light on it: one bloomed hairline down the leading edge ---- */
@@ -346,8 +408,47 @@ export function colossus(u) {
     I.c.fillStyle = rgba(col, 1);
     I.c.fillRect(lx - 2.5, ly - 2.5, 5, 5);
   }
+  /* a second row, deeper up the belly, running a chase toward the
+     prow.  Not decoration: lights that MOVE along the hull imply
+     power and intent, and they hand the eye a second speed to measure
+     the hull's own drag against — which is what makes the drag read
+     as slow, and the slowness read as mass. */
+  for (let k = 0; k < 10; k++) {
+    const lx = px + 480 + k * 470;
+    if (lx < -160 || lx > VW + 160) continue;
+    const ly = bellyY(lx - px) - 242;
+    if (ly < -180) continue;
+    const ch = Math.max(0, Math.sin(I.t * 3.0 + k * 1.15));
+    const bl = ch * ch * ch * 0.85;
+    if (bl < 0.03) continue;
+    I.c.globalAlpha = bl * 0.55;
+    I.c.drawImage(glow(C.violet), lx - 44, ly - 44, 88, 88);
+    I.c.globalAlpha = bl;
+    I.c.fillStyle = rgba(C.ice, 1);
+    I.c.fillRect(lx - 1.5, ly - 1.5, 3, 3);
+  }
   I.c.globalAlpha = 1;
   I.c.restore();
+
+  /* ---- the ones that got away: a handful of craft ahead of the
+     prow, running.  Same silhouette as the ambushers but tiny and
+     fleeing, and that is the real scale cue — not the hull's size,
+     everyone else's reaction to it.  Closed-form paths off q, no
+     state: they outrun the prow by a couple hundred px/s, diving. ---- */
+  for (let k = 0; k < 3; k++) {
+    const p = (q - 0.5 - k * 0.72) / 2.7;
+    if (p <= 0 || p >= 1) continue;
+    const a = Math.min(1, Math.sin(p * Math.PI) * 2.4) * 0.9;
+    const fx = px - 90 - p * (620 + k * 150);
+    const fy = 120 + k * 118 + p * 200 + Math.sin(p * 12 + k * 2.6) * 12;
+    if (fx < -60 || fy > VH + 40) continue;
+    const fs = 0.15 + k * 0.035;
+    dartDark(fx, fy, fs, 1.94 + p * 0.2, a);
+    /* one desperate glint each, mid-flight */
+    const gq = 0.42 + k * 0.13;
+    if (p > gq - 0.06 && p < gq + 0.06)
+      dartEdge(fx, fy, fs, 1.94 + p * 0.2, (1 - Math.abs(p - gq) / 0.06) * 0.6);
+  }
 
   /* ---- things that came off it, for scale ---- */
   for (let k = 0; k < 4; k++) {
@@ -419,6 +520,10 @@ export function scene1(u, dt) {
   rkX = 800 + ramp(2.9, BOOM, u) * 96;
   rkY = PAD_Y - Math.min(alt, 300);
   rkRot = ramp(2.5, BOOM, u) * 0.26;
+  /* throttle — a pure function of u, hoisted above the ground block
+     because the pad has to be lit by it long before the ignition
+     bookkeeping below runs */
+  const thr = u < IGN ? 0 : sat((u - IGN) / 0.75);
 
   /* ---- hard cut to whichever angle covers this moment: everything
      from the sky to the lances below is drawn through this one lens.
@@ -442,8 +547,42 @@ export function scene1(u, dt) {
   g.addColorStop(1, space > 0.8 ? '#03040e' : ('rgb(' + Math.round(30 + 46 * (1 - space)) + ',' +
     Math.round(17 + 26 * (1 - space)) + ',' + Math.round(20 + 15 * (1 - space)) + ')'));
   I.c.fillStyle = g; I.c.fillRect(0, 0, VW, VH);
+  /* Three depths of stars instead of one sheet.  Each layer climbs at
+     its own rate as the camera rises and slides a few pixels against
+     the rocket's lateral drift, so the sky finally has parallax in
+     both axes — the one cue a static backdrop can never fake.  The
+     lateral shifts stay under ~15px: enough for the eye to read depth,
+     not enough to expose the unseeded band a translated field leaves
+     at the frame edge. */
+  const drift = rkX - 800;
+  I.c.save(); I.c.translate(-drift * 0.03, 0);
+  starField(5521, 110, camAlt * 0.42, 0.14 + 0.34 * space);
+  I.c.restore();
+  I.c.save(); I.c.translate(-drift * 0.08, 0);
   starField(9173, 300, camAlt, 0.25 + 0.65 * space);
+  I.c.restore();
+  I.c.save(); I.c.translate(-drift * 0.15, 0);
+  starField(3391, 56, camAlt * 2.1, 0.08 + 0.5 * space);
+  I.c.restore();
   planetLimb(ramp(0.30, 0.72, space));
+  /* the air itself: two warm scatter bands that hang low over the pad
+     and slide down out of frame as the stack climbs, thinning with the
+     square of altitude until the sky is hard vacuum-black.  Cached
+     glow sprites only — no gradients minted per frame. */
+  const hazeA = (1 - space) * (1 - space);
+  if (hazeA > 0.02) {
+    I.c.save(); I.c.globalCompositeOperation = 'lighter';
+    const span = VH * 1.5;
+    for (let k = 0; k < 2; k++) {
+      const hy = (((k ? 210 : 470) + camAlt * (0.30 + k * 0.16)) % span + span) % span - 200;
+      const hx = 800 + Math.sin(I.t * 0.11 + k * 2.4) * 90 - drift * (0.05 + k * 0.04);
+      I.c.globalAlpha = hazeA * (k ? 0.030 : 0.045);
+      I.c.drawImage(glow(C.dust), hx - 980, hy - 240, 1960, 480);
+      I.c.globalAlpha = hazeA * 0.035;
+      I.c.drawImage(glow(C.smoke), hx - 700, hy - 150, 1400, 340);
+    }
+    I.c.restore();
+  }
 
   /* --- ground complex (only while it is on screen) --- */
   const gy = GND_Y + camAlt;
@@ -469,6 +608,69 @@ export function scene1(u, dt) {
     I.c.globalCompositeOperation = 'source-over';
     /* pad hardware — scorched concrete and blown sand, not tarmac */
     I.c.fillStyle = '#171009'; I.c.fillRect(rkX - 74, gy - 26, 148, 26);
+    /* rig lighting: before the engine speaks, the only light on the
+       stack is man-made — hard little floods off the towers and a
+       patient red beacon on the gantry head.  They fade as the
+       throttle comes up: the instant the engine lights, cold rig
+       light stops mattering, and that handover is itself the beat. */
+    I.c.save(); I.c.globalCompositeOperation = 'lighter';
+    const floodA = 0.55 - 0.38 * thr;
+    if (floodA > 0.02) {
+      I.c.globalAlpha = floodA * 0.5;
+      I.c.drawImage(glow(C.ice), rkX - 80, gy - 240, 160, 160);
+      I.c.globalAlpha = floodA * 0.35;
+      I.c.drawImage(glow(C.ice), rkX - 60, gy - 120, 120, 110);
+      I.c.globalAlpha = 1;
+      I.c.fillStyle = rgba(C.ice, 0.05 * floodA);
+      I.c.beginPath(); I.c.moveTo(rkX + 52, gy - 242);
+      I.c.lineTo(rkX - 22, gy - 186); I.c.lineTo(rkX + 6, gy - 98); I.c.closePath(); I.c.fill();
+      I.c.beginPath(); I.c.moveTo(rkX - 84, gy - 184);
+      I.c.lineTo(rkX - 4, gy - 142); I.c.lineTo(rkX - 26, gy - 54); I.c.closePath(); I.c.fill();
+    }
+    const bk = Math.pow(pulse(I.t, 0.7), 8);
+    I.c.globalAlpha = bk * 0.8;
+    I.c.drawImage(glow(C.red), rkX + 39, gy - 272, 40, 40);
+    I.c.globalAlpha = 1;
+    I.c.fillStyle = rgba(C.red, bk);
+    I.c.fillRect(rkX + 57, gy - 254, 3, 3);
+    /* ignition lights the world from below: a pool racing out across
+       the concrete, a hot core at the nozzle plane, and the gantry
+       lattice re-struck in fire on its undersides — the same rects the
+       steel was drawn with, refilled amber, which is the cheap relight
+       that suddenly puts the whole rig in the same world as the flame.
+       All of it dies with proximity as the stack climbs off its own
+       light. */
+    if (thr > 0 && !dead) {
+      const prox = sat(1 - (PAD_Y - rkY) / 300);
+      if (prox > 0.02) {
+        const fl = 0.82 + 0.18 * Math.sin(u * 47) * Math.sin(u * 23 + 1.7);
+        const R = (130 + 560 * sat((u - IGN) / 1.1)) * fl;
+        I.c.globalAlpha = 0.34 * thr * prox;
+        I.c.drawImage(glow(C.amber), rkX - R, gy - R * 0.30, R * 2, R * 0.60);
+        I.c.globalAlpha = 0.5 * thr * prox * fl;
+        I.c.drawImage(glow(C.orange), rkX - 130, gy - 150, 260, 190);
+        I.c.drawImage(glow(C.white), rkX - 58, gy - 68, 116, 92);
+        /* the flash-front: one expanding ring, flattened onto the pad
+           plane, gone within a second of first light */
+        const fq = (u - IGN) / 0.85;
+        if (fq < 1) {
+          I.c.globalAlpha = (1 - fq) * (1 - fq) * 0.55;
+          I.c.strokeStyle = rgba(C.amber, 1); I.c.lineWidth = 3 + 8 * (1 - fq);
+          I.c.save(); I.c.translate(rkX, gy); I.c.scale(1, 0.2);
+          I.c.beginPath(); I.c.arc(0, 0, 70 + 900 * fq, 0, 6.2832); I.c.stroke();
+          I.c.restore();
+        }
+        const ga = thr * prox * fl;
+        I.c.fillStyle = rgba(C.amber, 1);
+        I.c.globalAlpha = ga * 0.5;
+        for (let i = 0; i < 6; i++) I.c.fillRect(rkX + 30, gy - 231 + i * 40, 46, 2);
+        I.c.globalAlpha = ga * 0.6;
+        I.c.fillRect(rkX + 46, gy - 250, 2.5, 250);
+        I.c.fillRect(rkX - 81, gy - 190, 2.5, 190);
+      }
+    }
+    I.c.globalAlpha = 1;
+    I.c.restore();
   }
 
   /* --- ignition --- */
@@ -476,7 +678,6 @@ export function scene1(u, dt) {
     I.shake = 9; I.rumbleH = sfx('rumble', 0.35);
     sfx('setIntensity', 0.28);
   });
-  const thr = u < IGN ? 0 : sat((u - IGN) / 0.75);
   if (I.rumbleH && I.rumbleH.set) I.rumbleH.set(dead ? 0 : 0.35 + 0.65 * thr);
   if (u > IGN && !dead) {
     I.shake = Math.max(I.shake, u < LIFT ? 5 + 6 * Math.sin(u * 42) : 3.2);
@@ -507,6 +708,21 @@ export function scene1(u, dt) {
   /* smoke sits behind the vehicle; the additive fire goes in front later */
   stepParts(dt, dcam);
   drawParts(false);
+  /* the billow is lit from below by the engine boiling it off: an
+     additive wash laid OVER the source-over smoke pass, so the light
+     lands on the smoke instead of behind it — under-lighting for the
+     price of two cached sprites.  Gone by the time the pad is. */
+  if (thr > 0 && !dead && u < LIFT + 2.2 && gy < VH + 200) {
+    const bl = thr * sat(1 - (PAD_Y - rkY) / 320) * (0.8 + 0.2 * Math.sin(u * 31));
+    if (bl > 0.02) {
+      I.c.save(); I.c.globalCompositeOperation = 'lighter';
+      I.c.globalAlpha = bl * 0.28;
+      I.c.drawImage(glow(C.orange), rkX - 340, gy - 190, 680, 300);
+      I.c.globalAlpha = bl * 0.20;
+      I.c.drawImage(glow(C.amber), rkX - 560, gy - 130, 1120, 300);
+      I.c.restore();
+    }
+  }
 
   /* --- the rocket: a full vector ship close in, or, once it is far
      enough out, nothing but a point of light climbing ---
@@ -529,6 +745,25 @@ export function scene1(u, dt) {
       I.c.beginPath(); I.c.arc(rkX, rkY, 1.7, 0, 6.2832); I.c.fill();
       I.c.restore();
     } else {
+      /* atmospheric scatter around the nozzle plane: the rocket art
+         draws its own plume, but air this thick blooms around a torch
+         this bright, and the bloom is exactly what thins away as the
+         stack climbs — by the ambush the exhaust is a hard airless
+         pencil and the sky has stopped answering it.  Drawn before
+         the vehicle so the body occludes its own light. */
+      if (thr > 0.01) {
+        const scat = (1 - 0.8 * space) * thr;
+        if (scat > 0.02) {
+          const nx = rkX - 86 * Math.sin(rkRot), ny = rkY + 86 * Math.cos(rkRot);
+          const bs = (150 + 90 * thr) * (0.9 + 0.1 * Math.sin(u * 41));
+          I.c.save(); I.c.globalCompositeOperation = 'lighter';
+          I.c.globalAlpha = scat * 0.30;
+          I.c.drawImage(glow(C.amber), nx - bs, ny - bs, bs * 2, bs * 2);
+          I.c.globalAlpha = scat * 0.38;
+          I.c.drawImage(glow(C.orange), nx - bs * 0.55, ny - bs * 0.55, bs * 1.1, bs * 1.1);
+          I.c.restore();
+        }
+      }
       A.rocket(I.c, rkX, rkY, 0.95, rkRot, thr, I.t);
     }
   }
@@ -685,11 +920,44 @@ export function scene1(u, dt) {
     const passes = [[28, C.violet, 0.20], [11, C.mag, 0.5], [3.2, C.white, 1]];
     for (let i = 0; i < STRIKE.length; i++) {
       const jitter = Math.sin(I.t * 88 + i * 2.1) * 2.6;
+      /* afterimages: the beam as it stood a few centiseconds ago,
+         still burnt into the air (and the lens) — same endpoints,
+         stale jitter, wider and dimmer.  This is what turns the 88Hz
+         wander from a shimmer into a violent slew with a trail. */
+      for (let gi = 1; gi <= 2; gi++) {
+        const gj = Math.sin((I.t - gi * 0.038) * 88 + i * 2.1) * 2.6 * (1 + gi * 1.6);
+        I.c.strokeStyle = rgba(C.violet, life * (gi === 1 ? 0.16 : 0.08));
+        I.c.lineWidth = 7 - gi * 2;
+        I.c.beginPath(); I.c.moveTo(STRIKE[i][0], STRIKE[i][1]);
+        I.c.lineTo(rkX + gj, rkY - 20 + gj); I.c.stroke();
+      }
       for (let p = 0; p < 3; p++) {
         I.c.strokeStyle = rgba(passes[p][1], passes[p][2] * life);
         I.c.lineWidth = passes[p][0] * (0.85 + 0.15 * Math.sin(I.t * 60 + p));
         I.c.beginPath(); I.c.moveTo(STRIKE[i][0], STRIKE[i][1]);
         I.c.lineTo(rkX + jitter, rkY - 20 + jitter); I.c.stroke();
+      }
+      /* heat distortion: one thread of air wavering alongside the
+         column, displacement growing toward the impact end where it is
+         hottest; and packets of charge running DOWN the lance, so the
+         eye reads direction — this is being done TO the rocket, from
+         out there. */
+      const dxL = rkX + jitter - STRIKE[i][0], dyL = rkY - 20 + jitter - STRIKE[i][1];
+      I.c.strokeStyle = rgba(C.ice, life * 0.22); I.c.lineWidth = 1.4;
+      I.c.beginPath();
+      const nL = Math.hypot(dxL, dyL) || 1, uxL = dxL / nL, uyL = dyL / nL;
+      for (let sgi = 0; sgi <= 8; sgi++) {
+        const f = sgi / 8;
+        const off = Math.sin(f * 17 + I.t * 51 + i * 3.1) * (2 + 12 * f * f);
+        const sx = STRIKE[i][0] + dxL * f - uyL * off, sy = STRIKE[i][1] + dyL * f + uxL * off;
+        if (sgi) I.c.lineTo(sx, sy); else I.c.moveTo(sx, sy);
+      }
+      I.c.stroke();
+      for (let mi = 0; mi < 3; mi++) {
+        const mf = (I.t * (3.1 + i * 0.4) + mi / 3 + i * 0.41) % 1;
+        I.c.globalAlpha = life * Math.sin(mf * Math.PI) * 0.75;
+        I.c.drawImage(glow(C.mag), STRIKE[i][0] + dxL * mf - 15,
+          STRIKE[i][1] + dyL * mf - 15, 30, 30);
       }
       I.c.globalAlpha = life * 0.7;
       I.c.drawImage(glow(C.mag), STRIKE[i][0] - 66, STRIKE[i][1] - 66, 132, 132);
@@ -720,6 +988,20 @@ export function scene1(u, dt) {
     if (I.rumbleH && I.rumbleH.set) I.rumbleH.set(0.10 + 0.85 * adv);
     I.shake = Math.max(I.shake, 1.2 + 3.4 * adv * (0.6 + 0.4 * Math.sin(I.t * 7.3)));
   }
+  /* the dark arrives before the ship does: from the rumble's onset the
+     right edge of the sky starts going out, so by the time the prow
+     shows there is already a wrongness the eye has been refusing to
+     name.  Handed off to colossus()'s own star-killer glow once the
+     hull is in.  And a riser cued so its impact lands exactly on
+     HUGE, the way scene 4 lands one on its own reveal. */
+  once('s1riser', HUGE - 1.35, function () { sfx('riser', 1.35); });
+  const pre = ramp(HUGE - 0.85, HUGE + 0.30, u) * (1 - ramp(HUGE + 0.9, HUGE + 1.4, u));
+  if (pre > 0.01) {
+    I.c.save();
+    I.c.globalAlpha = pre * 0.55;
+    I.c.drawImage(glow([0, 0, 3]), VW - 320, -400, 1500, 1500);
+    I.c.restore();
+  }
   colossus(u);
 
   /* slate */
@@ -727,12 +1009,52 @@ export function scene1(u, dt) {
     const a = ramp(0.3, 0.8, u) * (1 - ramp(2.3, 3.0, u));
     txt('CAPE ORION  //  04:17 LOCAL', 96, 108, 22, rgba(C.green, a * 0.9), 5);
     txt('MERIDIAN  HEAVY  —  ORBITAL DEFENCE PAYLOAD', 96, 144, 17, rgba(C.green, a * 0.6), 4);
+    /* a live count, ticking through zero on the lift itself — a launch
+       slate without a clock is a postcard */
+    const tm = u - LIFT;
+    txt('T ' + (tm < 0 ? '-' : '+') + ' ' + Math.abs(tm).toFixed(1) + ' S',
+      96, 180, 17, rgba(tm < 0 ? C.amber : C.green, a * 0.75), 4);
   }
   /* the report of the loss, alone in the frame — and swallowed by what
-     arrives next */
+     arrives next.  The words arrive over a link that is itself dying:
+     roughly a third of 18Hz ticks carry a glitch — channel-split
+     ghosts of the text, a couple of full-width frame tears, a burst of
+     static confined to the readout band.  One LCG reseeded per tick,
+     so each artefact holds for three-odd frames (long enough to read
+     as damage, not shimmer), and the whole thing costs fillRects and
+     two extra text passes, never a gradient. */
   if (u > BOOM + 0.55 && u < HUGE + 0.9) {
     const a = ramp(BOOM + 0.55, BOOM + 1.0, u) * (1 - ramp(HUGE + 0.15, HUGE + 0.9, u));
-    txt('TELEMETRY LOST', VW / 2, 806, 30, rgba(C.red, a * (0.5 + 0.5 * pulse(I.t, 2.4))), 12, 'center');
+    once('s1radio', BOOM + 0.60, function () { sfx('radio', 0.5); });
+    let gh = ((I.t * 18) | 0) * 2654435761 & 0x7fffffff;
+    const g1 = gh / 0x7fffffff;
+    const gl = g1 < 0.36 ? 1 - g1 / 0.36 : 0;
+    const jx = gl > 0 ? (g1 * 61 % 1 - 0.5) * 30 * gl : 0;
+    if (gl > 0.03 && a > 0.04) {
+      txt('TELEMETRY LOST', VW / 2 - 3 - jx, 806, 30, rgba(C.mag, a * gl * 0.32), 12, 'center');
+      txt('TELEMETRY LOST', VW / 2 + 3 + jx * 0.6, 806 + (gl > 0.7 ? 2 : 0), 30,
+        rgba(C.cyan, a * gl * 0.22), 12, 'center');
+      for (let k = 0; k < 2; k++) {
+        gh = (gh * 1664525 + 1013904223) & 0x7fffffff;
+        const ty = (gh / 0x7fffffff) * VH;
+        I.c.fillStyle = 'rgba(255,44,72,' + (0.05 * gl * a).toFixed(3) + ')';
+        I.c.fillRect(0, ty, VW, 2);
+        I.c.fillStyle = 'rgba(255,255,255,' + (0.03 * gl * a).toFixed(3) + ')';
+        I.c.fillRect(0, ty + 2, VW, 1);
+      }
+      I.c.fillStyle = rgba(C.red, a * gl * 0.5);
+      for (let k = 0; k < 22; k++) {
+        gh = (gh * 1664525 + 1013904223) & 0x7fffffff; const fx = gh / 0x7fffffff;
+        gh = (gh * 1664525 + 1013904223) & 0x7fffffff; const fy = gh / 0x7fffffff;
+        gh = (gh * 1664525 + 1013904223) & 0x7fffffff; const fw = gh / 0x7fffffff;
+        I.c.globalAlpha = 0.14 + fw * 0.5;
+        I.c.fillRect(560 + fx * 480, 770 + fy * 68, 2 + fw * 14, 1.6);
+      }
+      I.c.globalAlpha = 1;
+    }
+    txt('TELEMETRY LOST', VW / 2 + jx * 0.4, 806, 30,
+      rgba(C.red, a * (0.5 + 0.5 * pulse(I.t, 2.4))), 12, 'center');
+    txt('LINK 04 — CARRIER DROPPED', VW / 2, 842, 15, rgba(C.steel, a * 0.34), 6, 'center');
   }
   vignette(0.52 + 0.16 * space - 0.30 * ramp(HUGE, HUGE + 1.4, u));
   /* fade to black into the alert */

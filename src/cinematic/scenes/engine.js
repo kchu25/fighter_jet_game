@@ -1,7 +1,9 @@
 /* ===== cinematic/scenes/engine.js — shared plumbing + render loop =====
    Constants, palette, canvas/text/particle helpers, the backdrop
    primitives (starfield/scanlines/vignette/dawn sky/neon ground), the
-   requestAnimationFrame loop, and the play/skip/finish lifecycle.
+   requestAnimationFrame loop, the play/skip/finish lifecycle, and the
+   window-space presentation stack (matte bars, film grain, lens
+   vignette, cut dips) composited over whatever the scenes drew.
 
    Deliberate circular import with the six scene modules: frame() below
    calls scene1()..scene6() to render whichever is live, while each scene
@@ -30,6 +32,61 @@ export const T5 = T4 + 4.4;          // 24.0 .. 28.4  the launch that bleeds
 export const T6 = T5 + 7.0;          // 28.4 .. 35.4  encounter — survivors form up, the hive revealed
 export const HANDOFF = T6 - 0.62;    // gameplay starts under the fading canvas
 const fired = {};                    // one-shot event latches, engine.js-local
+
+/* ---- presentation layer (engine-local, additive) ----
+   Everything below is compositing dressing laid over whatever the six
+   scenes drew: matte bars, grain, vignette, cut dips.  None of it may
+   move a timing boundary or leak into the scene call contract, so it
+   all lives in module-locals rather than exports.  CUTS deliberately
+   stops at T5: the T6 edge is the HANDOFF fade into live gameplay,
+   which is sacred and must not get an extra exposure dip on top. */
+const CUTS = [T1, T2, T3, T4, T5];
+let pT = 0;                          /* presentation clock: unlike I.t it also runs during
+                                        attract (where I.t is held at 0), so the grain
+                                        crawl and skip-hint pulse never freeze */
+let grainPat = null;                 /* cached noise tile as a repeat pattern.  Built once,
+                                        256px square, sparse 1px speckles on transparency;
+                                        per-frame "boiling" comes from re-anchoring the
+                                        tile at a hashed offset a few times a second, NOT
+                                        from regenerating noise -- that is the whole trick
+                                        that keeps film grain affordable on a 2D canvas */
+let prsKey = '', barH = 0,           /* window-space caches, rebuilt only when the window
+                                        actually changes size: the gentle outer vignette
+                                        and the matte bars' inner-edge glow gradients */
+  vigG = null, barTG = null, barBG = null;
+function grain() {
+  if (grainPat) return grainPat;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const g = cv.getContext('2d');
+  for (let i = 0; i < 3400; i++) {
+    const v = Math.random();
+    g.fillStyle = v < 0.55 ? 'rgba(255,255,255,' + (0.30 + v * 0.55).toFixed(2) + ')'
+      : 'rgba(0,0,0,' + (0.30 + (v - 0.55)).toFixed(2) + ')';
+    g.fillRect((Math.random() * 256) | 0, (Math.random() * 256) | 0, 1, 1);
+  }
+  grainPat = g.createPattern(cv, 'repeat');
+  return grainPat;
+}
+function prsCache() {
+  const k = I.W + 'x' + I.H;
+  if (prsKey === k) return;
+  prsKey = k;
+  /* ~5.8% matte per edge: masks 16:9 content to roughly 2:1 -- reads
+     as cinema without decapitating compositions built for the full
+     900px frame (the scenes are being staged against VH, not the bars) */
+  barH = Math.max(14, Math.round(I.H * 0.058));
+  vigG = I.c.createRadialGradient(I.W / 2, I.H / 2, Math.min(I.W, I.H) * 0.42,
+    I.W / 2, I.H / 2, Math.hypot(I.W, I.H) * 0.58);
+  vigG.addColorStop(0, 'rgba(0,0,0,0)');
+  vigG.addColorStop(0.6, 'rgba(0,0,0,0.06)');
+  vigG.addColorStop(1, 'rgba(0,0,0,0.30)');
+  barTG = I.c.createLinearGradient(0, barH - 12, 0, barH);
+  barTG.addColorStop(0, 'rgba(150,210,240,0)');
+  barTG.addColorStop(1, 'rgba(150,210,240,0.10)');
+  barBG = I.c.createLinearGradient(0, I.H - barH + 12, 0, I.H - barH);
+  barBG.addColorStop(0, 'rgba(150,210,240,0)');
+  barBG.addColorStop(1, 'rgba(150,210,240,0.10)');
+}
 export const C = {
   white: [255, 255, 255], ice: [196, 245, 255], cyan: [58, 224, 255],
   blue: [70, 140, 255], mag: [255, 60, 240], violet: [176, 84, 255],
@@ -338,13 +395,31 @@ export function attract(dt) {
   scanlines(0.22); vignette(0.72);
 }
 export function chrome() {
-  const a = 0.35 + 0.5 * pulse(I.t, 0.8);
+  /* Skip affordance, re-set into the bottom matte bar.  Same gate and
+     same frame it always appeared on -- only the dressing changed: the
+     matte itself is now the backing plate (no more floating smoked
+     rect over the picture), the type sits optically centred in the
+     bar, and the pulse is a soft additive breath over a steady base
+     instead of one label strobing its whole alpha.  Drawn in window
+     space, which also rescues the progress track: at VH-4 in virtual
+     coordinates the cover-scale crop used to push it off the bottom
+     of most windows entirely. */
+  const fs = Math.max(11, Math.min(19, Math.round(barH * 0.40)));
+  const ty = Math.round(I.H - barH * 0.5 + fs * 0.36);
+  const rx = I.W - Math.max(24, Math.round(barH * 0.6));
+  const a = 0.24 + 0.30 * pulse(pT, 0.55);
   I.c.save();
-  I.c.fillStyle = 'rgba(0,0,0,0.35)';
-  I.c.fillRect(VW - 452, VH - 78, 420, 40);
-  txt('▸ PRESS ANY KEY OR CLICK TO SKIP', VW - 42, VH - 51, 19, rgba(C.white, a), 4, 'right');
-  I.c.fillStyle = 'rgba(255,255,255,0.10)'; I.c.fillRect(0, VH - 4, VW, 4);
-  I.c.fillStyle = rgba(C.cyan, 0.55); I.c.fillRect(0, VH - 4, VW * sat(I.t / T6), 4);
+  txt('PRESS ANY KEY OR CLICK TO SKIP  ▸', rx, ty, fs, 'rgba(214,232,244,0.34)', 5, 'right');
+  I.c.globalCompositeOperation = 'lighter';
+  txt('PRESS ANY KEY OR CLICK TO SKIP  ▸', rx, ty, fs, rgba(C.ice, a * 0.55), 5, 'right');
+  I.c.globalCompositeOperation = 'source-over';
+  /* progress track along the very bottom of the matte */
+  const pw = I.W * sat(I.t / T6);
+  I.c.fillStyle = 'rgba(255,255,255,0.08)'; I.c.fillRect(0, I.H - 3, I.W, 2);
+  I.c.fillStyle = rgba(C.cyan, 0.55); I.c.fillRect(0, I.H - 3, pw, 2);
+  I.c.globalCompositeOperation = 'lighter'; I.c.globalAlpha = 0.40;
+  I.c.drawImage(glow(C.cyan), pw - 7, I.H - 9, 14, 14);   /* playhead ember */
+  I.c.globalAlpha = 1; I.c.globalCompositeOperation = 'source-over';
   I.c.restore();
 }
 export function fit() {
@@ -361,6 +436,7 @@ export function frame(ms) {
   const dt = Math.min(0.05, (ms - I.last) / 1000 || 0.016);
   I.last = ms;
   if (I.phase !== 'attract') I.t += dt;
+  pT += dt;                          /* presentation clock never pauses */
 
   if (I.cv.width !== Math.round(I.W * I.dpr) || I.W !== window.innerWidth || I.H !== window.innerHeight) fit();
 
@@ -378,11 +454,19 @@ export function frame(ms) {
      inside a box" rather than as a camera being hit.  Scaling up by
      just over the shake amplitude keeps the frame full at all times. */
   const sh = I.shake;
-  const os = Math.min(1.26, 1 + 2.2 * sh / (VH * I.sc));
+  /* Rotational component on top of the translation: a real camera hit
+     never displaces the sensor on a pure x/y slide, the mount twists.
+     A few milliradians at the biggest hit (shake 46 -> ~5.5mrad), off
+     the same decay envelope because it is derived from I.shake itself.
+     The overscan grows by ~2.1*|rot| so the swung corners of the
+     rotated frame can never expose the black backing. */
+  const rot = sh > 0.02 ? sh * 1.2e-4 * rnd(-1, 1) : 0;
+  const os = Math.min(1.26, 1 + 2.2 * sh / (VH * I.sc) + 2.1 * Math.abs(rot));
   const s2 = I.dpr * I.sc * os;
   I.c.setTransform(s2, 0, 0, s2,
     I.dpr * (I.ox - VW * I.sc * (os - 1) * 0.5 + (sh ? rnd(-sh, sh) : 0)),
     I.dpr * (I.oy - VH * I.sc * (os - 1) * 0.5 + (sh ? rnd(-sh, sh) : 0)));
+  if (rot) { I.c.translate(VW / 2, VH / 2); I.c.rotate(rot); I.c.translate(-VW / 2, -VH / 2); }
   I.c.beginPath(); I.c.rect(0, 0, VW, VH); I.c.clip();
 
   try {
@@ -397,6 +481,10 @@ export function frame(ms) {
     I.c.restore(); finish('skip'); return;
   }
 
+  /* rising-edge detect AFTER dispatch (scenes write I.flash in there):
+     decay only ever shrinks the value, so a jump over last frame's
+     level is a fresh detonation -- latch two frames of fringe echo */
+  if (I.flash > I.flashPrev + 0.04) I.flashEcho = 2;
   if (I.flash > 0.002) {
     /* A blast flash blooms out from where it went off; filling the
        whole viewport with one flat value instead washed every frame to
@@ -411,10 +499,66 @@ export function frame(ms) {
     I.c.globalCompositeOperation = 'lighter';
     I.c.fillStyle = fg;
     I.c.fillRect(0, 0, VW, VH);
+    if (I.flashEcho > 0) {
+      /* chromatic fringe on the strike frame only: the bloom split
+         into a red ghost left and a cyan ghost right, the way a hard
+         overexposure smears across a cheap lens.  Two stretched draws
+         of the cached glow sprites -- no filters, no new gradients,
+         gone within two frames. */
+      const dx = 10 + 34 * f, r = VH * 1.15;
+      I.c.globalAlpha = f * 0.20;
+      I.c.drawImage(glow([255, 64, 64]), VW / 2 - dx - r, VH * 0.46 - r, r * 2, r * 2);
+      I.c.drawImage(glow([64, 220, 255]), VW / 2 + dx - r, VH * 0.46 - r, r * 2, r * 2);
+      I.c.globalAlpha = 1;
+    }
     I.c.globalCompositeOperation = 'source-over';
   }
-  if (I.phase === 'play') chrome();
+  if (I.flashEcho > 0) I.flashEcho--;
+  I.flashPrev = I.flash;
   I.c.restore();
+
+  /* ---- presentation stack, window space (the "print", not the
+     camera): none of this may inherit the shake/rotation transform.
+     Order is deliberate: exposure dip on the picture and flash, grain
+     on top of everything photographed, vignette as the lens, matte
+     bars as the projection gate, skip chrome over the matte. ---- */
+  prsCache();
+  if (I.phase !== 'attract') {
+    /* micro dip at each interior cut so the edit reads as a CUT, a
+       0.17s dip to ~60% black centred exactly on the boundary frame.
+       CUTS ends at T5 -- nothing may shade the HANDOFF fade. */
+    let dip = 0;
+    for (let i = 0; i < CUTS.length; i++) {
+      const d = Math.abs(I.t - CUTS[i]);
+      if (d < 0.085) { const q = 1 - d / 0.085; if (q * q > dip) dip = q * q; }
+    }
+    if (dip > 0.01) {
+      I.c.fillStyle = 'rgba(0,0,0,' + (dip * 0.62).toFixed(3) + ')';
+      I.c.fillRect(0, 0, I.W, I.H);
+    }
+  }
+  /* film grain: one pattern fill of the cached tile, re-anchored at a
+     hashed offset ~12x a second so it boils instead of sitting still */
+  const gi = (pT * 12) | 0, gx = (gi * 97) % 256, gy = (gi * 53) % 256;
+  I.c.save();
+  I.c.globalAlpha = 0.05;
+  I.c.translate(-gx, -gy);
+  I.c.fillStyle = grain();
+  I.c.fillRect(gx, gy, I.W, I.H);
+  I.c.restore();
+  I.c.fillStyle = vigG; I.c.fillRect(0, 0, I.W, I.H);
+  /* matte bars, over the vignette so the black stays true black, with
+     a breath of cool light along each inner edge so the gate reads as
+     an object in front of the picture rather than dead crop */
+  I.c.fillStyle = '#000';
+  I.c.fillRect(0, 0, I.W, barH);
+  I.c.fillRect(0, I.H - barH, I.W, barH);
+  I.c.fillStyle = barTG; I.c.fillRect(0, barH - 12, I.W, 12);
+  I.c.fillStyle = barBG; I.c.fillRect(0, I.H - barH, I.W, 12);
+  I.c.fillStyle = 'rgba(190,225,255,0.09)';
+  I.c.fillRect(0, barH - 1, I.W, 1);
+  I.c.fillRect(0, I.H - barH, I.W, 1);
+  if (I.phase === 'play') chrome();
 
   /* hand the frame over to the live game underneath, then fade out */
   if (I.phase === 'play' && I.t >= HANDOFF) {
@@ -492,6 +636,7 @@ export function play(opts) {
   for (const k in fired) delete fired[k];
   parts.length = 0; partsHead = 0;
   I.t = 0; I.last = performance.now(); I.shake = 0; I.flash = 0; I.ended = false; I.done = false;
+  I.flashPrev = 0; I.flashEcho = 0;
   I.phase = 'attract';
   listen(true);
   I.raf = requestAnimationFrame(frame);

@@ -95,6 +95,16 @@ export const JG = (function () {
     NBLD: fp([[9.0, 9.90, -4], [10.7, 13.60, -7], [10.7, 13.20, -9.5], [9.0, 9.70, -11]]),
     BLIS: fp([[-5.9, 1.10, 25.5], [-3.3, 1.10, 25.5], [-3.3, 1.10, 18.5], [-5.9, 1.10, 18.5]]),
     BLSF: fp([[-5.5, 0.70, 25.6], [-3.7, 0.70, 25.6], [-3.7, -0.70, 25.6], [-5.5, -0.70, 25.6]]),
+    /* pure surface graphics: panel breaks + specular edges.  Kept in
+       MODEL space and pushed through the same projector as the skin
+       they sit on, so they keep clinging to it if the camera
+       constants are ever retuned — screen-space offsets would not. */
+    WPA: two([[4.65, 1.55, -13.5], [26.9, -6.40, -14.9]]),   // flap hinge
+    WPB: two([[4.38, 1.46, 3.6], [25.1, -6.10, -9.9]]),      // main spar
+    WPC: two([[18.4, -3.70, -3.4], [19.9, -3.80, -16.4]]),   // aileron root
+    NCL: two([[7.8, 9.86, 3], [7.8, 9.86, -23]]),            // nacelle deck seam
+    TFLE: two([[26.9, -6.55, -9.7], [31.3, -0.50, -12.6]]),  // tip-fin leading edge
+    FLE: two([[2.06, -0.50, 29.5], [4.12, -0.02, 6.5]]),     // nose chine edge
     /* nozzles: circles in the XY plane, so they project to flat ellipses */
     NZX: K * 7.8, NZY: 30,
     THY: -K * (EY * 5.6 + EZ * -25.0),
@@ -110,15 +120,35 @@ export const JC = {
   panel: '#333e4c', steel: '#4a5a6e', steel2: '#61748b', line: '#8296ad'
 };
 
+/* FAA navigation colours — port red, starboard green */
+const NAVR = [255, 70, 70], NAVG = [70, 255, 130];
+
+/* Wall clock for the self-animating touches (nav strobes, burner
+   shimmer, vortex ropes).  The frozen jet() signature carries no time
+   and must keep animating at every existing call site, so these
+   free-run on performance.now(); the optional trailing tt on jet()/
+   jetBurner() lets a future caller drive them deterministically. */
+function clk(tt) {
+  return tt != null ? tt :
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+}
+
 /* Exhaust. In game the nozzles throw a cyan beam 72 units aft plus a
    white core sprite, so the plume here is cyan-cored with only a
    violet outer skirt to sit in the dawn palette. The nozzle bore is a
    flat ellipse at this camera angle, so the plume is correspondingly
    narrow at the root and flares aft. */
-export function jetBurner(c, nx, thrust, tint) {
+export function jetBurner(c, nx, thrust, tint, tt) {
   if (thrust <= 0.005) return;
+  const t = clk(tt);
+  /* Heat shimmer: the whole plume snakes on a fast clock (phase split
+     by nx so the two engines never wag in sync) and the length
+     breathes a few percent on another.  Geometry may wobble freely
+     per frame — the gradients are cached against the local FRAME, not
+     against the shape, so this costs nothing but the trig. */
+  const wx = Math.sin(t * 29 + nx * 1.7) * 1.1 * thrust;
   const N = 60;                              // normalised flame length
-  const L = (14 + 68 * thrust);
+  const L = (14 + 68 * thrust) * (1 + 0.05 * Math.sin(t * 47 + nx));
   c.save();
   c.translate(nx, 30);
   c.scale(1, L / N);
@@ -129,8 +159,8 @@ export function jetBurner(c, nx, thrust, tint) {
   ]);
   c.beginPath();
   c.moveTo(-5.0, 0);
-  c.quadraticCurveTo(-6.2, N * 0.42, 0, N);
-  c.quadraticCurveTo(6.2, N * 0.42, 5.0, 0);
+  c.quadraticCurveTo(-6.2 + wx, N * 0.42, wx * 0.7, N);
+  c.quadraticCurveTo(6.2 + wx, N * 0.42, 5.0, 0);
   c.closePath();
   c.fillStyle = go; c.fill();
   const gi = lg(c, 'jt.bi', 0, 0, 0, N, [
@@ -141,17 +171,51 @@ export function jetBurner(c, nx, thrust, tint) {
   ]);
   c.beginPath();
   c.moveTo(-2.5, 0);
-  c.quadraticCurveTo(-3.1, N * 0.34, 0, N * 0.80);
-  c.quadraticCurveTo(3.1, N * 0.34, 2.5, 0);
+  c.quadraticCurveTo(-3.1 + wx * 0.8, N * 0.34, wx * 0.5, N * 0.80);
+  c.quadraticCurveTo(3.1 + wx * 0.8, N * 0.34, 2.5, 0);
   c.closePath();
   c.fillStyle = gi; c.fill();
+  /* Core / sheath separation: a white-hot needle INSIDE the cyan
+     sheath, much narrower and half the length — the unburned core
+     before the flame turns translucent.  It follows a gentler bend
+     than the sheath (denser gas resists the wag), which is what makes
+     the two read as separate fluids instead of one repainted shape. */
+  const gc = lg(c, 'jt.bc', 0, 0, 0, N, [
+    [0.00, 'rgba(255,255,255,0.92)'],
+    [0.45, 'rgba(210,240,255,0.42)'],
+    [1.00, 'rgba(150,225,255,0)']
+  ]);
+  c.beginPath();
+  c.moveTo(-1.15, 0);
+  c.quadraticCurveTo(-1.5 + wx * 0.5, N * 0.26, wx * 0.35, N * 0.55);
+  c.quadraticCurveTo(1.5 + wx * 0.5, N * 0.26, 1.15, 0);
+  c.closePath();
+  c.fillStyle = gc; c.fill();
+  /* Shock diamonds: only once the nozzle is genuinely overdriven does
+     the ladder of bright knots appear down the core, each one dimmer
+     and nudged further off-axis by the same shimmer.  Drawn in the
+     scaled frame so they stretch and drift with the plume for free. */
+  if (thrust > 0.60) {
+    const sa = (thrust - 0.60) / 0.40;
+    for (let k = 1; k <= 4; k++) {
+      const a = 0.34 * sa * (1 - k * 0.185);
+      if (a <= 0.01) break;
+      c.beginPath();
+      c.ellipse(wx * 0.12 * k, N * (0.085 + 0.115 * k), 2.5 - k * 0.34,
+        (2.5 - k * 0.34) * 2.1, 0, 0, TAU);
+      c.fillStyle = 'rgba(255,255,255,' + a + ')';
+      c.fill();
+    }
+  }
   c.restore();
   blob(c, nx, 30.5, 13 + 11 * thrust, tint, 0.52 * thrust);
   blob(c, nx, 30.5, 6 + 4.5 * thrust, WH, 0.58 * thrust);
 }
 
-export function jet(c, x, y, s, rot, thrust, tint) {
+export function jet(c, x, y, s, rot, thrust, tint, tt) {
   thrust = thrust == null ? 0 : sat(thrust);
+  rot = rot || 0;
+  const t = clk(tt);
   const T = tint || JET_TINT;
   /* the airframe's painted TRIM is electric cyan in the mesh; pull the
      caller's tint toward it so the markings stay recognisably the same
@@ -160,7 +224,7 @@ export function jet(c, x, y, s, rot, thrust, tint) {
 
   c.save();
   c.translate(x, y);
-  c.rotate(rot || 0);
+  c.rotate(rot);
   c.scale(s, s);
   c.lineJoin = 'round';
 
@@ -203,6 +267,12 @@ export function jet(c, x, y, s, rot, thrust, tint) {
     fillP(c, JG.WSH[i], i ? 'rgba(4,7,11,0.50)' : 'rgba(4,7,11,0.34)');
     fillP(c, JG.WTE[i], 'rgba(0,0,0,0.35)');
     strokeP(c, JG.WING[i], 'rgba(5,8,13,0.9)', 0.9);
+    /* spanwise panel breaks — flap hinge, main spar, one chord cut at
+       the aileron root.  Fainter on the shadow-side wing: panel lines
+       live in grazing reflections, and a dark wing has none to cut. */
+    strokeP(c, JG.WPA[i], 'rgba(0,0,0,' + (i ? 0.20 : 0.30) + ')', 0.5);
+    strokeP(c, JG.WPB[i], 'rgba(0,0,0,' + (i ? 0.18 : 0.26) + ')', 0.5);
+    strokeP(c, JG.WPC[i], 'rgba(0,0,0,' + (i ? 0.16 : 0.24) + ')', 0.45);
   }
   /* cyan leading-edge strip — the mesh carries the same TRIM band */
   c.save();
@@ -216,6 +286,14 @@ export function jet(c, x, y, s, rot, thrust, tint) {
     fillP(c, JG.TIPF[i], i ? '#3d4a5c' : '#66798f');
     strokeP(c, JG.TIPF[i], 'rgba(5,8,13,0.85)', 0.8);
   }
+  /* specular thread down each fin's leading edge — the one place the
+     low key light grazes at a right angle, so it burns hotter than
+     any painted trim, and hottest on the lit-side fin */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  strokeP(c, JG.TFLE[0], 'rgba(220,238,255,0.38)', 0.7);
+  strokeP(c, JG.TFLE[1], 'rgba(220,238,255,0.18)', 0.7);
+  c.restore();
 
   /* ================= 5. fuselage spine ========================== */
   const fuG = lg(c, 'jt2.fu', -5.2, 0, 5.2, 0, [
@@ -238,10 +316,22 @@ export function jet(c, x, y, s, rot, thrust, tint) {
   strokeP(c, JG.CHINE[0], rgba(TR, 0.70), 1.2);
   strokeP(c, JG.CHINE[1], rgba(TR, 0.46), 1.2);
   c.restore();
-  /* panel breaks across the spine */
+  /* panel breaks across the spine — each dark cut gets (at most) a
+     faint light echo one line below, the cheap "chamfered edge" trick
+     the deck break at 14/15 already plays */
+  seg(c, -4.2, -13, 4.2, -13, 'rgba(0,0,0,0.26)', 0.5);
+  seg(c, -4.2, -12.4, 4.2, -12.4, 'rgba(200,222,248,0.08)', 0.5);
   seg(c, -4.2, -4, 4.2, -4, 'rgba(0,0,0,0.30)', 0.6);
+  seg(c, -4.5, 5, 4.5, 5, 'rgba(0,0,0,0.24)', 0.5);
   seg(c, -4.6, 14, 4.6, 14, 'rgba(0,0,0,0.30)', 0.6);
   seg(c, -4.6, 15.0, 4.6, 15.0, 'rgba(200,222,248,0.10)', 0.5);
+  /* nose chine catchlight, lit (screen-left) side only: the same
+     grazing edge the tip fins catch, carried up the forebody so the
+     nose does not go dead between the two cyan trim bands */
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  strokeP(c, JG.FLE[0], 'rgba(215,236,255,0.30)', 0.6);
+  c.restore();
   /* starboard sensor blister, forward and to one side only */
   fillP(c, JG.BLIS, '#39465a');
   strokeP(c, JG.BLIS, 'rgba(5,8,13,0.8)', 0.6);
@@ -254,6 +344,23 @@ export function jet(c, x, y, s, rot, thrust, tint) {
   fillP(c, JG.CAN, cnG);
   strokeP(c, JG.CAN, 'rgba(6,10,16,0.8)', 0.7);
   strokeP(c, JG.CRDG, 'rgba(190,240,255,0.30)', 0.6);
+  /* Canopy glint.  The key light lives in SCREEN space, so when a
+     scene banks the jet the bright spot must slide the OPPOSITE way
+     across the glass or the bubble reads as painted-on.  rot is only
+     a few degrees of wobble in every flypast, so a stiff gain turns
+     that wobble into a live sweep; on tumbling struck jets the cosine
+     term also strobes it out and back, which is exactly what the sun
+     does on spinning glass. */
+  const ggx = Math.max(-1.7, Math.min(1.7, -Math.sin(rot) * 9));
+  const gga = 0.26 + 0.18 * Math.cos(rot * 2);
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  c.beginPath();
+  c.ellipse(ggx, -28.2, 0.7, 3.4, 0, 0, TAU);
+  c.fillStyle = 'rgba(228,247,255,' + gga.toFixed(3) + ')';
+  c.fill();
+  blob(c, ggx, -27.4, 5, WH, gga * 0.30);
+  c.restore();
 
   /* ================= 7. dorsal spine ridge + blade antenna ====== */
   fillP(c, JG.SPINE, lg(c, 'jt2.sp', -1.2, 0, 1.2, 0, [
@@ -288,9 +395,12 @@ export function jet(c, x, y, s, rot, thrust, tint) {
     fillP(c, JG.NTOP[i], ntG[i]);
     /* recessed forward intake: a dark trapezoid narrowing aft */
     fillP(c, JG.INTK[i], '#05080d');
-    /* panel breaks on the nacelle deck */
+    /* panel breaks on the nacelle deck, plus the spinewise deck seam
+       running the whole nacelle — the long line is what makes the fat
+       decks read as machined instead of as extruded blobs */
     fillP(c, JG.NPB1[i], 'rgba(190,212,238,0.16)');
     fillP(c, JG.NPB2[i], 'rgba(0,0,0,0.34)');
+    strokeP(c, JG.NCL[i], 'rgba(0,0,0,0.24)', 0.5);
     strokeP(c, JG.NAC[i], 'rgba(4,7,12,0.9)', 1.0);
     strokeP(c, JG.NIN[i], 'rgba(0,0,0,0.55)', 0.9);
     /* cyan strip down the flank keeps the shadow side readable —
@@ -338,9 +448,39 @@ export function jet(c, x, y, s, rot, thrust, tint) {
   /* ================ 10. afterburners (additive, aft) ============ */
   c.save();
   c.globalCompositeOperation = 'lighter';
-  jetBurner(c, -JG.NZX, thrust, T);
-  jetBurner(c, JG.NZX, thrust, T);
+  jetBurner(c, -JG.NZX, thrust, T, t);
+  jetBurner(c, JG.NZX, thrust, T, t);
   c.restore();
+
+  /* ================ 10b. wingtip vortex ropes ===================
+     Only at combat power: past ~0.75 thrust the tips are loaded hard
+     enough to wring condensation out of the air.  Two faint additive
+     ropes per tip — a brighter root segment and a dimmer tail — that
+     wobble on the same clock family as the burner shimmer, so the
+     whole wake moves as one airstream.  Four strokes total, and the
+     0.45-thrust background specks never pay for any of it. */
+  if (thrust > 0.75) {
+    const va = (thrust - 0.75) / 0.25;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.lineWidth = 1.1;
+    for (let i = 0; i < 2; i++) {
+      const vx = (i ? 1 : -1) * JG.TIPX;
+      const w1 = Math.sin(t * 19 + i * 2.6) * 1.5;
+      const w2 = Math.sin(t * 13 + i * 1.3 + 2) * 2.8;
+      c.strokeStyle = 'rgba(235,246,255,' + (0.20 * va).toFixed(3) + ')';
+      c.beginPath();
+      c.moveTo(vx, JG.TIPY + 1);
+      c.quadraticCurveTo(vx + w1, JG.TIPY + 15, vx + w2 * 0.6, JG.TIPY + 28);
+      c.stroke();
+      c.strokeStyle = 'rgba(235,246,255,' + (0.10 * va).toFixed(3) + ')';
+      c.beginPath();
+      c.moveTo(vx + w2 * 0.6, JG.TIPY + 28);
+      c.quadraticCurveTo(vx + w2, JG.TIPY + 42, vx + w1 * 1.6, JG.TIPY + 58);
+      c.stroke();
+    }
+    c.restore();
+  }
 
   /* ================ 11. trim lights ============================
      The mesh has no red/green navs — it is lit with the same cyan
@@ -354,6 +494,27 @@ export function jet(c, x, y, s, rot, thrust, tint) {
   }
   disc(c, 0, 1.0, 1.0, rgba(TR, 0.8));
   blob(c, 0, 1.0, 6, TR, 0.28);
+  /* Nav strobes RIDE ON TOP of the trim glow.  The mesh carries no
+     red/green, but an aircraft with no running lights reads as a
+     model kit, so FAA colours flash over the steady cyan: port RED on
+     screen LEFT, starboard GREEN on screen RIGHT (the camera sits
+     dead astern, so port genuinely is the viewer's left).  A short
+     double-pop duty cycle makes the eye read "strobe" rather than
+     "lamp", and the two sides run out of phase like the separate
+     electrical buses they would hang off. */
+  for (let i = 0; i < 2; i++) {
+    const ph = (t * 1.05 + i * 0.41) % 1;
+    if (ph < 0.055 || (ph > 0.115 && ph < 0.165)) {
+      const sx = (i ? 1 : -1) * JG.TIPX, k = i ? NAVG : NAVR;
+      disc(c, sx, JG.TIPY - 1.6, 1.35, rgba(k, 0.95));
+      blob(c, sx, JG.TIPY - 1.6, 12, k, 0.55);
+    }
+  }
+  /* and one white anti-collision pop on the dorsal blade tip */
+  if ((t * 1.35 + 0.7) % 1 < 0.045) {
+    disc(c, 0, -0.6, 1.1, 'rgba(255,255,255,0.95)');
+    blob(c, 0, -0.6, 9, WH, 0.5);
+  }
   c.restore();
 
   c.restore();

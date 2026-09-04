@@ -14,6 +14,14 @@ export const I = {
                                  other one (a late skip after the HANDOFF must not slam
                                  the menu on top of the already-running game) */
   shake: 0, flash: 0, flashCol: [255, 255, 255],
+  flashPrev: 0,               /* I.flash as of the end of the previous frame; the engine
+                                 compares against it after scene dispatch to catch the
+                                 rising edge of a new flash (scenes only ever Math.max
+                                 into I.flash, so a jump above this is always a fresh
+                                 detonation, never the tail of an old one decaying) */
+  flashEcho: 0,               /* frames of chromatic-fringe ghost left to draw after a
+                                 flash spike -- latched to 2 on the rising edge, counted
+                                 down by the engine, purely presentational */
   rumbleH: null, sirenH: null
 };
 

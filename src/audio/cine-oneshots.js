@@ -82,6 +82,30 @@ export function plasma() {
   head.connect(A.sfxGain);
   var srcs = [];
 
+  // --- charged bite: true ring-mod (carrier * modulator via a zero-base
+  //     gain) with both partners diving fast, so the sum/difference
+  //     sidebands smear downward through inharmonic territory.  ~0.28s of
+  //     electrical nastiness stamped on the attack. ---
+  var rmDur = 0.28;
+  var car = osc('square', 470, t);
+  car.frequency.setValueAtTime(fclamp(470), t);
+  car.frequency.exponentialRampToValueAtTime(fclamp(150), t + rmDur);
+  var mod = osc('sine', 910, t);
+  mod.frequency.setValueAtTime(fclamp(910), t);
+  mod.frequency.exponentialRampToValueAtTime(fclamp(52), t + rmDur);
+  var ring = A.ctx.createGain();
+  ring.gain.value = 0;                 // audio-rate input IS the gain: y = car * mod
+  car.connect(ring); mod.connect(ring.gain);
+  var rmf = bp(1600, 2.2);
+  var rmg = A.ctx.createGain();
+  rmg.gain.setValueAtTime(0.0001, t);
+  rmg.gain.exponentialRampToValueAtTime(0.34, t + 0.012);
+  rmg.gain.exponentialRampToValueAtTime(0.0001, t + rmDur);
+  ring.connect(rmf); rmf.connect(rmg); rmg.connect(head);
+  car.start(t); car.stop(t + rmDur + 0.02);
+  mod.start(t); mod.stop(t + rmDur + 0.02);
+  srcs.push(car, mod);
+
   // --- searing buzz: saw + square through a resonant bandpass sweep ---
   var f = bp(2400, 8);
   f.frequency.setValueAtTime(fclamp(2600), t);
@@ -140,8 +164,17 @@ export function explode(size) {
   var t = now() + 0.002;
   var dur = 0.36 + 1.06 * size;                 // 1.4s @1, 3.0s @2.5
   var head = gainNode(clamp(0.55 + 0.28 * size, 0.5, 1.0));
+  /* distance lid: ONE master lowpass the whole composite passes through.
+     Big blasts start duller (further away / more air between us and it) and
+     every layer muffles together as the shockwave passes - that shared sweep
+     is what glues the noise, sub and debris into a single physical event. */
+  var lid = lp(fclamp(9500 / Math.pow(size, 0.7)), 0.8);
+  lid.frequency.setValueAtTime(fclamp(9500 / Math.pow(size, 0.7)), t);
+  lid.frequency.exponentialRampToValueAtTime(fclamp(2400 / size), t + dur * 0.45);
+  lid.frequency.exponentialRampToValueAtTime(fclamp(130), t + dur);
   var pn = panner((Math.random() * 2 - 1) * 0.22);
-  if (pn) { head.connect(pn); pn.connect(A.sfxGain); } else head.connect(A.sfxGain);
+  head.connect(lid);
+  if (pn) { lid.connect(pn); pn.connect(A.sfxGain); } else lid.connect(A.sfxGain);
   var srcs = [];
 
   // --- blast body: noise through a lowpass that closes over time ---
@@ -168,8 +201,24 @@ export function explode(size) {
   so.start(t); so.stop(t + subDur * 1.2 + 0.05);
   srcs.push(so);
 
-  // --- debris: short randomised ticks scattered over the next ~0.8s ---
-  var ticks = 6;
+  // --- sub-bass drop TAIL: once the punch lands, a second, longer sine
+  //     slides 55 -> 24 Hz under everything.  It arrives late on purpose:
+  //     the felt weight of a big blast is the floor that keeps falling
+  //     after the transient is gone. ---
+  var t2 = t + subDur * 0.55;
+  var so2 = osc('sine', 55, t2);
+  so2.frequency.setValueAtTime(fclamp(55), t2);
+  so2.frequency.exponentialRampToValueAtTime(fclamp(24), t + dur);
+  var so2g = A.ctx.createGain();
+  so2g.gain.setValueAtTime(0.0001, t2);
+  so2g.gain.exponentialRampToValueAtTime(clamp(0.14 + 0.14 * size, 0.1, 0.5), t2 + 0.22);
+  so2g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.12);
+  so2.connect(so2g); so2g.connect(head);
+  so2.start(t2); so2.stop(t + dur + 0.18);
+  srcs.push(so2);
+
+  // --- debris wave 1: bright shrapnel ticks in the first ~0.8s ---
+  var ticks = 5 + Math.round(size * 2);
   for (var i = 0; i < ticks; i++) {
     var dt = t + 0.09 + Math.random() * 0.8;
     var td = 0.02 + Math.random() * 0.05;
@@ -178,6 +227,35 @@ export function explode(size) {
     th.connect(tg); tg.connect(head);
     var ts = noise(dt, td, 1.1 + Math.random() * 0.8);
     ts.connect(th); srcs.push(ts);
+  }
+
+  // --- debris wave 2: chunks landing.  Later, lower, longer - bandpassed
+  //     knocks scattered through the mid of the tail so the aftermath
+  //     crackles instead of just hissing away. ---
+  var knocks = 3 + Math.round(size * 1.5);
+  for (var j = 0; j < knocks; j++) {
+    var kt = t + 0.35 + Math.random() * dur * 0.55;
+    var kd = 0.05 + Math.random() * 0.09;
+    var kf = bp(420 + Math.random() * 900, 2.5);
+    var kg = pluck(kt, 0.07 + 0.1 * size * Math.random(), kd, 0.002);
+    kf.connect(kg); kg.connect(head);
+    var ks = noise(kt, kd, 0.5 + Math.random() * 0.5);
+    ks.connect(kf); srcs.push(ks);
+  }
+
+  // --- one falling shrapnel whistle on big blasts: tiny sine screaming
+  //     down an octave and a half.  The movie cliche, earned here. ---
+  if (size >= 1.3) {
+    var wt = t + 0.16 + Math.random() * 0.25;
+    var wo = osc('sine', 2400 + Math.random() * 900, wt);
+    wo.frequency.exponentialRampToValueAtTime(fclamp(320), wt + 0.55);
+    var wg = A.ctx.createGain();
+    wg.gain.setValueAtTime(0.0001, wt);
+    wg.gain.exponentialRampToValueAtTime(0.05, wt + 0.1);
+    wg.gain.exponentialRampToValueAtTime(0.0001, wt + 0.55);
+    wo.connect(wg); wg.connect(head);
+    wo.start(wt); wo.stop(wt + 0.6);
+    srcs.push(wo);
   }
 
   // --- long low tail ---
@@ -191,7 +269,12 @@ export function explode(size) {
   tf.connect(tgn); tgn.connect(head);
   var tsrc = noise(t, dur + 0.02, 0.5); tsrc.connect(tf); srcs.push(tsrc);
 
-  if (pn) setTimeout(function () { try { pn.disconnect(); } catch (e) { } }, (dur + 0.6) * 1000);
+  /* lid + panner sit downstream of head, so voice()'s head.disconnect()
+     does not free them - drop them by hand once the tail is done. */
+  setTimeout(function () {
+    try { lid.disconnect(); } catch (e) { }
+    if (pn) { try { pn.disconnect(); } catch (e) { } }
+  }, (dur + 0.6) * 1000);
   voice(head, srcs);
 }
 
@@ -243,6 +326,37 @@ export function helmetOn() {
   to.start(choke); to.stop(choke + 0.3);
   srcs.push(to);
 
+  // --- knuckle of the thunk: a mid triangle dropping fast gives the lock
+  //     a hard surface to live on (the sine alone is all pillow) ---
+  var ko = osc('triangle', 240, choke);
+  ko.frequency.exponentialRampToValueAtTime(fclamp(78), choke + 0.07);
+  var kg = pluck(choke, 0.3, 0.09, 0.002);
+  ko.connect(kg); kg.connect(head);
+  ko.start(choke); ko.stop(choke + 0.12);
+  srcs.push(ko);
+
+  // --- comms activation: the mic goes live.  A breath of open-channel
+  //     static, then a rising two-note confirmation blip - the "you are
+  //     now on the net" sound every headset movie taught us. ---
+  var b0 = choke + 0.24;
+  var mf = hp(2600);
+  var mg = A.ctx.createGain();
+  mg.gain.setValueAtTime(0.0001, b0 - 0.03);
+  mg.gain.exponentialRampToValueAtTime(0.05, b0);
+  mg.gain.exponentialRampToValueAtTime(0.0001, b0 + 0.22);
+  mf.connect(mg); mg.connect(head);
+  var ms = noise(b0 - 0.03, 0.28, 1.6); ms.connect(mf); srcs.push(ms);
+  var bff = [1180, 1560];
+  for (var bi = 0; bi < 2; bi++) {
+    var bt = b0 + bi * 0.11;
+    var bo = osc('square', bff[bi], bt);
+    var bfl = lp(3600, 1.0);
+    var bgn = pluck(bt, 0.14, 0.05, 0.001);
+    bo.connect(bfl); bfl.connect(bgn); bgn.connect(head);
+    bo.start(bt); bo.stop(bt + 0.07);
+    srcs.push(bo);
+  }
+
   voice(head, srcs);
 }
 
@@ -260,6 +374,14 @@ export function breath(cycles) {
   var lid = lp(2600, 0.7);
   lid.connect(head);
   head.connect(A.sfxGain);
+  /* in-mask resonance: a high-Q peak ~2 kHz fed as a parallel send from the
+     enveloped breath (so it follows the airflow, not the raw noise).  It is
+     the plasticky ring of a small sealed cavity - very quiet, but it is the
+     difference between "wind" and "man inside a mask".  Bypasses the lid on
+     purpose; the lid would eat exactly the squeak we are adding. */
+  var res = bp(2050, 9);
+  var resG = gainNode(0.09);
+  res.connect(resG); resG.connect(head);
   var srcs = [];
 
   var IN = 0.75, OUT = 0.85, GAP = 0.1, PAUSE = 0.25;
@@ -276,7 +398,7 @@ export function breath(cycles) {
     inG.gain.setValueAtTime(0.0001, c0);
     inG.gain.exponentialRampToValueAtTime(0.34, c0 + IN * 0.72);
     inG.gain.exponentialRampToValueAtTime(0.0001, c0 + IN);
-    inF.connect(inG); inG.connect(lid);
+    inF.connect(inG); inG.connect(lid); inG.connect(res);
     var inS = noise(c0, IN + 0.02, 0.55); inS.connect(inF); srcs.push(inS);
 
     // exhale: lower, softer, filter closing
@@ -288,12 +410,15 @@ export function breath(cycles) {
     exG.gain.setValueAtTime(0.0001, o0);
     exG.gain.exponentialRampToValueAtTime(0.24, o0 + OUT * 0.28);
     exG.gain.exponentialRampToValueAtTime(0.0001, o0 + OUT);
-    exF.connect(exG); exG.connect(lid);
+    exF.connect(exG); exG.connect(lid); exG.connect(res);
     var exS = noise(o0, OUT + 0.02, 0.42); exS.connect(exF); srcs.push(exS);
   }
 
   voice(head, srcs);
-  setTimeout(function () { try { lid.disconnect(); } catch (e) { } }, (n * per + 0.6) * 1000);
+  setTimeout(function () {
+    try { lid.disconnect(); } catch (e) { }
+    try { res.disconnect(); resG.disconnect(); } catch (e) { }
+  }, (n * per + 0.6) * 1000);
 }
 
 /* ---------------------------------------------------------------
@@ -337,31 +462,93 @@ export function cineRiser(dur) {
   head.connect(A.sfxGain);
   var srcs = [];
 
-  // --- noise through an exponentially rising bandpass ---
+  // --- noise swell through an exponentially rising bandpass, with the
+  //     trailer "gasp": the swell is yanked nearly to silence for the last
+  //     ~50ms so the landing detonates into a hole instead of a wall ---
   var nf = bp(220, 2.6);
   nf.frequency.setValueAtTime(fclamp(200), t);
   nf.frequency.exponentialRampToValueAtTime(fclamp(9000), hit);
   var ngn = A.ctx.createGain();
   ngn.gain.setValueAtTime(0.0001, t);
-  ngn.gain.exponentialRampToValueAtTime(0.5, hit - 0.02);
+  ngn.gain.exponentialRampToValueAtTime(0.5, hit - 0.07);
+  ngn.gain.linearRampToValueAtTime(0.04, hit - 0.012);
   ngn.gain.exponentialRampToValueAtTime(0.0001, hit + 0.05);
   nf.connect(ngn); ngn.connect(head);
   var ns = noise(t, dur + 0.08, 1.0); ns.connect(nf); srcs.push(ns);
 
-  // --- saw rising two octaves ---
-  var o = osc('sawtooth', 140, t);
-  o.frequency.setValueAtTime(fclamp(140), t);
-  o.frequency.exponentialRampToValueAtTime(fclamp(560), hit);
+  // --- detuned saw stack rising two octaves.  Three saws spread across
+  //     ~33 cents plus a sub-octave saw underneath: the detune beats speed
+  //     up as pitch climbs, which is most of what makes a riser feel like
+  //     it is accelerating even though the ramp is a fixed exponential ---
   var of = lp(600, 6);
   of.frequency.setValueAtTime(fclamp(500), t);
   of.frequency.exponentialRampToValueAtTime(fclamp(6500), hit);
   var og = A.ctx.createGain();
   og.gain.setValueAtTime(0.0001, t);
-  og.gain.exponentialRampToValueAtTime(0.32, hit - 0.02);
+  og.gain.exponentialRampToValueAtTime(0.3, hit - 0.02);
   og.gain.exponentialRampToValueAtTime(0.0001, hit + 0.05);
-  o.connect(of); of.connect(og); og.connect(head);
-  o.start(t); o.stop(hit + 0.08);
-  srcs.push(o);
+  of.connect(og); og.connect(head);
+  var dts = [-14, 5, 19];
+  for (var k = 0; k < 3; k++) {
+    var o = osc('sawtooth', 140, t);
+    o.detune.value = dts[k];
+    o.frequency.setValueAtTime(fclamp(140), t);
+    o.frequency.exponentialRampToValueAtTime(fclamp(560), hit);
+    var okg = gainNode(0.5);
+    o.connect(okg); okg.connect(of);
+    o.start(t); o.stop(hit + 0.08);
+    srcs.push(o);
+  }
+  var oSub = osc('sawtooth', 70, t);
+  oSub.frequency.setValueAtTime(fclamp(70), t);
+  oSub.frequency.exponentialRampToValueAtTime(fclamp(280), hit);
+  var oSubG = gainNode(0.55);
+  oSub.connect(oSubG); oSubG.connect(of);
+  oSub.start(t); oSub.stop(hit + 0.08);
+  srcs.push(oSub);
+
+  // --- accelerating pulse: an LFO square gates a mid noise band, ticking
+  //     ~2 Hz at the start and ~15 Hz at the hit.  The heartbeat-going-
+  //     -into-panic layer; audio-rate AM (gain base 0.5, LFO depth 0.5)
+  //     so the gate is free of scheduling granularity ---
+  var pf = bp(640, 3);
+  pf.frequency.setValueAtTime(fclamp(600), t);
+  pf.frequency.exponentialRampToValueAtTime(fclamp(2600), hit);
+  var pAmp = A.ctx.createGain();
+  pAmp.gain.value = 0.5;
+  var plfo = A.ctx.createOscillator();     // raw: osc()'s fclamp floors at 20 Hz, this is a 2.2 Hz LFO
+  plfo.type = 'square';
+  plfo.frequency.setValueAtTime(2.2, t);
+  plfo.frequency.exponentialRampToValueAtTime(15, hit);
+  var plfoG = gainNode(0.5);
+  plfo.connect(plfoG); plfoG.connect(pAmp.gain);
+  var penv = A.ctx.createGain();
+  penv.gain.setValueAtTime(0.0001, t);
+  penv.gain.exponentialRampToValueAtTime(0.26, hit - 0.06);
+  penv.gain.exponentialRampToValueAtTime(0.0001, hit + 0.03);
+  pf.connect(pAmp); pAmp.connect(penv); penv.connect(head);
+  var pns = noise(t, dur + 0.05, 1.3); pns.connect(pf); srcs.push(pns);
+  plfo.start(t); plfo.stop(hit + 0.05);
+  srcs.push(plfo);
+
+  // --- high shimmer: two slow-beating sines fade in over the last third
+  //     and gliss slightly upward - the "air being sucked out of the room"
+  //     sheen above everything else ---
+  var sT = t + dur * 0.6;
+  var shg = A.ctx.createGain();
+  shg.gain.setValueAtTime(0.0001, sT);
+  shg.gain.exponentialRampToValueAtTime(0.09, hit - 0.03);
+  shg.gain.exponentialRampToValueAtTime(0.0001, hit + 0.06);
+  shg.connect(head);
+  var shf = [3136, 4712];
+  for (var s2 = 0; s2 < 2; s2++) {
+    var sho = osc('sine', shf[s2], sT);
+    sho.frequency.setValueAtTime(fclamp(shf[s2]), sT);
+    sho.frequency.exponentialRampToValueAtTime(fclamp(shf[s2] * 1.07), hit);
+    sho.connect(shg);
+    sho.start(sT); sho.stop(hit + 0.08);
+    srcs.push(sho);
+  }
 
   // --- the landing: sub drop ---
   var so = osc('sine', 120, hit);
@@ -410,10 +597,47 @@ export function jetPass(pan) {
   f.frequency.exponentialRampToValueAtTime(fclamp(280), t + dur);
   var g = A.ctx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.75, mid);
+  g.gain.exponentialRampToValueAtTime(0.62, mid);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   f.connect(g); g.connect(head);
   var ns = noise(t, dur + 0.02, 1.0); ns.connect(f); srcs.push(ns);
+
+  // --- engine core: the actual doppler.  A detuned saw pair pitched up
+  //     ~17% on approach, sliding through true pitch at the pass and down
+  //     ~22% going away - the noise layers sell distance, this sells the
+  //     physics.  Exponential ramps so the bend is fastest right at the
+  //     closest point, exactly as the geometry says it should be. ---
+  var ef = bp(760, 1.2);
+  ef.frequency.setValueAtTime(fclamp(520), t);
+  ef.frequency.exponentialRampToValueAtTime(fclamp(1500), mid);
+  ef.frequency.exponentialRampToValueAtTime(fclamp(360), t + dur);
+  var eg = A.ctx.createGain();
+  eg.gain.setValueAtTime(0.0001, t);
+  eg.gain.exponentialRampToValueAtTime(0.34, mid);
+  eg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  ef.connect(eg); eg.connect(head);
+  var ebase = [148, 151.5];
+  for (var k = 0; k < 2; k++) {
+    var eo = osc('sawtooth', ebase[k] * 1.17, t);
+    eo.detune.value = k ? 9 : -7;
+    eo.frequency.setValueAtTime(fclamp(ebase[k] * 1.17), t);
+    eo.frequency.exponentialRampToValueAtTime(fclamp(ebase[k]), mid);
+    eo.frequency.exponentialRampToValueAtTime(fclamp(ebase[k] * 0.78), t + dur);
+    eo.connect(ef);
+    eo.start(t); eo.stop(t + dur + 0.02);
+    srcs.push(eo);
+  }
+
+  // --- air tear: a tight high-frequency rip that only exists around the
+  //     closest point - the "fabric of the sky ripping" instant ---
+  var af = hp(5200);
+  var ag = A.ctx.createGain();
+  ag.gain.setValueAtTime(0.0001, t);
+  ag.gain.exponentialRampToValueAtTime(0.13, mid);
+  ag.gain.exponentialRampToValueAtTime(0.0001, mid + 0.35);
+  af.connect(ag); ag.connect(head);
+  var as2 = noise(t + (mid - t) * 0.4, (mid - t) * 0.6 + 0.4, 1.7);
+  as2.connect(af); srcs.push(as2);
 
   // --- low rumble tail, peaks slightly after the pass ---
   var rf = lp(220, 1.0);
@@ -421,7 +645,7 @@ export function jetPass(pan) {
   rf.frequency.exponentialRampToValueAtTime(fclamp(90), t + dur + 0.5);
   var rg = A.ctx.createGain();
   rg.gain.setValueAtTime(0.0001, t);
-  rg.gain.exponentialRampToValueAtTime(0.45, mid + 0.12);
+  rg.gain.exponentialRampToValueAtTime(0.4, mid + 0.12);
   rg.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.5);
   rf.connect(rg); rg.connect(head);
   var rs = noise(t, dur + 0.52, 0.55); rs.connect(rf); srcs.push(rs);

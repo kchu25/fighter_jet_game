@@ -39,10 +39,13 @@ export function togglePause(){ setPaused(!paused); }
 /* ------------------------------------------------------------------ flow */
 export const introEl=document.getElementById('intro'), overEl=document.getElementById('over');
 export const logEl=document.getElementById('log'), launchBtn=document.getElementById('launch');
+/* menu transmission — three beats, typed in at 330ms/line by showMenu below:
+   a dying signal → the sky is already lost → you are what's left. ALL-CAPS
+   terminal voice; innerHTML, so entities are fine and cheap drama is legal */
 export const LINES=[
-  '&gt; INCOMING TRANSMISSION &mdash; SIGNAL DEGRADED',
-  '&gt; ORBITAL GRID DOWN. HIVE FLEET IN THE ATMOSPHERE.',
-  '&gt; YOU ARE THE ONLY BIRD IN THE AIR. GO.'
+  '&gt; INCOMING TRANSMISSION &mdash;&mdash; SIGNAL DEGRADED &mdash;&mdash; DECRYPTING&hellip;',
+  '&gt; ORBITAL GRID ANNIHILATED. HIVE FLEET DESCENDING ON SECTOR 7.',
+  '&gt; EVERY OTHER WING IS ASH. YOU ARE THE LAST BIRD IN THE AIR. GO.'
 ];
 export let li=0, menuShown=false;
 export function showMenu(){
@@ -101,12 +104,18 @@ export function gameOver(){
   sparks(S.P.x,S.P.y,0, 40, 1400, 1.2, COL.red, 0,0,0, 0);
   for(let i=0;i<6;i++)
     shard(S.P.x,S.P.y,0, rnd(-620,620),rnd(-160,520),rnd(-620,620), rnd(.18,.34), COL.cyan, rnd(.45,.8));
-  document.getElementById('fScore').textContent=S.score;
+  /* debrief readout — score gets toLocaleString to match fBest, so a
+     five-digit run reads as a score and not a serial number */
+  document.getElementById('fScore').textContent=S.score.toLocaleString();
   document.getElementById('fDist').textContent=(S.dist/1000).toFixed(1);
   document.getElementById('fKills').textContent=S.kills;
   const rec = submitRun(S.score, S.dist, S.kills);
   document.getElementById('fBest').textContent = rec.best.toLocaleString();
   document.getElementById('newrec').classList.toggle('on', rec.isRecord && S.score > 0);
+  /* un-hiding flips display:none→flex, which restarts every CSS animation
+     inside #over — the staggered line reveal, the record shine and the red
+     wash are all choreographed in dev.html's stylesheet off this one toggle,
+     so the debrief needs no per-line JS at all */
   setTimeout(()=>overEl.classList.remove('hidden'), 950);
 }
 launchBtn.addEventListener('click', start);
