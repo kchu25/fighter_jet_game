@@ -186,6 +186,12 @@ export function spawnAllies(){
 export function armNextBoss(){
   S.nextBoss = S.score + 1500 + Math.min(4,S.bossN)*350;
 }
+/* The slot's base hull, before the per-type multiplier. TWO sites size a
+   boss off this — spawnBoss() below and the goliath shell-breach reveal in
+   damage() — so it lives in one function: they were hand-copied before and
+   silently drifted apart the first time the curve was retuned, leaving the
+   thing that crawls out of the wreck sized off a stale formula. */
+export function bossBaseHp(){ return 380+S.bossN*85; }
 export function spawnBoss(){
   /* keyed off S.bossN (bosses defeated this run), not S.waveN (trash-mob waves,
      never resets) — see the S.bossN declaration above for why. 380 base is
@@ -227,7 +233,7 @@ export function spawnBoss(){
              : type==='phantom'?COL.mag : type==='hivemother'?COL.bio
              : type==='goliath'?COL.amber : type==='hedra'?COL.cyan
              : type==='arbalest'?COL.ice : type==='reaper'?COL.red : COL.purple;
-  const hp = Math.round((380+S.bossN*85)*(type==='carrier'?.9 : type==='dreadnought'?1.1
+  const hp = Math.round(bossBaseHp()*(type==='carrier'?.9 : type==='dreadnought'?1.1
              : type==='leviathan'?1.05 : type==='hunter'?.95 : type==='bat'?.9
              : type==='phantom'?.85 : type==='hivemother'?1.25 : type==='goliath'?1.1
              : type==='arbalest'?1.15 : type==='reaper'?.95 : 1));
@@ -852,7 +858,7 @@ export function damage(e,dmg,x,y,z,big,s){
       const pts=3000*S.combo; S.score+=pts;
       pop(e.x,e.y,e.z,'SHELL BREACHED',COL.amber);
       spawnCrate();
-      const hp2=Math.round((440+S.bossN*150)*.62);
+      const hp2=Math.round(bossBaseHp()*.62);
       S.boss={k:'boss',type:'leviathan',name:'LEVIATHAN',x:e.x,y:e.y,z:e.z,
         hp:hp2,max:hp2,r:230,rz:170,c:COL.bio,
         phase:1,t:0,cd:1.2,dir:1,here:true,yaw:0,roll:0,list:0,hit:0,smk:0,
