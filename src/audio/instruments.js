@@ -1,11 +1,11 @@
 /* ===== audio/instruments.js — the step-sequencer's voices =====
-   kick/snare/hat/tom/ride (drums), bass, arpNote, lead (counter-line),
-   stab (chord), pad, and the music-side riser (phrase-end sweep — distinct
-   from the cinematic cineRiser in cine-oneshots.js). Driven entirely by
-   scheduler.js; ride and lead feed the high-intensity-only busses that
-   index.js builds and applyIntensity() crossfades. */
+   kick/snare/hat/tom/ride (drums), bass, arpNote, stab (chord), pad, and
+   the music-side riser (phrase-end sweep — distinct from the cinematic
+   cineRiser in cine-oneshots.js). Driven entirely by scheduler.js; ride
+   feeds the high-intensity-only bus that index.js builds and
+   applyIntensity() crossfades. */
 import { A } from './state.js';
-import { now, gainNode, pluck, osc, noise, hp, lp, bp, fclamp, mtof, budget, voice, pulseOsc, getCrushCurve, duckPump } from './primitives.js';
+import { now, gainNode, pluck, osc, noise, hp, lp, bp, fclamp, mtof, budget, voice, pulseOsc, duckPump } from './primitives.js';
 
 export function kick(t, amp) {
   if (!budget(3)) return;
@@ -100,9 +100,9 @@ export function tom(t, freq, amp) {
 
 /* driving ride/shaker tick — the high-intensity percussion layer that sits
    above the hats. Accented hits (acc) get a longer decay plus a quiet
-   metallic triangle ping around 4.6kHz; unaccented boss-mode ticks are a
-   single short noise src so the 16th shimmer stays cheap. Feeds rideBus,
-   which applyIntensity() fades from silence below ~0.55 intensity. */
+   metallic triangle ping around 4.6kHz; unaccented ones are a single short
+   noise src so a filler tick stays cheap. Feeds rideBus, which
+   applyIntensity() fades from silence below ~0.55 intensity. */
 export function ride(t, amp, acc) {
   if (!budget(2)) return;
   var head = gainNode(amp);
@@ -125,7 +125,7 @@ export function ride(t, amp, acc) {
 }
 
 /* gated saw bass with a resonant filter envelope */
-export function bass(t, midi, dur, accent, octave) {
+export function bass(t, midi, dur, accent) {
   if (!budget(4)) return;
   var f0 = mtof(midi);
   var head = gainNode(0.9 * accent);
@@ -169,19 +169,6 @@ export function bass(t, midi, dur, accent, octave) {
   s.start(t); s.stop(t + dur + 0.02);
   srcs.push(s);
 
-  // boss: octave-up doubling, run through a bitcrusher for a snarling
-  // digital edge instead of a plain extra saw
-  if (octave) {
-    var o2 = osc('sawtooth', f0 * 2, t); o2.detune.value = 6;
-    var og = pluck(t, 0.22, dur * 0.85, 0.003);
-    var of = lp(fclamp(cutBase * 3.2), 4);
-    var crush = A.ctx.createWaveShaper();
-    crush.curve = getCrushCurve();
-    o2.connect(crush); crush.connect(of); of.connect(og); og.connect(head);
-    o2.start(t); o2.stop(t + dur + 0.02);
-    srcs.push(o2);
-  }
-
   voice(head, srcs);
 }
 
@@ -204,7 +191,7 @@ export function arpNote(t, midi, dur) {
   a.start(t); a.stop(t + dur + 0.02);
 
   // PWM pulse layer, width slowly breathing over real time - a cheap but
-  // convincing "analog synth gone digital" movement on the lead voice
+  // convincing "analog synth gone digital" movement on the arp voice
   var duty = 0.5 - 0.28 * (0.5 + 0.5 * Math.sin(t * 0.9));
   var pw = pulseOsc(f0 * 1.003, t, dur, duty);
   pw.srcs[0].detune.value = 6; pw.srcs[1].detune.value = 6;
@@ -215,51 +202,8 @@ export function arpNote(t, midi, dur) {
   setTimeout(function () { try { send.disconnect(); } catch (e) { } }, (dur + 0.4) * 1000);
 }
 
-/* soaring counter-line lead — the melodic high-intensity layer. Two saws a
-   dozen-odd cents apart with delayed vibrato (the vibrato depth ramps in
-   over the first third of a second, singer-style, so held notes bloom
-   instead of warbling from the attack) plus a generous tempo-delay send
-   for that widescreen trance-anthem tail. Feeds leadBus, which
-   applyIntensity() only opens near full intensity, so this line belongs to
-   boss fights and peak combat and is simply absent from the lulls. */
-export function lead(t, midi, dur) {
-  if (!budget(3)) return;
-  var f0 = mtof(midi);
-  var head = gainNode(0.5);
-  head.connect(A.leadBus);
-  var send = gainNode(0.3);
-  head.connect(send); send.connect(A.fxDelay);
-
-  var flt = lp(1900 + 4200 * A.intens, 1.3);
-  flt.frequency.setValueAtTime(fclamp(2600 + 4200 * A.intens), t);
-  flt.frequency.exponentialRampToValueAtTime(fclamp(1500 + 3200 * A.intens), t + Math.min(0.5, dur));
-  var rel = Math.max(0.06, dur * 0.25);
-  var g = A.ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.5, t + 0.025);
-  g.gain.setValueAtTime(0.5, t + Math.max(0.03, dur - rel));
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.05);
-  flt.connect(g); g.connect(head);
-
-  var a = osc('sawtooth', f0, t); a.detune.value = -6;
-  var b = osc('sawtooth', f0, t); b.detune.value = 7;
-  a.connect(flt); b.connect(flt);
-  a.start(t); a.stop(t + dur + 0.08);
-  b.start(t); b.stop(t + dur + 0.08);
-
-  var v = osc('sine', 5.3, t);
-  var vAmt = A.ctx.createGain();
-  vAmt.gain.setValueAtTime(0, t);
-  vAmt.gain.linearRampToValueAtTime(10, t + Math.min(0.35, dur * 0.6));
-  v.connect(vAmt); vAmt.connect(a.detune); vAmt.connect(b.detune);
-  v.start(t); v.stop(t + dur + 0.08);
-
-  voice(head, [a, b, v]);
-  setTimeout(function () { try { send.disconnect(); } catch (e) { } }, (dur + 0.5) * 1000);
-}
-
 /* detuned supersaw chord stab */
-export function stab(t, chord, dur, nasty) {
+export function stab(t, chord, dur) {
   if (!budget(10)) return;
   var head = gainNode(0.3);
   head.connect(A.arpBus);
@@ -273,42 +217,16 @@ export function stab(t, chord, dur, nasty) {
   flt.connect(g); g.connect(head);
 
   var srcs = [];
-  var det = [-14, 0, 15];
+  var det = [-14, 0];
   for (var i = 0; i < chord.length; i++) {
     var f0 = mtof(chord[i]);
-    var kmax = nasty ? 3 : 2;
-    for (var k = 0; k < kmax; k++) {
-      // boss stacks get one unison voice swapped for a duty-varied pulse
-      // instead of another saw - a "synth stack" of saw + pulse reads
-      // more digital than pure supersaw
-      if (nasty && k === 2) {
-        var duty = 0.3 + 0.15 * Math.sin(t * 1.7 + i);
-        var pw = pulseOsc(f0, t, dur, duty);
-        pw.srcs[0].detune.value = det[k] * 1.6;
-        pw.srcs[1].detune.value = det[k] * 1.6;
-        pw.out.connect(flt);
-        srcs.push(pw.srcs[0], pw.srcs[1]);
-      } else {
-        var o = osc('sawtooth', f0, t);
-        o.detune.value = det[k] * (nasty ? 1.6 : 1);
-        o.connect(flt);
-        o.start(t); o.stop(t + dur + 0.02);
-        srcs.push(o);
-      }
+    for (var k = 0; k < 2; k++) {
+      var o = osc('sawtooth', f0, t);
+      o.detune.value = det[k];
+      o.connect(flt);
+      o.start(t); o.stop(t + dur + 0.02);
+      srcs.push(o);
     }
-  }
-  if (nasty) {
-    // minor second clash against the root - ring-modulated for a
-    // metallic/alien snarl instead of a plain dissonant saw
-    var c = osc('sawtooth', mtof(chord[0] + 13), t);
-    var ringLFO = osc('sine', mtof(chord[0] + 13) * 0.5, t);
-    var ringAmt = gainNode(0.35);
-    var ringGain = gainNode(0);      // base 0 -> output = carrier * modulator (true ring mod)
-    ringLFO.connect(ringAmt); ringAmt.connect(ringGain.gain);
-    c.connect(ringGain); ringGain.connect(flt);
-    c.start(t); c.stop(t + dur + 0.02);
-    ringLFO.start(t); ringLFO.stop(t + dur + 0.02);
-    srcs.push(c, ringLFO);
   }
 
   voice(head, srcs);

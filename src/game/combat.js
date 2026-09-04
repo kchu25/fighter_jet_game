@@ -178,19 +178,20 @@ export function spawnAllies(){
    in the rotation) and the old unbounded waveN*1600 term meant a run rarely
    met more than three of them.
    Sized as a BREATHER, not a chapter: the direct playtest note was "boss
-   after boss — the break shouldn't be too long". 2-4k of score is a handful
-   of trash kills — enough to sweep the wreck's crates, reload the nerves,
+   after boss — the break shouldn't be too long". 1.5-3k of score is a few
+   trash kills — enough to sweep the wreck's crates, reload the nerves,
    let a comms line land — and then the next warning. The trash game between
    bosses is the rest between sets now, and everything sized against long
    open-sky stretches (nuke cadence, sessions) was retuned with it. */
 export function armNextBoss(){
-  S.nextBoss = S.score + 2200 + Math.min(4,S.bossN)*600;
+  S.nextBoss = S.score + 1500 + Math.min(4,S.bossN)*350;
 }
 export function spawnBoss(){
   /* keyed off S.bossN (bosses defeated this run), not S.waveN (trash-mob waves,
-     never resets) — see the S.bossN declaration above for why. 440 base is
-     ~20-30s of sustained accurate fire for a first-time S.boss encounter;
-     +150/S.boss keeps later encounters escalating without runaway growth.
+     never resets) — see the S.bossN declaration above for why. 380 base is
+     ~15-20s of sustained accurate fire for a first-time S.boss encounter;
+     +85/S.boss keeps later encounters escalating without the late-run hulls
+     turning into the minutes-long chip-away they were at +150.
 
      Boss TYPE rotates with bossN, thirteen deep: mothership (bolt volleys),
      hive carrier (summons trash from its bays), vesper the bat (figure-8,
@@ -208,8 +209,10 @@ export function spawnBoss(){
      track how much of your fire a hull actually soaks: the carrier .9 and
      phantom .85 spend escorts or blinks instead of hit points, the bat .9 is
      small and half-melee, the reaper and hunter .95 spend whole seconds out
-     of your guns, the dreadnought 1.1, arbalest 1.15, goliath 1.25 and
-     mother 1.5 are walls that sit there and take it. */
+     of your guns, the dreadnought 1.1, arbalest 1.15, goliath 1.1 and
+     mother 1.25 are walls that sit there and take it — the two siege hulls
+     are trimmed from 1.25/1.5 because on top of their armour cycles they
+     were the two fights that overstayed. */
   const type = ['mothership','carrier','bat','dreadnought','phantom','hivemother','hedra',
                 'goliath','arbalest','warden','reaper','hunter','leviathan'][S.bossN%13];
   const name = type==='carrier'?'HIVE CARRIER' : type==='dreadnought'?'DREADNOUGHT'
@@ -224,9 +227,9 @@ export function spawnBoss(){
              : type==='phantom'?COL.mag : type==='hivemother'?COL.bio
              : type==='goliath'?COL.amber : type==='hedra'?COL.cyan
              : type==='arbalest'?COL.ice : type==='reaper'?COL.red : COL.purple;
-  const hp = Math.round((440+S.bossN*150)*(type==='carrier'?.9 : type==='dreadnought'?1.1
+  const hp = Math.round((380+S.bossN*85)*(type==='carrier'?.9 : type==='dreadnought'?1.1
              : type==='leviathan'?1.05 : type==='hunter'?.95 : type==='bat'?.9
-             : type==='phantom'?.85 : type==='hivemother'?1.5 : type==='goliath'?1.25
+             : type==='phantom'?.85 : type==='hivemother'?1.25 : type==='goliath'?1.1
              : type==='arbalest'?1.15 : type==='reaper'?.95 : 1));
   const r  = type==='carrier'?240 : type==='dreadnought'?170 : type==='leviathan'?230
            : type==='warden'?200 : type==='hunter'?150 : type==='bat'?130

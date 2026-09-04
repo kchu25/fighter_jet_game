@@ -180,6 +180,10 @@ export function directorTick(dt, easeP){
       : .38 + .38*prog + .18*Math.min(1, alive/S.threatCap);
     if(S.easeT>0) inten *= .55+.45*easeP;
     AUDIO.setIntensity(Math.min(1,inten));
-  } else AUDIO.setIntensity(1);
+  } else AUDIO.setIntensity(.8);
+  /* .8, not a pinned 1: a boss should sound like the fight at its heaviest,
+     which is squarely inside the band the sector arc already reaches. The
+     pin used to buy a separate boss arrangement in the sequencer; that layer
+     is gone, so all a pin would add now is a mode-change stinger. */
   S.bossFx = lerp(S.bossFx, S.boss?1:0, Math.min(1,dt*1.5));
 }

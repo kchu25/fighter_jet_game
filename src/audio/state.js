@@ -10,9 +10,6 @@ export const A = {
   musicFilter: null, drumBus: null, bassBus: null, arpBus: null, padBus: null, duckBus: null,
   fxDelay: null, fxFeedback: null, fxTone: null,
 
-  // cached bitcrusher curve (lo-fi digital grit on boss-only layers)
-  crushCurveCache: null,
-
   // engine (persistent voice)
   eng: null,
 

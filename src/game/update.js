@@ -285,7 +285,7 @@ export function update(dt){
                 : type==='warden'?1550 : type==='hunter'?1400 : type==='bat'?1250
                 : type==='phantom'?1300 : type==='hivemother'?1520 : type==='goliath'?2000
                 : type==='hedra'?1500 : type==='arbalest'?1900 : type==='reaper'?1550 : 1500;
-    if(!b.here){ b.z-=1500*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true;
+    if(!b.here){ b.z-=2600*dt; if(b.z<=holdZ){ b.z=holdZ; b.here=true;
       if(type==='leviathan') AUDIO.screech && AUDIO.screech();
       else if(type==='bat'){ AUDIO.screech && AUDIO.screech();
         pushComms('WOLF',"THAT THING'S ALIVE — WATCH ITS DIVE",.8); }
@@ -312,11 +312,11 @@ export function update(dt){
         if(b.phase===3 && (b.fcd-=dt)<=0){ b.fcd=2.2; carrierVolley(b); }
       } else if(type==='dreadnought'){
         /* slow menacing drift, mostly centred; alternates two telegraphed
-           patterns — SPINE LANCE (1.1s charge, then one fast thick bolt) and
+           patterns — SPINE LANCE (0.8s charge, then one fast thick bolt) and
            WALL (slow lattice with gaps). A charge freezes the x-drift: that
            stillness IS the tell, same language as the lancer. */
         if(b.chg>0){
-          b.chg=Math.min(1,b.chg+dt/1.1);
+          b.chg=Math.min(1,b.chg+dt/.8);
           if(b.chg>=1){
             dreadLance(b);
             b.chg=0; b.mode='wall';
@@ -402,7 +402,7 @@ export function update(dt){
            the pinwheel tick: the two patterns drift against each other so no
            single memorised loop clears the fight */
         if((b.fcd-=dt)<=0){
-          b.fcd = b.phase===1?5 : b.phase===2?4.2 : 3.4;
+          b.fcd = b.phase===1?3.4 : b.phase===2?2.9 : 2.4;
           wardenRing(b);
         }
       } else if(type==='hunter'){
@@ -557,16 +557,16 @@ export function update(dt){
       } else if(type==='hivemother'){
         /* the intro's jelly, grown colossal. Everything about her is slow
            and vast; the fight is the MEMBRANE — a 6.8s breathing cycle,
-           open for the first 4.2s of it. Open she attacks and takes full
+           open for the first 5s of it. Open she attacks and takes full
            damage; closed she turtles behind .35x armor (damage() side) and
            only seeps spores. Learn the breath, burn the open windows. */
         if(b.phase===3 && !b.scr3){ b.scr3=true; AUDIO.motherScream && AUDIO.motherScream(); }
         b.pulse+=dt;
         /* target read before AND after the clock tick so the flip itself is
            caught without a latch field — each flip gets the sub throb */
-        const pT=(b.openT%6.8)<4.2?1:0;
+        const pT=(b.openT%6.8)<5?1:0;
         b.openT+=dt;
-        const oT=(b.openT%6.8)<4.2?1:0;
+        const oT=(b.openT%6.8)<5?1:0;
         if(oT!==pT) AUDIO.motherPulse && AUDIO.motherPulse();
         b.open = oT>b.open ? Math.min(oT,b.open+2.2*dt) : Math.max(oT,b.open-2.2*dt);
         b.y = 20+Math.sin(b.t*.4)*50;
@@ -622,7 +622,7 @@ export function update(dt){
           else { golBarrage(b); b.cd = b.phase===1?2.2 : b.phase===2?1.8 : 1.4; }
         }
         if(b.phase>=2 && (b.fcd-=dt)<=0){
-          b.fcd = b.phase===2?5:4;
+          b.fcd = b.phase===2?3.2:2.6;
           dreadWall(b);
         }
       } else if(type==='hedra'){
@@ -676,7 +676,7 @@ export function update(dt){
           b.bmT+=dt;
           b.bmX += b.bmD*(55+15*b.phase)*dt;
           arbBeamTick(b,dt);
-          if(b.bmT >= (b.phase===3?2.2:1.6)){
+          if(b.bmT >= (b.phase===3?1.5:1.1)){
             b.bmS=0;
             b.cd = b.phase===1?3.6 : b.phase===2?2.8 : 2.2;
           }

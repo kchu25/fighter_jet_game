@@ -99,14 +99,12 @@ export function init() {
   A.bassBus.connect(A.bassDrive); A.bassDrive.connect(A.bassTrim); A.bassTrim.connect(A.duckBus);
   A.arpBus = gainNode(0.0); A.arpBus.connect(A.duckBus);
   A.padBus = gainNode(0.0); A.padBus.connect(A.duckBus);
-  /* high-intensity-only layers, crossfaded in/out by applyIntensity() over
-     a bar-ish window so escalation swells instead of stepping: rideBus
+  /* high-intensity-only layer, crossfaded in/out by applyIntensity() over a
+     bar-ish window so escalation swells instead of stepping: rideBus
      carries the driving ride/shaker ticks (into drumBus so it escapes the
-     kick's sidechain like the rest of the kit), leadBus the soaring
-     counter-line (into duckBus so it pumps with the melodic bed). Both sit
-     at 0 until intensity earns them — lulls stay airy, boss fights soar. */
+     kick's sidechain like the rest of the kit). It sits at 0 until
+     intensity earns it, so lulls stay airy. */
   A.rideBus = gainNode(0.0); A.rideBus.connect(A.drumBus);
-  A.leadBus = gainNode(0.0); A.leadBus.connect(A.duckBus);
 
   buildEngine();
 
@@ -117,7 +115,6 @@ export function init() {
   applyIntensity(now(), true);
   A.nextNoteTime = now() + 0.09;
   A.stepCount = 0;
-  A.bossBar = false;   // bar-latched boss-pattern flag (see scheduleStep)
   if (A.timerId === null) A.timerId = setInterval(scheduler, LOOKAHEAD_MS);
 
   try { if (A.ctx.state === 'suspended') A.ctx.resume(); } catch (e) { }

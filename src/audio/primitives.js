@@ -77,19 +77,6 @@ export function makeSoftCurve(drive) {
   return c;
 }
 
-/* stair-step quantizer curve - cheap bitcrush grit for boss-only layers */
-export function makeCrushCurve(steps) {
-  var n = 1024, c = new Float32Array(n), s = steps || 9;
-  for (var i = 0; i < n; i++) {
-    var x = (i / (n - 1)) * 2 - 1;
-    c[i] = Math.round(x * s) / s;
-  }
-  return c;
-}
-export function getCrushCurve() {
-  if (!A.crushCurveCache) A.crushCurveCache = makeCrushCurve(9);
-  return A.crushCurveCache;
-}
 export function pulseOsc(freq, t, dur, duty) {
   var period = 1 / Math.max(20, freq);
   var offset = clamp(duty == null ? 0.5 : duty, 0.05, 0.95) * period;
